@@ -1,23 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="192" y1="128" x2="832" y2="896" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3B82F6"/>
-      <stop offset="1" stop-color="#2563EB"/>
-    </linearGradient>
-    <filter id="shadow" x="40" y="48" width="944" height="944" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#071225" flood-opacity="0.28"/>
-    </filter>
-  </defs>
-  <rect x="96" y="96" width="832" height="832" rx="214" fill="url(#bg)" filter="url(#shadow)"/>
-  <text
-    x="512"
-    y="524"
-    text-anchor="middle"
-    dominant-baseline="middle"
-    font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif"
-    font-size="500"
-    font-weight="800"
-    fill="#FFFFFF"
-  >东</text>
+  
+    <defs>
+      <linearGradient id="iconlogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#6f8cff"/>
+        <stop offset="100%" stop-color="#58c4dc"/>
+      </linearGradient>
+      <linearGradient id="iconlogoShine" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.24"/>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="iconbgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#07111f"/>
+        <stop offset="55%" stop-color="#0f1b2d"/>
+        <stop offset="100%" stop-color="#12243a"/>
+      </linearGradient>
+      <radialGradient id="iconglowA" cx="18%" cy="10%" r="40%">
+        <stop offset="0%" stop-color="#6f8cff" stop-opacity="0.18"/>
+        <stop offset="100%" stop-color="#6f8cff" stop-opacity="0"/>
+      </radialGradient>
+      <radialGradient id="iconglowB" cx="84%" cy="8%" r="34%">
+        <stop offset="0%" stop-color="#58c4dc" stop-opacity="0.12"/>
+        <stop offset="100%" stop-color="#58c4dc" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+  
+  <rect x="82" y="82" width="860" height="860" rx="189" fill="url(#iconlogoGrad)"/>
+  <rect x="82" y="82" width="860" height="860" rx="189" fill="url(#iconlogoShine)"/>
+  <path d="M376.11 545.03L376.11 545.03L376.11 508.64L403.41 492.81L660.94 492.81L660.55 538.70L422.40 538.70Q411.72 538.70 401.83 539.49Q391.94 540.29 385.01 541.67Q378.09 543.05 376.11 545.03ZM503.89 643.14L503.89 442.18L552.15 442.18L552.15 643.93Q552.15 661.73 547.80 672.61Q543.45 683.49 531.19 689.03L531.19 689.03Q519.32 694.97 502.51 696.55Q485.69 698.13 463.93 698.13L463.93 698.13Q463.14 691.40 460.18 682.50Q457.21 673.60 453.65 664.90Q450.09 656.20 446.53 649.47L446.53 649.47Q461.96 649.87 476.00 650.26Q490.04 650.66 495.19 650.26L495.19 650.26Q500.33 650.26 502.11 648.68Q503.89 647.10 503.89 643.14L503.89 643.14ZM402.22 562.83L402.22 562.83L449.69 575.89Q440.99 597.25 428.33 618.22Q415.67 639.19 401.63 657.19Q387.58 675.19 373.34 689.03L373.34 689.03Q368.99 685.08 361.67 679.14Q354.35 673.21 346.84 667.47Q339.32 661.73 333.39 658.57L333.39 658.57Q354.75 641.56 373.14 615.65Q391.54 589.74 402.22 562.83ZM573.12 581.82L573.12 581.82L613.08 562.44Q626.92 577.08 641.95 594.68Q656.99 612.28 669.84 629.30Q682.70 646.31 690.61 660.15L690.61 660.15L647.10 682.70Q640.37 668.86 628.11 651.25Q615.85 633.65 601.41 615.45Q586.97 597.25 573.12 581.82ZM338.53 425.56L338.53 380.07L679.14 380.07L679.14 425.56L338.53 425.56ZM376.11 545.03L376.11 545.03Q374.53 540.29 371.56 531.38Q368.60 522.48 365.23 512.99Q361.87 503.49 358.70 496.77L358.70 496.77Q367.41 494.40 374.73 487.08Q382.05 479.76 391.54 467.50L391.54 467.50Q397.08 461.17 406.37 447.12Q415.67 433.08 426.95 413.69Q438.22 394.31 449.89 371.76Q461.56 349.21 470.66 325.87L470.66 325.87L523.27 344.46Q507.85 376.90 489.06 408.35Q470.26 439.80 450.88 467.50Q431.50 495.19 412.90 517.74L412.90 517.74L412.90 518.92Q412.90 518.92 407.17 521.69Q401.43 524.46 394.31 528.62Q387.19 532.77 381.65 537.12Q376.11 541.47 376.11 545.03Z" fill="#FFFFFF"/>
 </svg>

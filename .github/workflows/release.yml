@@ -52,6 +52,10 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - name: Configure pnpm for Mac dual-arch
+        if: matrix.platform == 'mac'
+        run: pnpm config set supported-architectures.cpu "arm64,x64"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -67,7 +71,11 @@ jobs:
       - name: Package installer
         run: pnpm exec electron-builder ${{ matrix.args }} --publish never
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -95,6 +103,31 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
+          append_body: true
+          body: |
+            ## 下载说明
+
+            | 系统 | 文件 |
+            | --- | --- |
+            | Apple 芯片 Mac (M1/M2/M3) | `东昊账务-*-mac-arm64.dmg` |
+            | Intel Mac | `东昊账务-*-mac-x64.dmg` |
+            | Windows 64 位 | `东昊账务-*-win-x64.exe` |
+
+            ### macOS 提示「已损坏，无法打开」？
+
+            这是 **未签名应用** 被系统拦截，不是安装包坏了。Chrome 下载后会附加隔离标记，按下面任一方式即可：
+
+            **方法一（推荐）** — 终端执行（把 app 拖进「应用程序」后）：
+
+            ```bash
+            xattr -cr "/Applications/东昊账务.app"
+            ```
+
+            **方法二** — 右键点击 app → **打开** → 再点 **打开**（仅首次需要）。
+
+            **方法三** — 系统设置 → 隐私与安全性 → 找到被拦截提示 → **仍要打开**。
+
+            > 若需免上述步骤，需配置 Apple 开发者证书对 CI 进行签名与公证（仓库 Secrets：`CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`）。
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

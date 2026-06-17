@@ -4,38 +4,14 @@ const fs = require('fs')
 const path = require('path')
 const { execFileSync } = require('child_process')
 const sharp = require('sharp')
+const { appIconSvg } = require('./brand-assets.cjs')
 
 const root = path.resolve(__dirname, '..')
 const resourcesDir = path.join(root, 'resources')
 const iconsetDir = path.join(resourcesDir, 'icon.iconset')
 
-const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="192" y1="128" x2="832" y2="896" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3B82F6"/>
-      <stop offset="1" stop-color="#2563EB"/>
-    </linearGradient>
-    <filter id="shadow" x="40" y="48" width="944" height="944" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#071225" flood-opacity="0.28"/>
-    </filter>
-  </defs>
-  <rect x="96" y="96" width="832" height="832" rx="214" fill="url(#bg)" filter="url(#shadow)"/>
-  <text
-    x="512"
-    y="524"
-    text-anchor="middle"
-    dominant-baseline="middle"
-    font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif"
-    font-size="500"
-    font-weight="800"
-    fill="#FFFFFF"
-  >东</text>
-</svg>
-`
-
 async function png(size) {
-  return sharp(Buffer.from(svg))
+  return sharp(Buffer.from(appIconSvg(size)))
     .resize(size, size)
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer()
@@ -72,7 +48,7 @@ async function main() {
   fs.rmSync(iconsetDir, { recursive: true, force: true })
   fs.mkdirSync(iconsetDir, { recursive: true })
 
-  fs.writeFileSync(path.join(resourcesDir, 'icon.svg'), svg)
+  fs.writeFileSync(path.join(resourcesDir, 'icon.svg'), appIconSvg(1024))
   fs.writeFileSync(path.join(resourcesDir, 'icon.png'), await png(1024))
 
   const iconsetFiles = [
@@ -93,6 +69,11 @@ async function main() {
   }
 
   if (process.platform === 'darwin') {
+    try {
+      execFileSync('xattr', ['-cr', iconsetDir])
+    } catch {
+      // ignore when xattr is unavailable
+    }
     execFileSync('iconutil', ['-c', 'icns', iconsetDir, '-o', path.join(resourcesDir, 'icon.icns')])
   } else {
     console.log('Skipped icon.icns (macOS only)')

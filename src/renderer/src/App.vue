@@ -1782,6 +1782,12 @@ const AiAssistant = defineComponent({
       'Qwen/Qwen3-32B',
     ]
     const messages = ref<any[]>([{ role: 'assistant', content: '你好，我是 AI 助手。你可以问我账务分析、Excel 导入、对账思路或经营数据解读。' }])
+    const toPlainMessages = (items: any[]) => items
+      .filter((message) => message && typeof message.content === 'string' && message.content.trim())
+      .map((message) => ({
+        role: message.role === 'assistant' || message.role === 'system' ? message.role : 'user',
+        content: message.content.trim(),
+      }))
 
     onMounted(async () => {
       try {
@@ -1798,7 +1804,7 @@ const AiAssistant = defineComponent({
       const text = input.value.trim()
       if (!text || loading.value) return
 
-      const next = [...messages.value, { role: 'user', content: text }]
+      const next = toPlainMessages([...messages.value, { role: 'user', content: text }])
       messages.value = next
       input.value = ''
       loading.value = true

@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { initDatabase, getDb } from './db'
+import { initDatabase } from './db'
 import { registerIpcHandlers } from './ipc'
 import { autoBackup } from './backup'
 import * as fs from 'fs'
@@ -63,6 +63,14 @@ app.whenReady().then(() => {
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error('应用启动失败:', error)
+  dialog.showErrorBox(
+    '东昊账务启动失败',
+    `${message}\n\n若提示 better-sqlite3 / mach-o / dlopen，请在项目目录执行：\npnpm rebuild:native`
+  )
+  app.quit()
 })
 
 app.on('window-all-closed', () => {

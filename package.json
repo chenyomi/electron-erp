@@ -1,6 +1,6 @@
 {
   "name": "donghao-ledger",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "温州东昊汽车配件有限公司 账务管理系统",
   "author": "chenyomi <408550179@qq.com>",
   "main": "out/main/index.js",
@@ -10,6 +10,7 @@
     "build": "electron-vite build",
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
+    "rebuild:native": "electron-builder install-app-deps",
     "icons": "node scripts/generate-app-icons.cjs",
     "installer-assets": "node scripts/generate-installer-assets.cjs",
     "assets": "pnpm icons && pnpm installer-assets",

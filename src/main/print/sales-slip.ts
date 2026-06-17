@@ -1,3 +1,7 @@
+import { renderMetalSlipHtml } from './metal-slip'
+import type { PrintSettingsBundle, SlipTemplate } from './print-settings'
+import { pageSizeCss } from './paper-sizes'
+
 export interface SalesSlipSettings {
   companyName: string
   slipTitle: string
@@ -32,15 +36,6 @@ export interface SalesSlipData {
   amountChinese: string
   issuer: string
   paymentReceived: number
-}
-
-export const DEFAULT_SALES_SLIP_SETTINGS: SalesSlipSettings = {
-  companyName: '温州东昊汽车配件有限公司',
-  slipTitle: '产品销售单',
-  address: '',
-  phones: '',
-  footerNote: '收货时请核对数量，有问题请在 3 个工作日内反馈。本单签字生效。',
-  copyLabels: ['第一联：存根', '第二联：客户', '第三联：记账'],
 }
 
 const CN_DIGITS = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖']
@@ -100,10 +95,6 @@ function chunkToChinese(n: number): string {
   }
   return result
 }
-
-export { getPrintSettings, savePrintSettings, type PrintSettingsBundle, type SlipTemplate } from './print-settings'
-export { getPrintSettings as getSalesSlipSettings } from './print-settings'
-export { savePrintSettings as saveSalesSlipSettings } from './print-settings'
 
 function padDocSuffix(id: number): string {
   return String(id).padStart(3, '0')
@@ -192,10 +183,6 @@ function formatQty(value: number): string {
   const n = Number(value || 0)
   return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, '')
 }
-
-import { renderMetalSlipHtml } from './metal-slip'
-import type { PrintSettingsBundle, SlipTemplate } from './print-settings'
-import { pageSizeCss } from './paper-sizes'
 
 export function renderSlipHtml(
   data: SalesSlipData,

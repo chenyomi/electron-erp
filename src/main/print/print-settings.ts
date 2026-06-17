@@ -1,5 +1,4 @@
 import type { SalesSlipSettings } from './sales-slip'
-import { DEFAULT_SALES_SLIP_SETTINGS } from './sales-slip'
 import { DEFAULT_LODOP_OFFSET, METAL_SLIP_PAPER } from './paper-sizes'
 
 export type SlipTemplate = 'sales' | 'metal'
@@ -30,6 +29,15 @@ export interface PrintSettingsBundle {
   sales: SalesSlipSettings
   metal: MetalSlipSettings
   lodop: LodopSettings
+}
+
+export const DEFAULT_SALES_SLIP_SETTINGS: SalesSlipSettings = {
+  companyName: '温州东昊汽车配件有限公司',
+  slipTitle: '产品销售单',
+  address: '',
+  phones: '',
+  footerNote: '收货时请核对数量，有问题请在 3 个工作日内反馈。本单签字生效。',
+  copyLabels: ['第一联：存根', '第二联：客户', '第三联：记账'],
 }
 
 export const DEFAULT_METAL_SLIP_SETTINGS: MetalSlipSettings = {

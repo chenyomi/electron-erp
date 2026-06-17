@@ -250,8 +250,8 @@ const messages = {
     importStockInSummary: '入库 {stockIn} 条，跳过 {skipped} 条，共 {sheets} 个供应商',
     ai: 'AI 助手',
     aiSub: '账务问答',
-    importData: '导入数据',
-    importSub: 'Excel导入',
+    importData: '数据管理',
+    importSub: '备份与导入',
     trash: '回收站',
     trashSub: '已删除记录',
     logs: '操作日志',
@@ -317,20 +317,31 @@ const messages = {
     lodopPreview: 'Lodop 先预览',
     auditor: '审核人',
     pickNote: '提货提示',
+    dataMgmtTitle: '数据管理',
+    dataMgmtSub: '导入账本、备份数据、导出报表，三步搞定',
+    importSection: '导入数据',
+    importLedgerTitle: '导入账本',
+    importLedgerDesc: '选择以前的 Excel 账本，自动导入现金账、公账、承兑票和客户往来。',
+    importStockTitle: '导入入库单',
+    importStockDesc: '选择材料入库 Excel，自动按供应商导入入库记录。',
     importTitle: '导入数据',
     importPageSub: '从 Excel 账本导入历史数据',
-    pickExcel: '选择 Excel 文件',
+    pickExcel: '选择账本文件',
     importDone: '导入完成',
     importSummary: '现金 {cash} 条，公账 {bank} 条，承兑 {bills} 条，客户往来 {customers} 条，图片 {images} 张，已关联 {attachments} 张',
     importFailed: '导入失败',
+    backupSection: '备份数据',
+    backupTitle: '一键备份',
+    backupDesc: '把所有账本数据和图片保存到电脑，换电脑或出问题时可以恢复。',
     backupNow: '立即备份',
-    backupDone: '完整备份成功（数据库 + 图片）',
+    backupDone: '备份成功',
     backupFailed: '备份失败',
-    openBackupDir: '打开备份目录',
-    backupIncludes: '备份包含数据库、Excel 图片、附件图片',
-    openDataDir: '打开数据目录',
-    openExcelImagesDir: '打开 Excel 图片目录',
+    openBackupFolder: '查看备份文件夹',
+    exportSection: '导出报表',
+    exportTitle: '导出总表',
+    exportDesc: '把所有账本导出为一个 Excel 文件，方便查看或发给会计。',
     recentBackups: '最近备份',
+    noBackupsYet: '还没有备份，建议先点「立即备份」',
     total: '共 {count} 条',
     totalIncome: '总收入',
     totalExpense: '总支出',
@@ -415,8 +426,8 @@ const messages = {
     importStockInSummary: 'Imported {stockIn}, skipped {skipped}, {sheets} suppliers',
     ai: 'AI Assistant',
     aiSub: 'Ledger QA',
-    importData: 'Import',
-    importSub: 'Excel',
+    importData: 'Data',
+    importSub: 'Backup & Import',
     trash: 'Trash',
     trashSub: 'Deleted records',
     logs: 'Logs',
@@ -482,20 +493,31 @@ const messages = {
     lodopPreview: 'Lodop preview first',
     auditor: 'Auditor',
     pickNote: 'Pickup note',
+    dataMgmtTitle: 'Data Management',
+    dataMgmtSub: 'Import ledgers, back up data, and export reports in three steps',
+    importSection: 'Import',
+    importLedgerTitle: 'Import Ledger',
+    importLedgerDesc: 'Choose a legacy Excel ledger to import cash, bank, bills, and customer records.',
+    importStockTitle: 'Import Stock In',
+    importStockDesc: 'Choose a stock-in Excel file to import inbound records by supplier.',
     importTitle: 'Import Data',
     importPageSub: 'Import historical data from Excel',
-    pickExcel: 'Choose Excel',
+    pickExcel: 'Choose Ledger File',
     importDone: 'Import complete',
     importSummary: 'Cash {cash}, bank {bank}, bills {bills}, customers {customers}, images {images}, linked {attachments}',
     importFailed: 'Import failed',
-    backupNow: 'Backup',
-    backupDone: 'Full backup complete (database + images)',
+    backupSection: 'Backup',
+    backupTitle: 'One-Click Backup',
+    backupDesc: 'Save all ledger data and images on this computer for recovery or migration.',
+    backupNow: 'Backup Now',
+    backupDone: 'Backup complete',
     backupFailed: 'Backup failed',
-    openBackupDir: 'Open Backup Folder',
-    backupIncludes: 'Backup includes database, Excel images, and attachments',
-    openDataDir: 'Open Data Folder',
-    openExcelImagesDir: 'Open Excel Images',
+    openBackupFolder: 'Open backup folder',
+    exportSection: 'Export',
+    exportTitle: 'Export Summary',
+    exportDesc: 'Export all ledgers into one Excel file for review or sharing.',
     recentBackups: 'Recent Backups',
+    noBackupsYet: 'No backups yet. Tap "Backup Now" to create one.',
     total: '{count} items',
     totalIncome: 'Income',
     totalExpense: 'Expense',
@@ -1434,6 +1456,26 @@ function formatBackupSize(size: number) {
   return `${Math.max(1, Math.round(size / 1024))} KB`
 }
 
+function formatBackupTime(name: string, time?: string) {
+  const match = name.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/)
+  if (match) {
+    const [, y, m, d, h, min] = match
+    return `${y}年${Number(m)}月${Number(d)}日 ${h}:${min}`
+  }
+  if (time) {
+    const dt = new Date(time)
+    if (!Number.isNaN(dt.getTime())) {
+      const y = dt.getFullYear()
+      const m = dt.getMonth() + 1
+      const d = dt.getDate()
+      const h = String(dt.getHours()).padStart(2, '0')
+      const min = String(dt.getMinutes()).padStart(2, '0')
+      return `${y}年${m}月${d}日 ${h}:${min}`
+    }
+  }
+  return name
+}
+
 const ImportPage = defineComponent({
   props: { t: { type: Function, required: true } },
   emits: ['notify'],
@@ -1445,11 +1487,10 @@ const ImportPage = defineComponent({
     const stockResult = ref<any>(null)
     const error = ref('')
     const stockError = ref('')
-    const dataDir = ref('')
     const backups = ref<any[]>([])
-    const loadInfo = async () => { const [dir, list] = await Promise.all([systemAPI.dataDir(), systemAPI.backupsList()]); dataDir.value = dir; backups.value = list }
-    const importExcel = async () => { const file = await importAPI.pickFile(); if (!file) return; loading.value = true; error.value = ''; const r = await importAPI.excel(file); loading.value = false; if (r.ok) { result.value = r.imported; emit('notify', props.t('importDone')) } else { error.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
-    const importStockIn = async () => { const file = await importAPI.pickFile(); if (!file) return; stockLoading.value = true; stockError.value = ''; const r = await importAPI.stockIn(file); stockLoading.value = false; if (r.ok) { stockResult.value = r.imported; emit('notify', props.t('importStockInDone')) } else { stockError.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
+    const loadInfo = async () => { backups.value = await systemAPI.backupsList() }
+    const importExcel = async () => { const file = await importAPI.pickFile(); if (!file) return; loading.value = true; error.value = ''; result.value = null; const r = await importAPI.excel(file); loading.value = false; if (r.ok) { result.value = r.imported; emit('notify', props.t('importDone')) } else { error.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
+    const importStockIn = async () => { const file = await importAPI.pickFile(); if (!file) return; stockLoading.value = true; stockError.value = ''; stockResult.value = null; const r = await importAPI.stockIn(file); stockLoading.value = false; if (r.ok) { stockResult.value = r.imported; emit('notify', props.t('importStockInDone')) } else { stockError.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
     const backup = async () => {
       const result = await systemAPI.backup()
       await loadInfo()
@@ -1467,32 +1508,83 @@ const ImportPage = defineComponent({
         exporting.value = false
       }
     }
+    const openBackupFolder = (event: Event) => {
+      event.preventDefault()
+      systemAPI.openBackupDir()
+    }
     onMounted(loadInfo)
-    return () => h('div', { class: 'page-wrap narrow' }, [
-      h(PageHeader, { title: props.t('importTitle'), subtitle: props.t('importPageSub') }),
-      h(VCard, { class: 'content-card section-card mb-4' }, () => [
-        h('div', { class: 'section-eyebrow' }, 'Excel Import'),
-        h('h3', { class: 'section-title' }, '导入 Excel 账本'),
-        h('p', { class: 'section-copy' }, '选择账本 xlsx 文件，系统会解析现金账、公账、承兑票和客户往来账。'),
-        h(VBtn, { color: 'primary', loading: loading.value, onClick: importExcel }, () => props.t('pickExcel')),
+    return () => h('div', { class: 'page-wrap narrow data-mgmt-page' }, [
+      h(PageHeader, { title: props.t('dataMgmtTitle'), subtitle: props.t('dataMgmtSub') }),
+
+      h('section', { class: 'data-section' }, [
+        h('h3', { class: 'data-section-title' }, props.t('importSection')),
+        h('div', { class: 'data-action-grid' }, [
+          h(VCard, { class: 'content-card data-action-card' }, () => [
+            h('div', { class: 'data-action-icon' }, '📒'),
+            h('h4', { class: 'data-action-title' }, props.t('importLedgerTitle')),
+            h('p', { class: 'data-action-copy' }, props.t('importLedgerDesc')),
+            h(VBtn, { color: 'primary', loading: loading.value, onClick: importExcel }, () => props.t('pickExcel')),
+          ]),
+          h(VCard, { class: 'content-card data-action-card' }, () => [
+            h('div', { class: 'data-action-icon' }, '📦'),
+            h('h4', { class: 'data-action-title' }, props.t('importStockTitle')),
+            h('p', { class: 'data-action-copy' }, props.t('importStockDesc')),
+            h(VBtn, { color: 'primary', variant: 'outlined', loading: stockLoading.value, onClick: importStockIn }, () => props.t('importStockIn')),
+          ]),
+        ]),
       ]),
+
       error.value ? h(VAlert, { type: 'error', class: 'mb-4' }, () => error.value) : null,
       result.value ? h(VAlert, { type: 'success', class: 'mb-4' }, () => [
         h('div', { class: 'import-result-title' }, props.t('importDone')),
         h('div', props.t('importSummary', result.value)),
       ]) : null,
-      h(VCard, { class: 'content-card section-card' }, () => [
-        h('div', { class: 'section-eyebrow' }, 'Workspace'),
-        h('h3', { class: 'section-title' }, '数据管理'),
-        h('p', { class: 'section-copy' }, [`数据目录：${dataDir.value || '读取中...'}`, h('br'), props.t('backupIncludes')]),
-        h('div', { class: 'btn-row' }, [
-          h(VBtn, { onClick: backup }, () => props.t('backupNow')),
-          h(VBtn, { loading: exporting.value, onClick: exportAll }, () => props.t('exportAllExcel')),
-          h(VBtn, { onClick: () => systemAPI.openBackupDir() }, () => props.t('openBackupDir')),
-          h(VBtn, { onClick: () => systemAPI.openDataDir() }, () => props.t('openDataDir')),
-          h(VBtn, { onClick: () => systemAPI.openExcelImagesDir() }, () => props.t('openExcelImagesDir')),
+      stockError.value ? h(VAlert, { type: 'error', class: 'mb-4' }, () => stockError.value) : null,
+      stockResult.value ? h(VAlert, { type: 'success', class: 'mb-4' }, () => [
+        h('div', { class: 'import-result-title' }, props.t('importStockInDone')),
+        h('div', props.t('importStockInSummary', stockResult.value)),
+      ]) : null,
+
+      h('section', { class: 'data-section' }, [
+        h('h3', { class: 'data-section-title' }, props.t('backupSection')),
+        h(VCard, { class: 'content-card data-action-card data-action-card-wide' }, () => [
+          h('div', { class: 'data-action-row' }, [
+            h('div', { class: 'data-action-main' }, [
+              h('div', { class: 'data-action-icon' }, '💾'),
+              h('div', [
+                h('h4', { class: 'data-action-title' }, props.t('backupTitle')),
+                h('p', { class: 'data-action-copy' }, props.t('backupDesc')),
+              ]),
+            ]),
+            h(VBtn, { color: 'primary', size: 'large', onClick: backup }, () => props.t('backupNow')),
+          ]),
+          h('div', { class: 'backup-history' }, [
+            h('div', { class: 'backup-history-title' }, props.t('recentBackups')),
+            backups.value.length
+              ? backups.value.slice(0, 5).map(b => h('div', { class: 'backup-history-item', key: b.name }, [
+                h('span', { class: 'backup-history-time' }, formatBackupTime(b.name, b.time)),
+                h('span', { class: 'backup-history-meta' }, formatBackupSize(b.size)),
+              ]))
+              : h('div', { class: 'backup-history-empty' }, props.t('noBackupsYet')),
+            h('a', { class: 'backup-folder-link', href: '#', onClick: openBackupFolder }, props.t('openBackupFolder')),
+          ]),
         ]),
-        backups.value.length ? h('div', { class: 'backup-list' }, backups.value.slice(0, 5).map(b => h('div', `${b.name} · ${formatBackupSize(b.size)}${b.type === 'full' ? ` · 含图片 ${b.imageCount || 0} 张` : ' · 仅数据库'}`))) : null,
+      ]),
+
+      h('section', { class: 'data-section' }, [
+        h('h3', { class: 'data-section-title' }, props.t('exportSection')),
+        h(VCard, { class: 'content-card data-action-card data-action-card-wide' }, () => [
+          h('div', { class: 'data-action-row' }, [
+            h('div', { class: 'data-action-main' }, [
+              h('div', { class: 'data-action-icon' }, '📊'),
+              h('div', [
+                h('h4', { class: 'data-action-title' }, props.t('exportTitle')),
+                h('p', { class: 'data-action-copy' }, props.t('exportDesc')),
+              ]),
+            ]),
+            h(VBtn, { loading: exporting.value, onClick: exportAll }, () => props.t('exportAllExcel')),
+          ]),
+        ]),
       ]),
     ])
   },

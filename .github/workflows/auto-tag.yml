@@ -12,6 +12,9 @@ jobs:
   tag:
     name: Create release tag
     runs-on: ubuntu-latest
+    outputs:
+      tag_created: ${{ steps.tag.outputs.created }}
+      tag_name: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,6 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Detect version bump and push tag
+        id: tag
         env:
           BEFORE_SHA: ${{ github.event.before }}
         run: |
@@ -41,11 +45,13 @@ jobs:
 
           if [[ -n "$PREVIOUS" && "$CURRENT" == "$PREVIOUS" ]]; then
             echo "Version unchanged, skipping tag"
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
             echo "Tag ${TAG} already exists on remote, skipping"
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -55,4 +61,16 @@ jobs:
           git tag -a "${TAG}" -m "Release ${CURRENT}"
           git push origin "${TAG}"
 
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Created and pushed tag ${TAG}"
+
+  release:
+    name: Build and publish release
+    needs: tag
+    if: needs.tag.outputs.tag_created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag_name }}
+    permissions:
+      contents: write

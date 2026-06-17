@@ -761,6 +761,124 @@ body {
   line-height: 1.9;
 }
 
+.data-mgmt-page .data-section {
+  margin-bottom: 28px;
+}
+
+.data-section-title {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--app-text);
+}
+
+.data-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.data-action-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px 24px;
+}
+
+.data-action-card-wide {
+  gap: 0;
+}
+
+.data-action-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.data-action-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--app-text);
+}
+
+.data-action-copy {
+  margin: 0;
+  flex: 1;
+  color: var(--app-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.data-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.data-action-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.backup-history {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--app-border);
+}
+
+.backup-history-title {
+  margin-bottom: 10px;
+  color: var(--app-muted-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.backup-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  font-size: 13px;
+}
+
+.backup-history-item:last-of-type {
+  border-bottom: none;
+}
+
+.backup-history-time {
+  color: var(--app-text);
+}
+
+.backup-history-meta {
+  color: var(--app-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.backup-history-empty {
+  padding: 6px 0 10px;
+  color: var(--app-muted);
+  font-size: 13px;
+}
+
+.backup-folder-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--app-muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.backup-folder-link:hover {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
+}
+
 .import-result-title {
   margin-bottom: 4px;
   font-weight: 800;
@@ -1236,9 +1354,15 @@ body {
 
   .toolbar-card,
   .btn-row,
-  .chat-input {
+  .chat-input,
+  .data-action-grid {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .data-action-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .toolbar-input {

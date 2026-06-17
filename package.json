@@ -1,0 +1,112 @@
+{
+  "name": "donghao-ledger",
+  "version": "1.0.0",
+  "description": "温州东昊汽车配件有限公司 账务管理系统",
+  "author": "chenyomi <408550179@qq.com>",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
+    "dev:clean": "electron-vite build && env -u ELECTRON_RUN_AS_NODE electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
+    "postinstall": "electron-builder install-app-deps",
+    "icons": "node scripts/generate-app-icons.cjs",
+    "installer-assets": "node scripts/generate-installer-assets.cjs",
+    "assets": "pnpm icons && pnpm installer-assets",
+    "import:ledger": "ELECTRON_RUN_AS_NODE=1 electron scripts/import-ledger.cjs",
+    "package:mac": "pnpm assets && electron-builder --mac --arm64 --x64",
+    "package:win": "pnpm assets && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "better-sqlite3": "^9.6.0",
+    "echarts": "^6.1.0",
+    "jszip": "^3.10.1",
+    "sharp": "^0.35.1",
+    "vue": "^3.5.38",
+    "vuetify": "^4.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.19.43",
+    "electron": "^29.4.6",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
+  },
+  "build": {
+    "appId": "com.donghao.ledger",
+    "productName": "东昊账务",
+    "copyright": "Copyright © chenyomi",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "resources/icon.icns",
+      "category": "public.app-category.finance"
+    },
+    "dmg": {
+      "title": "东昊账务 ${version}",
+      "background": "resources/dmg-background.png",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 144,
+          "y": 180,
+          "type": "file"
+        },
+        {
+          "x": 396,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "东昊账务",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeader": "resources/installer-header.bmp",
+      "installerSidebar": "resources/installer-sidebar.bmp",
+      "installerLanguages": [
+        "zh_CN"
+      ],
+      "language": "2052",
+      "displayLanguageSelector": false,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "files": [
+      "out/**/*",
+      "resources/icon.icns",
+      "resources/icon.ico",
+      "resources/icon.png"
+    ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "sharp"
+    ]
+  }
+}

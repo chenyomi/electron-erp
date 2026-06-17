@@ -1,6 +1,6 @@
 {
   "name": "donghao-ledger",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "温州东昊汽车配件有限公司 账务管理系统",
   "author": "chenyomi <408550179@qq.com>",
   "main": "out/main/index.js",
@@ -65,9 +65,8 @@
       "target": "dmg",
       "icon": "resources/icon.icns",
       "category": "public.app-category.finance",
-      "hardenedRuntime": true,
-      "entitlements": "resources/entitlements.mac.plist",
-      "entitlementsInherit": "resources/entitlements.mac.plist"
+      "identity": null,
+      "hardenedRuntime": false
     },
     "dmg": {
       "title": "东昊账务 ${version}",
@@ -92,7 +91,8 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "resources/icon.ico"
+      "icon": "resources/icon.ico",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

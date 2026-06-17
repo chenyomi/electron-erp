@@ -1,5 +1,8 @@
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
 import * as fs from 'fs'
+import JSZip from 'jszip'
 import { closeDatabase, getDataDir, getDb, initDatabase } from './db'
 
 const BACKUP_PREFIX = 'ledger_'
@@ -155,6 +158,91 @@ function replaceDbFile(src: string, dest: string): void {
   removeIfExists(`${dest}-wal`)
   removeIfExists(`${dest}-shm`)
   fs.copyFileSync(src, dest)
+}
+
+function findBackupRoot(dir: string): string | null {
+  if (resolveBackupSource(dir)) return dir
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null
+
+  for (const name of fs.readdirSync(dir)) {
+    const sub = join(dir, name)
+    if (fs.statSync(sub).isDirectory() && resolveBackupSource(sub)) return sub
+  }
+  return null
+}
+
+function addDirToZip(zip: JSZip, dirPath: string, zipPrefix = ''): void {
+  for (const name of fs.readdirSync(dirPath)) {
+    const fullPath = join(dirPath, name)
+    const zipPath = zipPrefix ? `${zipPrefix}/${name}` : name
+    const stat = fs.statSync(fullPath)
+    if (stat.isDirectory()) {
+      addDirToZip(zip, fullPath, zipPath)
+    } else {
+      zip.file(zipPath, fs.readFileSync(fullPath))
+    }
+  }
+}
+
+function backupPackageName(name?: string): string {
+  const match = name?.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/)
+  if (match) {
+    const [, y, m, d, h, min] = match
+    return `东昊账务备份-${y}${m}${d}-${h}${min}.zip`
+  }
+  return `东昊账务备份-${backupTimestamp()}.zip`
+}
+
+export async function exportBackupPackage(backupDir: string, destZipPath: string): Promise<{ ok: boolean; error?: string }> {
+  const source = resolveBackupSource(backupDir)
+  if (!source) return { ok: false, error: '备份无效，找不到 ledger.db' }
+
+  try {
+    const zip = new JSZip()
+    addDirToZip(zip, source.baseDir)
+    const content = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    fs.writeFileSync(destZipPath, content)
+    return { ok: true }
+  } catch (e: any) {
+    console.error('Export backup package failed:', e)
+    return { ok: false, error: e?.message || '保存备份包失败' }
+  }
+}
+
+async function extractZipToDir(zipPath: string, destDir: string): Promise<void> {
+  const zip = await JSZip.loadAsync(fs.readFileSync(zipPath))
+  for (const [relativePath, entry] of Object.entries(zip.files)) {
+    if (entry.dir) {
+      fs.mkdirSync(join(destDir, relativePath), { recursive: true })
+      continue
+    }
+    const outPath = join(destDir, relativePath)
+    fs.mkdirSync(dirname(outPath), { recursive: true })
+    fs.writeFileSync(outPath, await entry.async('nodebuffer'))
+  }
+}
+
+export async function restoreFromBackupPackage(zipPath: string): Promise<{ ok: boolean; error?: string }> {
+  if (!fs.existsSync(zipPath)) return { ok: false, error: '备份包不存在' }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'donghao-restore-'))
+  try {
+    await extractZipToDir(zipPath, tempDir)
+    const backupRoot = findBackupRoot(tempDir)
+    if (!backupRoot) {
+      return { ok: false, error: '备份包无效，请使用本软件导出的备份包' }
+    }
+    return restoreFromBackup(backupRoot)
+  } catch (e: any) {
+    console.error('Restore backup package failed:', e)
+    return { ok: false, error: e?.message || '恢复备份包失败' }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+}
+
+export function getBackupPackageDefaultName(name: string): string {
+  return backupPackageName(name)
 }
 
 export function restoreFromBackup(sourcePath: string): { ok: boolean; error?: string } {

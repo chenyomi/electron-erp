@@ -1,10 +1,39 @@
 import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { getDb, getDataDir } from '../db'
-import { listBackups, autoBackup, restoreFromBackup, getBackupPathByName } from '../backup'
+import { listBackups, autoBackup, restoreFromBackup, restoreFromBackupPackage, exportBackupPackage, getBackupPathByName, getBackupPackageDefaultName } from '../backup'
 import { join } from 'path'
 import * as fs from 'fs'
 import * as XLSX from 'xlsx'
 import { buildExportWorkbook, timestampForFile, type ExportParams, type ExportTable } from '../export/ledger-export'
+
+async function confirmRestore(parent: BrowserWindow | null): Promise<boolean> {
+  const options = {
+    type: 'warning' as const,
+    buttons: ['取消', '确认恢复'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '恢复备份',
+    message: '恢复会覆盖当前所有账本数据',
+    detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
+  }
+  const confirm = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options)
+  return confirm.response === 1
+}
+
+async function runRestore(sourcePath: string, parent: BrowserWindow | null) {
+  if (!(await confirmRestore(parent))) return { ok: false, canceled: true }
+
+  const result = sourcePath.toLowerCase().endsWith('.zip')
+    ? await restoreFromBackupPackage(sourcePath)
+    : restoreFromBackup(sourcePath)
+
+  if (result.ok) {
+    BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
+  }
+  return result
+}
 
 export function registerSystemHandlers(): void {
   ipcMain.handle('system:summary', () => {
@@ -83,6 +112,19 @@ export function registerSystemHandlers(): void {
     return listBackups()
   })
 
+  ipcMain.handle('system:pick-backup-package', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: '选择备份包',
+      filters: [{ name: '东昊账务备份', extensions: ['zip'] }],
+      properties: ['openFile'] as Array<'openFile'>,
+    }
+    const result = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    return result.filePaths[0] || null
+  })
+
   ipcMain.handle('system:pick-backup', async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = {
@@ -97,67 +139,37 @@ export function registerSystemHandlers(): void {
 
   ipcMain.handle('system:restore-backup', async (event, sourcePath: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
-    const confirm = parent
-      ? await dialog.showMessageBox(parent, {
-        type: 'warning',
-        buttons: ['取消', '确认恢复'],
-        defaultId: 0,
-        cancelId: 0,
-        title: '恢复备份',
-        message: '恢复会覆盖当前所有账本数据',
-        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
-      })
-      : await dialog.showMessageBox({
-        type: 'warning',
-        buttons: ['取消', '确认恢复'],
-        defaultId: 0,
-        cancelId: 0,
-        title: '恢复备份',
-        message: '恢复会覆盖当前所有账本数据',
-        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
-      })
-
-    if (confirm.response !== 1) return { ok: false, canceled: true }
-
-    const result = restoreFromBackup(sourcePath)
-    if (result.ok) {
-      BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
-    }
-    return result
+    return runRestore(sourcePath, parent)
   })
 
   ipcMain.handle('system:restore-backup-by-name', async (event, name: string) => {
     const path = getBackupPathByName(name)
     if (!path) return { ok: false, error: '备份不存在或已损坏' }
-
     const parent = BrowserWindow.fromWebContents(event.sender)
-    const confirm = parent
-      ? await dialog.showMessageBox(parent, {
-        type: 'warning',
-        buttons: ['取消', '确认恢复'],
-        defaultId: 0,
-        cancelId: 0,
-        title: '恢复备份',
-        message: '恢复会覆盖当前所有账本数据',
-        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
-      })
-      : await dialog.showMessageBox({
-        type: 'warning',
-        buttons: ['取消', '确认恢复'],
-        defaultId: 0,
-        cancelId: 0,
-        title: '恢复备份',
-        message: '恢复会覆盖当前所有账本数据',
-        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
-      })
+    return runRestore(path, parent)
+  })
 
-    if (confirm.response !== 1) return { ok: false, canceled: true }
+  ipcMain.handle('system:export-backup-package', async (event, name: string) => {
+    try {
+      const backupPath = getBackupPathByName(name)
+      if (!backupPath) return { ok: false, error: '备份不存在或已损坏' }
 
-    const result = restoreFromBackup(path)
-    if (result.ok) {
-      BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
+      const parent = BrowserWindow.fromWebContents(event.sender)
+      const saveOptions = {
+        title: '保存备份包',
+        defaultPath: getBackupPackageDefaultName(name),
+        filters: [{ name: '东昊账务备份', extensions: ['zip'] }],
+      }
+      const result = parent
+        ? await dialog.showSaveDialog(parent, saveOptions)
+        : await dialog.showSaveDialog(saveOptions)
+
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+
+      return await exportBackupPackage(backupPath, result.filePath)
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '保存备份包失败' }
     }
-    return result
   })
 
   ipcMain.handle('system:data-dir', () => {

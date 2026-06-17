@@ -319,10 +319,18 @@ const messages = {
     pickNote: '提货提示',
     dataMgmtTitle: '数据管理',
     dataMgmtSub: '备份、恢复、导出，换电脑也能搬数据',
+    migrateTitle: '换电脑怎么搬数据？',
+    migrateStep1: '旧电脑：点「立即备份」',
+    migrateStep2: '旧电脑：点「保存备份包」，存到 U 盘（一个 zip，账本+图片全在里面）',
+    migrateStep3: '新电脑：安装软件后，点「选择备份包恢复」',
     restoreSection: '恢复数据',
-    restoreTitle: '从备份恢复',
-    restoreDesc: '选择一份备份文件夹（本机备份、U 盘或旧电脑拷来的都可以），一键还原全部账本和图片。',
-    pickBackupFolder: '选择备份文件夹',
+    restoreTitle: '从备份包恢复',
+    restoreDesc: '选择旧电脑保存的备份包（.zip 文件），一键还原全部账本和图片。不用管里面有什么，软件会自动处理。',
+    pickBackupPackage: '选择备份包',
+    pickBackupFolder: '高级：选择备份文件夹',
+    saveBackupPackage: '保存备份包',
+    saveBackupPackageDone: '备份包已保存，可以拷到 U 盘',
+    saveBackupPackageFailed: '保存备份包失败',
     restoreThisBackup: '恢复',
     restoreDone: '恢复成功',
     restoreFailed: '恢复失败',
@@ -340,7 +348,7 @@ const messages = {
     importFailed: '导入失败',
     backupSection: '备份数据',
     backupTitle: '一键备份',
-    backupDesc: '把所有账本数据和图片保存到电脑，换电脑或出问题时可以恢复。',
+    backupDesc: '先把数据备份到本机。要换电脑时，再点「保存备份包」存到 U 盘。',
     backupNow: '立即备份',
     backupDone: '备份成功',
     backupFailed: '备份失败',
@@ -503,10 +511,18 @@ const messages = {
     pickNote: 'Pickup note',
     dataMgmtTitle: 'Data Management',
     dataMgmtSub: 'Back up, restore, and export — move data between computers easily',
+    migrateTitle: 'Moving to a new computer?',
+    migrateStep1: 'Old PC: tap "Backup Now"',
+    migrateStep2: 'Old PC: tap "Save Backup Package" to USB (one zip with ledger + images)',
+    migrateStep3: 'New PC: install the app, then tap "Choose Backup Package"',
     restoreSection: 'Restore',
-    restoreTitle: 'Restore from Backup',
-    restoreDesc: 'Pick a backup folder from this computer, a USB drive, or another machine to restore all ledger data and images.',
-    pickBackupFolder: 'Choose Backup Folder',
+    restoreTitle: 'Restore from Backup Package',
+    restoreDesc: 'Choose the .zip file saved from the old computer. The app restores everything automatically.',
+    pickBackupPackage: 'Choose Backup Package',
+    pickBackupFolder: 'Advanced: Choose Backup Folder',
+    saveBackupPackage: 'Save Backup Package',
+    saveBackupPackageDone: 'Backup package saved — copy it to a USB drive',
+    saveBackupPackageFailed: 'Failed to save backup package',
     restoreThisBackup: 'Restore',
     restoreDone: 'Restore complete',
     restoreFailed: 'Restore failed',
@@ -524,7 +540,7 @@ const messages = {
     importFailed: 'Import failed',
     backupSection: 'Backup',
     backupTitle: 'One-Click Backup',
-    backupDesc: 'Save all ledger data and images on this computer for recovery or migration.',
+    backupDesc: 'Back up to this computer first. To move computers, save a backup package to USB.',
     backupNow: 'Backup Now',
     backupDone: 'Backup complete',
     backupFailed: 'Backup failed',
@@ -1499,6 +1515,7 @@ const ImportPage = defineComponent({
     const loading = ref(false)
     const stockLoading = ref(false)
     const restoring = ref(false)
+    const savingPackage = ref(false)
     const exporting = ref(false)
     const legacyOpen = ref(false)
     const result = ref<any>(null)
@@ -1509,6 +1526,18 @@ const ImportPage = defineComponent({
     const loadInfo = async () => { backups.value = await systemAPI.backupsList() }
     const importExcel = async () => { const file = await importAPI.pickFile(); if (!file) return; loading.value = true; error.value = ''; result.value = null; const r = await importAPI.excel(file); loading.value = false; if (r.ok) { result.value = r.imported; emit('notify', props.t('importDone')) } else { error.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
     const importStockIn = async () => { const file = await importAPI.pickFile(); if (!file) return; stockLoading.value = true; stockError.value = ''; stockResult.value = null; const r = await importAPI.stockIn(file); stockLoading.value = false; if (r.ok) { stockResult.value = r.imported; emit('notify', props.t('importStockInDone')) } else { stockError.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
+    const restoreFromPackage = async () => {
+      const file = await systemAPI.pickBackupPackage()
+      if (!file) return
+      restoring.value = true
+      try {
+        const r = await systemAPI.restoreBackup(file)
+        if (r?.ok) emit('notify', props.t('restoreDone'))
+        else if (!r?.canceled) emit('notify', r?.error || props.t('restoreFailed'), 'error')
+      } finally {
+        restoring.value = false
+      }
+    }
     const restoreFromFolder = async () => {
       const folder = await systemAPI.pickBackup()
       if (!folder) return
@@ -1529,6 +1558,16 @@ const ImportPage = defineComponent({
         else if (!r?.canceled) emit('notify', r?.error || props.t('restoreFailed'), 'error')
       } finally {
         restoring.value = false
+      }
+    }
+    const saveBackupPackage = async (name: string) => {
+      savingPackage.value = true
+      try {
+        const r = await systemAPI.exportBackupPackage(name)
+        if (r?.ok) emit('notify', props.t('saveBackupPackageDone'))
+        else if (!r?.canceled) emit('notify', r?.error || props.t('saveBackupPackageFailed'), 'error')
+      } finally {
+        savingPackage.value = false
       }
     }
     const backup = async () => {
@@ -1556,6 +1595,15 @@ const ImportPage = defineComponent({
     return () => h('div', { class: 'page-wrap narrow data-mgmt-page' }, [
       h(PageHeader, { title: props.t('dataMgmtTitle'), subtitle: props.t('dataMgmtSub') }),
 
+      h(VCard, { class: 'content-card migrate-card mb-4' }, () => [
+        h('h4', { class: 'migrate-title' }, props.t('migrateTitle')),
+        h('ol', { class: 'migrate-steps' }, [
+          h('li', props.t('migrateStep1')),
+          h('li', props.t('migrateStep2')),
+          h('li', props.t('migrateStep3')),
+        ]),
+      ]),
+
       h('section', { class: 'data-section' }, [
         h('h3', { class: 'data-section-title' }, props.t('restoreSection')),
         h(VCard, { class: 'content-card data-action-card data-action-card-wide' }, () => [
@@ -1567,7 +1615,10 @@ const ImportPage = defineComponent({
                 h('p', { class: 'data-action-copy' }, props.t('restoreDesc')),
               ]),
             ]),
-            h(VBtn, { color: 'primary', size: 'large', loading: restoring.value, onClick: restoreFromFolder }, () => props.t('pickBackupFolder')),
+            h('div', { class: 'data-action-buttons' }, [
+              h(VBtn, { color: 'primary', size: 'large', loading: restoring.value, onClick: restoreFromPackage }, () => props.t('pickBackupPackage')),
+              h(VBtn, { variant: 'text', disabled: restoring.value, onClick: restoreFromFolder }, () => props.t('pickBackupFolder')),
+            ]),
           ]),
           h('div', { class: 'backup-history' }, [
             h('div', { class: 'backup-history-title' }, props.t('recentBackups')),
@@ -1577,6 +1628,7 @@ const ImportPage = defineComponent({
                 h('div', { class: 'backup-history-actions' }, [
                   h('span', { class: 'backup-history-meta' }, formatBackupSize(b.size)),
                   h(VBtn, { size: 'small', variant: 'text', color: 'primary', disabled: restoring.value, onClick: () => restoreByName(b.name) }, () => props.t('restoreThisBackup')),
+                  h(VBtn, { size: 'small', variant: 'text', disabled: savingPackage.value, onClick: () => saveBackupPackage(b.name) }, () => props.t('saveBackupPackage')),
                 ]),
               ]))
               : h('div', { class: 'backup-history-empty' }, props.t('noBackupsYet')),
@@ -1596,7 +1648,12 @@ const ImportPage = defineComponent({
                 h('p', { class: 'data-action-copy' }, props.t('backupDesc')),
               ]),
             ]),
-            h(VBtn, { color: 'primary', size: 'large', onClick: backup }, () => props.t('backupNow')),
+            h('div', { class: 'data-action-buttons' }, [
+              h(VBtn, { color: 'primary', size: 'large', onClick: backup }, () => props.t('backupNow')),
+              backups.value[0]
+                ? h(VBtn, { variant: 'outlined', loading: savingPackage.value, onClick: () => saveBackupPackage(backups.value[0].name) }, () => props.t('saveBackupPackage'))
+                : null,
+            ]),
           ]),
         ]),
       ]),

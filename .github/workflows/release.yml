@@ -74,11 +74,14 @@ jobs:
       - name: Package installer
         run: pnpm exec electron-builder ${{ matrix.args }} --publish never
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_LINK: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.CSC_KEY_PASSWORD || '' }}
+          WIN_CSC_LINK: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ secrets.ENABLE_CODE_SIGNING == 'true' && secrets.APPLE_TEAM_ID || '' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -130,7 +133,7 @@ jobs:
 
             **方法三** — 系统设置 → 隐私与安全性 → 找到被拦截提示 → **仍要打开**。
 
-            > 若需免上述步骤，需配置 Apple 开发者证书对 CI 进行签名与公证（仓库 Secrets：`CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`）。
+            > 若需免上述步骤，需购买 Apple 开发者证书，并在仓库 Secrets 中设置 `ENABLE_CODE_SIGNING=true` 及对应证书变量。
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

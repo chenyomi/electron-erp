@@ -27,8 +27,10 @@ pnpm dev
 
 在 GitHub 仓库 Settings → Secrets 配置以下变量后，Release 构建会自动签名并公证，用户安装时不再出现「已损坏」：
 
-- `CSC_LINK` — Developer ID 证书（base64 编码的 .p12）
-- `CSC_KEY_PASSWORD` — 证书密码
-- `APPLE_ID` — Apple ID 邮箱
-- `APPLE_APP_SPECIFIC_PASSWORD` — 应用专用密码
-- `APPLE_TEAM_ID` — 团队 ID
+1. 新增 Secret：`ENABLE_CODE_SIGNING` = `true`（必须显式开启，否则默认不签名）
+2. `CSC_LINK` — Developer ID 证书（base64 编码的 .p12）
+3. `CSC_KEY_PASSWORD` — 证书密码
+4. `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` — Mac 公证
+5. （可选）`WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` — Windows 签名
+
+> 若未购买证书，**不要**填写 `CSC_LINK`；填错路径会导致 CI 打包失败。

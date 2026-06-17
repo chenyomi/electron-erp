@@ -289,6 +289,8 @@ const messages = {
     export: '导出',
     exportAllExcel: '导出总表',
     exportDone: '导出完成，共 {count} 条',
+    exportDoneSelected: '已导出选中 {count} 条',
+    exportFailed: '导出失败',
     printSlip: '打印销售单',
     printPreview: '销售单预览',
     printNow: '打印',
@@ -452,6 +454,8 @@ const messages = {
     export: 'Export',
     exportAllExcel: 'Export All',
     exportDone: 'Export complete, {count} rows',
+    exportDoneSelected: 'Exported {count} selected rows',
+    exportFailed: 'Export failed',
     printSlip: 'Print Slip',
     printPreview: 'Sales Slip Preview',
     printNow: 'Print',
@@ -553,6 +557,21 @@ const bottomItems = [
   { key: 'trash' as PageKey, icon: '🗑', label: 'trash', sub: 'trashSub' },
   { key: 'logs' as PageKey, icon: '📋', label: 'logs', sub: 'logsSub' },
 ]
+
+function notifyExportResult(
+  emit: (event: 'notify', text: string, color?: string) => void,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  result: any,
+  selectedCount = 0,
+) {
+  if (result?.ok) {
+    const key = selectedCount > 0 ? 'exportDoneSelected' : 'exportDone'
+    emit('notify', t(key, { count: result.totalRows || 0 }))
+    return
+  }
+  if (result?.canceled) return
+  emit('notify', result?.error || t('exportFailed'), 'error')
+}
 
 function t(key: string, params?: Record<string, string | number>) {
   let text = (messages[languageMode.value] as any)[key] || (messages.zh as any)[key] || key
@@ -942,11 +961,18 @@ const LedgerPage = defineComponent({
     }
     const exportRows = async () => {
       exporting.value = true
-      const exportParams: any = { table: config.value.table, keyword: keyword.value, ids: selected.value }
-      if (config.value.filterField) exportParams[config.value.filterField] = filterValue.value
-      const result = await systemAPI.exportExcel(exportParams)
-      exporting.value = false
-      if (result.ok) emit('notify', props.t('exportDone', { count: result.totalRows || 0 }))
+      try {
+        const selectedCount = selected.value.length
+        const exportParams: any = { table: config.value.table, keyword: keyword.value }
+        if (selectedCount) exportParams.ids = [...selected.value]
+        if (config.value.filterField) exportParams[config.value.filterField] = filterValue.value
+        const result = await systemAPI.exportExcel(exportParams)
+        notifyExportResult(emit, props.t, result, selectedCount)
+      } catch (error: any) {
+        emit('notify', error?.message || props.t('exportFailed'), 'error')
+      } finally {
+        exporting.value = false
+      }
     }
     const loadSlipSettings = async () => {
       const settings = await printAPI.getSettings()
@@ -1430,7 +1456,17 @@ const ImportPage = defineComponent({
       if (result?.ok) emit('notify', props.t('backupDone'))
       else emit('notify', result?.error || props.t('backupFailed'), 'error')
     }
-    const exportAll = async () => { exporting.value = true; const r = await systemAPI.exportExcel({ table: 'all' }); exporting.value = false; if (r.ok) emit('notify', props.t('exportDone', { count: r.totalRows || 0 })) }
+    const exportAll = async () => {
+      exporting.value = true
+      try {
+        const result = await systemAPI.exportExcel({ table: 'all' })
+        notifyExportResult(emit, props.t, result)
+      } catch (error: any) {
+        emit('notify', error?.message || props.t('exportFailed'), 'error')
+      } finally {
+        exporting.value = false
+      }
+    }
     onMounted(loadInfo)
     return () => h('div', { class: 'page-wrap narrow' }, [
       h(PageHeader, { title: props.t('importTitle'), subtitle: props.t('importPageSub') }),

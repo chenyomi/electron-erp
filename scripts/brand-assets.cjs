@@ -102,6 +102,7 @@ function dmgBackgroundSvg() {
   const w = 540
   const h = 380
 
+  // 中间区域留给系统放 app 图标和「应用程序」文件夹，不要画任何图案
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
   ${sharedDefs('dmg')}
@@ -109,15 +110,10 @@ function dmgBackgroundSvg() {
   <rect width="${w}" height="${h}" fill="url(#dmgglowA)"/>
   <rect width="${w}" height="${h}" fill="url(#dmgglowB)"/>
 
-  ${logoMarkSvg(42, 42, 52, 16, 'dmg')}
-
-  <text x="78" y="38"
+  <text x="${w / 2}" y="36" text-anchor="middle"
     font-family="sans-serif" font-size="20" font-weight="700" fill="${BRAND.text}">东昊账务</text>
-  <text x="78" y="58"
-    font-family="sans-serif" font-size="11" fill="${BRAND.muted}">温州东昊汽车配件 · 账务管理系统</text>
-
-  <text x="${w / 2}" y="348" text-anchor="middle"
-    font-family="sans-serif" font-size="13" fill="${BRAND.muted}">将 东昊账务 拖入 应用程序 文件夹</text>
+  <text x="${w / 2}" y="58" text-anchor="middle"
+    font-family="sans-serif" font-size="11" fill="${BRAND.muted}">将左侧图标拖到右侧「应用程序」文件夹</text>
 
   <rect x="0" y="${h - 3}" width="${w}" height="3" fill="url(#dmglogoGrad)" opacity="0.55"/>
 </svg>`

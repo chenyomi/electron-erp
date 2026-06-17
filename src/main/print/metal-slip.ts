@@ -1,6 +1,5 @@
 import type { MetalSlipSettings } from './print-settings'
 import type { SalesSlipData } from './sales-slip'
-import { amountToChinese } from './sales-slip'
 import { METAL_SLIP_PAPER, pageSizeCss } from './paper-sizes'
 
 function escapeHtml(text: string | number): string {
@@ -39,30 +38,29 @@ export function renderMetalSlipHtml(
   const overlay = Boolean(options.overlay)
   const border = overlay ? 'transparent' : '#111'
   const headerBg = overlay ? 'transparent' : '#fafafa'
-  const emptyRows = Math.max(0, 4 - data.items.length)
+  const customerAddress = options.customerAddress || ''
+  const received = Number(data.paymentReceived) || 0
+  const unpaid = Math.max(0, data.totalAmount - received)
+  const title = settings.slipTitle ? `（${escapeHtml(settings.slipTitle)}）` : ''
+  const paymentLine = received > 0
+    ? `
+    <div class="payment-line">
+      <div><span class="bold">本次收款：</span><span class="amount">${escapeHtml(formatMoney(received))}</span></div>
+      <div><span class="bold">未收金额：</span><span class="amount">${escapeHtml(formatMoney(unpaid))}</span></div>
+    </div>`
+    : ''
 
   const itemRows = data.items.map((item) => `
     <tr>
-      <td>${escapeHtml(item.material || '')}</td>
       <td>${escapeHtml(item.lineNo)}</td>
-      <td>${escapeHtml(item.model || item.productName || '')}</td>
-      <td>${escapeHtml(item.spec)}</td>
-      <td>${escapeHtml(item.unit)}</td>
+      <td class="left">${escapeHtml([item.model || item.productName || '', item.spec || ''].filter(Boolean).join(' '))}</td>
       <td>${escapeHtml(formatQty(item.quantity))}</td>
+      <td>${escapeHtml(item.unit)}</td>
       <td>${escapeHtml(formatMoney(item.unitPrice))}</td>
       <td>${escapeHtml(formatMoney(item.amount))}</td>
       <td>${escapeHtml(item.note)}</td>
     </tr>
   `).join('')
-
-  const blankRows = Array.from({ length: emptyRows }, () => `
-    <tr class="blank-row">
-      <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
-      <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
-    </tr>
-  `).join('')
-
-  const customerAddress = options.customerAddress || ''
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -76,40 +74,13 @@ export function renderMetalSlipHtml(
       margin: 0;
       font-family: "PingFang SC", "Microsoft YaHei", "SimSun", sans-serif;
       color: #111;
-      font-size: 10.5px;
-      line-height: 1.3;
+      font-size: 10px;
+      line-height: 1.25;
     }
     .sheet {
       width: ${METAL_SLIP_PAPER.widthMm - 6}mm;
       max-width: ${METAL_SLIP_PAPER.widthMm - 6}mm;
       margin: 0 auto;
-    }
-    .head-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: end;
-      margin-bottom: 4px;
-    }
-    .company {
-      text-align: center;
-      font-size: 17px;
-      font-weight: 700;
-      letter-spacing: 1px;
-    }
-    .doc-no {
-      font-size: 11px;
-      white-space: nowrap;
-      padding-bottom: 1px;
-    }
-    .meta {
-      display: grid;
-      grid-template-columns: 1.2fr 1.4fr 0.9fr 0.8fr;
-      gap: 3px 8px;
-      margin-bottom: 4px;
-    }
-    .meta-item label {
-      color: #444;
-      margin-right: 4px;
     }
     table {
       width: 100%;
@@ -118,7 +89,7 @@ export function renderMetalSlipHtml(
     }
     th, td {
       border: 1px solid ${border};
-      padding: 3px 2px;
+      padding: 3px 3px;
       text-align: center;
       vertical-align: middle;
       word-break: break-all;
@@ -128,104 +99,193 @@ export function renderMetalSlipHtml(
       background: ${headerBg};
       font-size: 10px;
     }
-    .blank-row td { height: 20px; }
-    .total-row {
-      margin-top: 4px;
-      display: grid;
-      grid-template-columns: 1.6fr 1fr;
-      gap: 8px;
-      align-items: center;
+    .company {
+      text-align: center;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      line-height: 1.2;
     }
-    .total-cn {
-      border: 1px solid ${border};
-      padding: 4px 6px;
-      min-height: 24px;
-    }
-    .total-num {
-      border: 1px solid ${border};
-      padding: 4px 6px;
-      text-align: right;
-      font-size: 13px;
+    .subtitle {
+      margin-top: 1px;
+      text-align: center;
+      font-size: 12px;
       font-weight: 700;
     }
-    .pick-note {
-      margin-top: 3px;
+    .mb4 { margin-bottom: 4px; }
+    .bold { font-weight: 700; }
+    .left { text-align: left; }
+    .right { text-align: right; }
+    .amount { font-family: "Courier New", "Microsoft YaHei", monospace; font-weight: 700; }
+    .top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: start;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .title-wrap {
+      min-width: 0;
+      padding-left: 72px;
       text-align: center;
+    }
+    .doc-no {
+      min-width: 132px;
+      padding-top: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .meta-line {
+      display: grid;
+      grid-template-columns: 1.1fr 1.2fr 1fr;
+      gap: 12px;
+      margin-bottom: 3px;
       font-size: 10px;
     }
-    .footer {
+    .meta-cell {
+      display: flex;
+      gap: 4px;
+      min-width: 0;
+    }
+    .meta-label {
+      flex: 0 0 auto;
+      font-weight: 700;
+    }
+    .meta-value {
+      min-width: 0;
+      flex: 1;
+      padding: 0 3px 1px;
+    }
+    .item-table td { height: 19px; }
+    .summary-box {
+      display: grid;
+      grid-template-columns: 1fr .75fr;
+      border-left: 1px solid ${border};
+      border-right: 1px solid ${border};
+      border-bottom: 1px solid ${border};
+    }
+    .summary-cell {
+      min-height: 23px;
+      padding: 4px 6px;
+      border-right: 1px solid ${border};
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .summary-cell:last-child { border-right: 0; }
+    .payment-line {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-left: 1px solid ${border};
+      border-right: 1px solid ${border};
+      border-bottom: 1px solid ${border};
+    }
+    .payment-line > div {
+      min-height: 23px;
+      padding: 4px 6px;
+      border-right: 1px solid ${border};
+    }
+    .payment-line > div:last-child { border-right: 0; }
+    .footer-info {
       margin-top: 5px;
       display: grid;
-      grid-template-columns: 1fr 1fr 0.8fr 0.8fr 0.8fr;
-      gap: 4px;
+      grid-template-columns: 1.1fr 1.4fr;
+      gap: 8px;
       font-size: 10px;
+      font-weight: 700;
     }
-    .footer-item {
-      min-height: 22px;
-      border-top: 1px solid ${border};
-      padding-top: 4px;
+    .statement {
+      margin-top: 3px;
+      font-size: 9px;
+      line-height: 1.45;
+      text-align: left;
+    }
+    .sign-line {
+      margin-top: 5px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .copies {
+      margin-top: 2px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      font-size: 9px;
+      font-weight: 700;
     }
   </style>
 </head>
 <body>
   <div class="sheet">
-    <div class="head-row">
-      <div class="company">${escapeHtml(settings.companyName)}${settings.slipTitle ? ` ${escapeHtml(settings.slipTitle)}` : ''}</div>
-      <div class="doc-no">NO: ${escapeHtml(data.docNo)}</div>
+    <div class="top">
+      <div class="title-wrap">
+        <div class="company">${escapeHtml(settings.companyName)}</div>
+        <div class="subtitle">${title}</div>
+      </div>
+      <div class="doc-no">单据编号：${escapeHtml(data.docNo)}</div>
+    </div>
+    <div class="meta-line">
+      <div class="meta-cell"><span class="meta-label">客户名称：</span><span class="meta-value">${escapeHtml(data.customerName)}</span></div>
+      <div class="meta-cell"><span class="meta-label">联系电话：</span><span class="meta-value">${escapeHtml(data.customerPhone || '')}</span></div>
+      <div class="meta-cell"><span class="meta-label">日期：</span><span class="meta-value center">${escapeHtml(formatDisplayDate(data.date))}</span></div>
+    </div>
+    <div class="meta-line mb4">
+      <div class="meta-cell" style="grid-column: span 2;"><span class="meta-label">客户地址：</span><span class="meta-value">${escapeHtml(customerAddress || '')}</span></div>
+      <div class="meta-cell"><span class="meta-label">制单人：</span><span class="meta-value center">${escapeHtml(data.issuer || '')}</span></div>
     </div>
 
-    <div class="meta">
-      <div class="meta-item"><label>客户名称</label><span>${escapeHtml(data.customerName)}</span></div>
-      <div class="meta-item"><label>客户地址</label><span>${escapeHtml(customerAddress || '—')}</span></div>
-      <div class="meta-item"><label>联系电话</label><span>${escapeHtml(data.customerPhone || '—')}</span></div>
-      <div class="meta-item"><label>日期</label><span>${escapeHtml(formatDisplayDate(data.date))}</span></div>
-    </div>
-
-    <table>
+    <table class="item-table">
       <colgroup>
-        <col style="width:11%" />
-        <col style="width:6%" />
-        <col style="width:12%" />
-        <col style="width:11%" />
-        <col style="width:7%" />
+        <col style="width:8%" />
+        <col style="width:42%" />
         <col style="width:9%" />
+        <col style="width:8%" />
         <col style="width:10%" />
+        <col style="width:11%" />
         <col style="width:12%" />
-        <col style="width:22%" />
       </colgroup>
       <thead>
         <tr>
-          <th>材质</th>
           <th>序号</th>
-          <th>型号</th>
-          <th>规格</th>
+          <th>品名</th>
+          <th>数量</th>
           <th>单位</th>
-          <th>重量</th>
           <th>单价</th>
-          <th>金额(元)</th>
+          <th>金额</th>
           <th>备注</th>
         </tr>
       </thead>
       <tbody>
         ${itemRows}
-        ${blankRows}
       </tbody>
     </table>
 
-    <div class="total-row">
-      <div class="total-cn"><strong>总金额(大写)：</strong>${escapeHtml(data.amountChinese)}</div>
-      <div class="total-num">￥${escapeHtml(formatMoney(data.totalAmount))}</div>
+    <div class="summary-box">
+      <div class="summary-cell"><span class="bold">总计：</span><span class="bold">${escapeHtml(data.amountChinese)}</span></div>
+      <div class="summary-cell right"><span class="bold">合计金额：</span><span class="amount">￥${escapeHtml(formatMoney(data.totalAmount))}</span></div>
     </div>
-    ${settings.pickNote ? `<div class="pick-note">(${escapeHtml(settings.pickNote)})</div>` : ''}
+    ${paymentLine}
+    ${settings.pickNote ? `<div class="statement center">（${escapeHtml(settings.pickNote)}）</div>` : ''}
 
-    <div class="footer">
-      <div class="footer-item">${settings.phones ? `联系电话：${escapeHtml(settings.phones)}` : '联系电话：'}</div>
-      <div class="footer-item">${settings.address ? `联系地址：${escapeHtml(settings.address)}` : '联系地址：'}</div>
-      <div class="footer-item">审核人：${escapeHtml(settings.auditor || '')}</div>
-      <div class="footer-item">提货人签收：</div>
-      <div class="footer-item">客户签收：</div>
+    <div class="footer-info">
+      <div>联系电话：${escapeHtml(settings.phones || '')}</div>
+      <div>店铺地址：${escapeHtml(settings.address || '')}</div>
     </div>
-    ${settings.footerNote ? `<div class="pick-note">${escapeHtml(settings.footerNote)}</div>` : ''}
+    <div class="statement">声明：${escapeHtml(settings.footerNote || '以上货品请核对数量，如有问题请三个工作日内通知本店，逾期概不负责。')}</div>
+    <div class="sign-line">
+      <span>审核人：${escapeHtml(settings.auditor || '')}</span>
+      <span>客户签收：</span>
+      <span>收货负责人：</span>
+    </div>
+    <div class="copies">
+      <span>第一联：成单</span>
+      <span>第二联：客户</span>
+      <span>第三联：存根</span>
+    </div>
   </div>
 </body>
 </html>`

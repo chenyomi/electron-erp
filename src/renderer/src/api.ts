@@ -60,6 +60,7 @@ export const customerAPI = {
 export const attachmentAPI = {
   list: (relatedTable: string, relatedId: number) => api.invoke('attachment:list', relatedTable, relatedId),
   pick: () => api.invoke('attachment:pick'),
+  pickChat: () => api.invoke('attachment:pick-chat'),
   add: (relatedTable: string, relatedId: number, filePaths?: string[]) => api.invoke('attachment:add', relatedTable, relatedId, filePaths),
 }
 

@@ -42,7 +42,7 @@ export const DEFAULT_SALES_SLIP_SETTINGS: SalesSlipSettings = {
 
 export const DEFAULT_METAL_SLIP_SETTINGS: MetalSlipSettings = {
   companyName: '温州东昊汽车配件有限公司',
-  slipTitle: '产品销售单',
+  slipTitle: '产品出库单',
   address: '',
   phones: '',
   footerNote: '',
@@ -58,11 +58,11 @@ export const DEFAULT_LODOP_SETTINGS: LodopSettings = {
   offsetXMm: DEFAULT_LODOP_OFFSET.offsetXMm,
   offsetYMm: DEFAULT_LODOP_OFFSET.offsetYMm,
   usePreview: true,
-  overlayMode: true,
+  overlayMode: false,
 }
 
 export const DEFAULT_PRINT_SETTINGS: PrintSettingsBundle = {
-  template: 'sales',
+  template: 'metal',
   sales: { ...DEFAULT_SALES_SLIP_SETTINGS },
   metal: { ...DEFAULT_METAL_SLIP_SETTINGS },
   lodop: { ...DEFAULT_LODOP_SETTINGS },

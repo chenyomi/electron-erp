@@ -17,15 +17,18 @@ export interface ExportParams {
 
 const COMPANY_NAME = '温州东昊汽车配件有限公司'
 const THEME = {
-  navy: '1F4E78',
-  blue: '2F75B5',
-  lightBlue: 'D9EAF7',
-  paleBlue: 'EAF3F8',
-  gray: 'F2F4F7',
+  navy: '17365D',
+  blue: '2563A8',
+  lightBlue: 'DCEBFA',
+  paleBlue: 'F5FAFF',
+  gray: 'F3F6FA',
+  softGray: 'FAFBFD',
   white: 'FFFFFF',
-  text: '1F2937',
-  muted: '64748B',
-  border: 'D9E2EC',
+  text: '1F2933',
+  muted: '637083',
+  border: 'CBD6E2',
+  accent: 'EAF2FF',
+  warning: 'FFF7E6',
 }
 
 const thinBorder = {
@@ -86,7 +89,8 @@ function encodeRange(startRow: number, startCol: number, endRow: number, endCol:
 
 function setCellStyle(sheet: XLSX.WorkSheet, row: number, col: number, style: any) {
   const address = XLSX.utils.encode_cell({ r: row, c: col })
-  const cell = sheet[address] as any
+  const cell = (sheet[address] || { v: '', t: 's' }) as any
+  sheet[address] = cell
   if (!cell) return
   cell.s = { ...(cell.s || {}), ...style }
 }
@@ -100,7 +104,11 @@ function styleTableCell(sheet: XLSX.WorkSheet, row: number, col: number, column:
     border: thinBorder,
     font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.text } },
     alignment: {
-      horizontal: column.type === 'money' || column.type === 'qty' || column.key === 'index' ? 'right' : 'left',
+      horizontal: column.type === 'money' || column.type === 'qty'
+        ? 'right'
+        : ['index', 'date', 'month_label', 'unit', 'category'].includes(column.key)
+          ? 'center'
+          : 'left',
       vertical: 'center',
       wrapText: ['description', 'note', 'product_name', 'spec'].includes(column.key),
     },
@@ -123,15 +131,27 @@ function buildFilterLine(params: ExportParams) {
   return parts.length ? `筛选条件：${parts.join('；')}` : '筛选条件：全部记录'
 }
 
+function emptyRow(colCount: number) {
+  return Array.from({ length: colCount }, () => '')
+}
+
 function buildTitleBlock(design: ExportDesign, params: ExportParams, rowCount: number) {
   const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   const exportedAt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+  const colCount = design.columns.length
+  const splitCol = Math.max(Math.floor(colCount / 2), 1)
+  const companyRow = emptyRow(colCount)
+  companyRow[0] = COMPANY_NAME
+  companyRow[splitCol] = `导出时间：${exportedAt}`
+  const filterRow = emptyRow(colCount)
+  filterRow[0] = buildFilterLine(params)
+  filterRow[splitCol] = `记录数：${rowCount} 条`
   return [
-  [design.title],
-  [COMPANY_NAME, `导出时间：${exportedAt}`],
-  [buildFilterLine(params), `共 ${rowCount} 条`],
-  [],
+    [design.title, ...emptyRow(Math.max(colCount - 1, 0))],
+    companyRow,
+    filterRow,
+    emptyRow(colCount),
   ]
 }
 
@@ -179,7 +199,7 @@ function createWorksheet(design: ExportDesign, params: ExportParams, rawRows: an
   const summary = summarizeRows(design.columns, rows)
   const summaryCells = buildSummaryCells(design, design.columns, rows, summary)
 
-  const aoa = [...titleBlock, headerRow, ...dataRows, [], summaryCells]
+  const aoa = [...titleBlock, headerRow, ...dataRows, summaryCells]
   const sheet = XLSX.utils.aoa_to_sheet(aoa)
 
   const headerRowIndex = titleBlock.length
@@ -207,42 +227,44 @@ function createWorksheet(design: ExportDesign, params: ExportParams, rawRows: an
 
   sheet['!cols'] = design.columns.map((column) => ({ wch: column.width }))
   sheet['!rows'] = [
-    { hpt: 28 },
+    { hpt: 34 },
     { hpt: 22 },
     { hpt: 22 },
     { hpt: 6 },
-    { hpt: 24 },
-    ...dataRows.map(() => ({ hpt: 22 })),
-    { hpt: 6 },
-    { hpt: 24 },
+    { hpt: 26 },
+    ...dataRows.map(() => ({ hpt: 24 })),
+    { hpt: 26 },
   ]
+  const splitCol = Math.max(Math.floor(design.columns.length / 2), 1)
   sheet['!merges'] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(design.columns.length - 1, 1) } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: Math.max(Math.floor(design.columns.length / 2) - 1, 0) } },
-    { s: { r: 1, c: Math.max(Math.floor(design.columns.length / 2), 1) }, e: { r: 1, c: Math.max(design.columns.length - 1, 1) } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: Math.max(Math.floor(design.columns.length / 2) - 1, 0) } },
-    { s: { r: 2, c: Math.max(Math.floor(design.columns.length / 2), 1) }, e: { r: 2, c: Math.max(design.columns.length - 1, 1) } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: splitCol - 1 } },
+    { s: { r: 1, c: splitCol }, e: { r: 1, c: Math.max(design.columns.length - 1, splitCol) } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: splitCol - 1 } },
+    { s: { r: 2, c: splitCol }, e: { r: 2, c: Math.max(design.columns.length - 1, splitCol) } },
   ]
   sheet['!autofilter'] = { ref: encodeRange(headerRowIndex, 0, Math.max(headerRowIndex + dataRows.length, headerRowIndex), design.columns.length - 1) }
   sheet['!freeze'] = { xSplit: 0, ySplit: headerRowIndex + 1, topLeftCell: 'A' + (headerRowIndex + 2), activePane: 'bottomLeft', state: 'frozen' }
 
-  setCellStyle(sheet, 0, 0, {
-    font: { name: 'Microsoft YaHei', sz: 16, bold: true, color: { rgb: THEME.white } },
+  styleRow(sheet, 0, design.columns.length, {
+    font: { name: 'Microsoft YaHei', sz: 17, bold: true, color: { rgb: THEME.white } },
     fill: { patternType: 'solid', fgColor: { rgb: THEME.navy } },
     alignment: { horizontal: 'center', vertical: 'center' },
   })
   styleRow(sheet, 1, design.columns.length, {
-    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
-    fill: { patternType: 'solid', fgColor: { rgb: THEME.gray } },
+    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.text } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.accent } },
+    border: thinBorder,
     alignment: { vertical: 'center' },
   })
   styleRow(sheet, 2, design.columns.length, {
     font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
-    fill: { patternType: 'solid', fgColor: { rgb: THEME.gray } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.softGray } },
+    border: thinBorder,
     alignment: { vertical: 'center' },
   })
   styleRow(sheet, headerRowIndex, design.columns.length, {
-    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.white } },
+    font: { name: 'Microsoft YaHei', sz: 10.5, bold: true, color: { rgb: THEME.white } },
     fill: { patternType: 'solid', fgColor: { rgb: THEME.blue } },
     border: thinBorder,
     alignment: { horizontal: 'center', vertical: 'center' },
@@ -252,10 +274,18 @@ function createWorksheet(design: ExportDesign, params: ExportParams, rawRows: an
     design.columns.forEach((column, columnIndex) => styleTableCell(sheet, rowIndex, columnIndex, column, fill))
   }
   styleRow(sheet, summaryRowIndex, design.columns.length, {
-    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.text } },
+    font: { name: 'Microsoft YaHei', sz: 10.5, bold: true, color: { rgb: THEME.text } },
     fill: { patternType: 'solid', fgColor: { rgb: THEME.lightBlue } },
     border: thinBorder,
-    alignment: { vertical: 'center' },
+    alignment: { vertical: 'center', horizontal: 'center' },
+  })
+  design.columns.forEach((column, columnIndex) => {
+    if (column.type === 'money' || column.type === 'qty') {
+      styleTableCell(sheet, summaryRowIndex, columnIndex, column, THEME.lightBlue)
+      setCellStyle(sheet, summaryRowIndex, columnIndex, {
+        font: { name: 'Microsoft YaHei', sz: 10.5, bold: true, color: { rgb: THEME.text } },
+      })
+    }
   })
 
   return { sheet, rows }
@@ -609,44 +639,70 @@ function buildOverviewSheet(db: any) {
   ]
 
   const aoa = [
-    ['账务总览'],
-    [COMPANY_NAME, `导出时间：${exportedAt}`],
+    ['账务总览', '', '', '', '', '', ''],
+    [COMPANY_NAME, '', '', `导出时间：${exportedAt}`, '', '', ''],
+    ['包含现金账、公账、承兑票、客户往来、材料入库、产品出库全部未删除记录', '', '', `账册数：${stats.length}`, '', '', ''],
     [],
     ['账册', '记录数', '进/收入项', '金额', '出/支出项', '金额', '备注'],
     ...stats.map((item) => [item.name, item.count, item.inLabel, item.inValue, item.outLabel, item.outValue, item.extra]),
   ]
   const sheet = XLSX.utils.aoa_to_sheet(aoa)
-  sheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 22 }]
-  sheet['!rows'] = [{ hpt: 28 }, { hpt: 22 }, { hpt: 6 }, { hpt: 24 }, ...stats.map(() => ({ hpt: 22 }))]
-  sheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }]
-  sheet['!autofilter'] = { ref: encodeRange(3, 0, 3 + stats.length, 6) }
+  sheet['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 28 }]
+  sheet['!rows'] = [{ hpt: 34 }, { hpt: 22 }, { hpt: 22 }, { hpt: 6 }, { hpt: 26 }, ...stats.map(() => ({ hpt: 24 }))]
+  sheet['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 2 } },
+    { s: { r: 1, c: 3 }, e: { r: 1, c: 6 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 2 } },
+    { s: { r: 2, c: 3 }, e: { r: 2, c: 6 } },
+  ]
+  sheet['!autofilter'] = { ref: encodeRange(4, 0, 4 + stats.length, 6) }
+  sheet['!freeze'] = { xSplit: 0, ySplit: 5, topLeftCell: 'A6', activePane: 'bottomLeft', state: 'frozen' }
 
-  setCellStyle(sheet, 0, 0, {
-    font: { name: 'Microsoft YaHei', sz: 16, bold: true, color: { rgb: THEME.white } },
+  styleRow(sheet, 0, 7, {
+    font: { name: 'Microsoft YaHei', sz: 17, bold: true, color: { rgb: THEME.white } },
     fill: { patternType: 'solid', fgColor: { rgb: THEME.navy } },
     alignment: { horizontal: 'center', vertical: 'center' },
   })
   styleRow(sheet, 1, 7, {
-    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
-    fill: { patternType: 'solid', fgColor: { rgb: THEME.gray } },
+    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.text } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.accent } },
+    border: thinBorder,
     alignment: { vertical: 'center' },
   })
-  styleRow(sheet, 3, 7, {
-    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.white } },
+  styleRow(sheet, 2, 7, {
+    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.softGray } },
+    border: thinBorder,
+    alignment: { vertical: 'center' },
+  })
+  styleRow(sheet, 4, 7, {
+    font: { name: 'Microsoft YaHei', sz: 10.5, bold: true, color: { rgb: THEME.white } },
     fill: { patternType: 'solid', fgColor: { rgb: THEME.blue } },
     border: thinBorder,
     alignment: { horizontal: 'center', vertical: 'center' },
   })
-  for (let rowIndex = 4; rowIndex < 4 + stats.length; rowIndex++) {
-    const fill = (rowIndex - 4) % 2 === 1 ? THEME.paleBlue : undefined
+  for (let rowIndex = 5; rowIndex < 5 + stats.length; rowIndex++) {
+    const fill = (rowIndex - 5) % 2 === 1 ? THEME.paleBlue : undefined
     for (let col = 0; col < 7; col++) {
       const style: any = {
         font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.text } },
         border: thinBorder,
-        alignment: { horizontal: [1, 3, 5].includes(col) ? 'right' : 'left', vertical: 'center' },
+        alignment: { horizontal: [1, 3, 5].includes(col) ? 'right' : col === 0 ? 'center' : 'left', vertical: 'center', wrapText: col === 6 },
       }
       if (fill) style.fill = { patternType: 'solid', fgColor: { rgb: fill } }
       setCellStyle(sheet, rowIndex, col, style)
+    }
+    for (const col of [1, 3, 5]) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: col })
+      const value = num((sheet[address] as any)?.v)
+      sheet[address] = col === 1 ? qtyCell(value) : moneyCell(value)
+      setCellStyle(sheet, rowIndex, col, {
+        font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.text } },
+        border: thinBorder,
+        alignment: { horizontal: 'right', vertical: 'center' },
+        ...(fill ? { fill: { patternType: 'solid', fgColor: { rgb: fill } } } : {}),
+      })
     }
   }
   return sheet
@@ -662,6 +718,10 @@ export function buildExportWorkbook(db: any, table: ExportTable, params: ExportP
       keyword: params.keyword,
       customerName: params.customerName,
       supplierName: params.supplierName,
+      year: params.year,
+      month: params.month,
+      startDate: params.startDate,
+      endDate: params.endDate,
       ids: params.ids,
     }
 

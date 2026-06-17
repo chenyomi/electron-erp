@@ -10,7 +10,7 @@ const vuetify = createVuetify({
   components,
   directives,
   theme: {
-    defaultTheme: 'donghaoDark',
+    defaultTheme: 'donghaoLight',
     themes: {
       donghaoDark: {
         dark: true,

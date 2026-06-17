@@ -21,6 +21,22 @@ export function registerAttachmentHandlers(): void {
     }))
   })
 
+  ipcMain.handle('attachment:pick-chat', async () => {
+    const filePaths = await pickChatFiles()
+    return filePaths.map(filePath => {
+      const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null
+      const image = isImageFile(filePath)
+      return {
+        filePath,
+        fileName: path.basename(filePath),
+        size: stat?.size || 0,
+        mime: mimeForFile(filePath),
+        kind: image ? 'image' : 'file',
+        dataUrl: image ? imageDataUrl(filePath) : ''
+      }
+    })
+  })
+
   ipcMain.handle('attachment:add', async (_e, relatedTable: string, relatedId: number, filePaths?: string[]) => {
     if (!allowedTables.has(relatedTable)) return { ok: false, error: 'invalid table' }
     const paths = filePaths?.length ? filePaths : await pickImageFiles()
@@ -89,6 +105,18 @@ async function pickImageFiles(): Promise<string[]> {
   return result.canceled ? [] : result.filePaths
 }
 
+async function pickChatFiles(): Promise<string[]> {
+  const result = await dialog.showOpenDialog({
+    filters: [
+      { name: '可发送文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf', 'xlsx', 'xls', 'doc', 'docx', 'txt', 'csv'] },
+      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
+      { name: '所有文件', extensions: ['*'] }
+    ],
+    properties: ['openFile', 'multiSelections']
+  })
+  return result.canceled ? [] : result.filePaths
+}
+
 function listAttachments(relatedTable: string, relatedId: number): any[] {
   const db = getDb()
   const rows = db.prepare(`
@@ -111,6 +139,25 @@ function imageDataUrl(filePath?: string): string {
   const ext = path.extname(filePath).toLowerCase()
   const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/webp'
   return `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`
+}
+
+function isImageFile(filePath: string): boolean {
+  return ['.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(filePath).toLowerCase())
+}
+
+function mimeForFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === '.png') return 'image/png'
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.webp') return 'image/webp'
+  if (ext === '.pdf') return 'application/pdf'
+  if (ext === '.csv') return 'text/csv'
+  if (ext === '.txt') return 'text/plain'
+  if (ext === '.xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  if (ext === '.xls') return 'application/vnd.ms-excel'
+  if (ext === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  if (ext === '.doc') return 'application/msword'
+  return 'application/octet-stream'
 }
 
 async function compressImage(raw: Buffer): Promise<Buffer> {

@@ -3,7 +3,7 @@ import { getDb, getDataDir } from '../db'
 import { listBackups, autoBackup, restoreFromBackup, restoreFromBackupPackage, exportBackupPackage, getBackupPathByName, getBackupPackageDefaultName } from '../backup'
 import { dirname, join } from 'path'
 import * as fs from 'fs'
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx-js-style'
 import { buildExportWorkbook, timestampForFile, type ExportParams, type ExportTable } from '../export/ledger-export'
 import { buildDateFilterClause } from './helpers'
 

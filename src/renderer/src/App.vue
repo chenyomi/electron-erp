@@ -29,7 +29,7 @@
           </div>
         </div>
 
-        <v-alert v-if="loginError" type="error" variant="tonal" density="compact" class="mb-4">{{ loginError }}</v-alert>
+        <v-alert v-if="loginError" type="error" variant="tonal" density="compact" :icon="false" class="login-alert mb-4">{{ loginError }}</v-alert>
         <v-form @submit.prevent>
           <v-text-field
             v-model.trim="loginForm.username"
@@ -97,7 +97,6 @@
         <ImportPage v-else-if="page === 'import'" :t="t" @notify="notify" />
         <TrashPage v-else-if="page === 'trash'" :t="t" @notify="notify" />
         <LogsPage v-else-if="page === 'logs'" :t="t" />
-        <AiAssistant v-else-if="page === 'ai'" :compact="false" @notify="notify" />
       </main>
 
       <v-card class="user-card top-user-card">
@@ -116,9 +115,23 @@
         </div>
         <v-btn class="logout-compact" color="error" variant="tonal" size="small" :title="t('logout')" @click="handleLogout">⏻</v-btn>
       </v-card>
-      <v-navigation-drawer v-model="aiDrawer" location="right" temporary width="560">
-        <AiAssistant compact @notify="notify" />
-      </v-navigation-drawer>
+      <div class="ai-float" :class="{ open: aiFloatingOpen }">
+        <v-btn class="ai-float-button" color="primary" :aria-expanded="aiFloatingOpen" @click="aiFloatingOpen = !aiFloatingOpen">
+          <span class="ai-core">AI</span>
+          <span>{{ aiFloatingOpen ? t('close') : t('ai') }}</span>
+        </v-btn>
+        <v-card v-show="aiFloatingOpen" class="ai-floating-card">
+          <div class="ai-floating-header">
+            <div>
+              <div class="ai-floating-eyebrow">SiliconFlow</div>
+              <div class="ai-floating-title">{{ t('ai') }}</div>
+              <div class="ai-floating-subtitle">{{ t('aiSub') }}</div>
+            </div>
+            <v-btn icon size="small" variant="text" :title="t('close')" @click="aiFloatingOpen = false">×</v-btn>
+          </div>
+          <AiAssistant compact @notify="notify" />
+        </v-card>
+      </div>
     </div>
 
     <v-dialog v-model="passwordDialog" max-width="480" scrollable>
@@ -209,8 +222,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   VAlert,
   VBtn,
@@ -218,7 +230,6 @@ import {
   VCardActions,
   VCardText,
   VCardTitle,
-  VCheckboxBtn,
   VDialog,
   VList,
   VListItem,
@@ -237,9 +248,10 @@ import {
 import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI } from './api'
 import { runLodopScript, checkLodopAvailable } from './lodop-print'
 
-type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'products' | 'inventory' | 'ai' | 'trash' | 'logs' | 'import'
+type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'products' | 'inventory' | 'trash' | 'logs' | 'import'
 type ThemeMode = 'dark' | 'light'
 type Lang = 'zh' | 'en'
+type EChartsModule = typeof import('echarts')
 
 interface LoginUser {
   id: number
@@ -380,8 +392,8 @@ const messages = {
     exportDone: '导出完成，共 {count} 条',
     exportDoneSelected: '已导出选中 {count} 条',
     exportFailed: '导出失败',
-    printSlip: '打印销售单',
-    printPreview: '销售单预览',
+    printSlip: '打印出库单',
+    printPreview: '出库单预览',
     printNow: '打印',
     savePdf: '保存 PDF',
     slipSettings: '模板设置',
@@ -393,8 +405,8 @@ const messages = {
     selectRowsToPrint: '请先勾选要打印的出库记录',
     settingsSaved: '模板已保存',
     printTemplate: '单据模板',
-    templateSales: '竖版销售单',
-    templateMetal: '横版金属单',
+    templateSales: '普通销售单（半A4）',
+    templateMetal: '金属材料单（横版）',
     customerAddress: '客户地址',
     lodopPrint: 'Lodop套打',
     lodopDone: '已打开 Lodop 打印预览',
@@ -623,8 +635,8 @@ const messages = {
     exportDone: 'Export complete, {count} rows',
     exportDoneSelected: 'Exported {count} selected rows',
     exportFailed: 'Export failed',
-    printSlip: 'Print Slip',
-    printPreview: 'Sales Slip Preview',
+    printSlip: 'Print Outbound Slip',
+    printPreview: 'Outbound Slip Preview',
     printNow: 'Print',
     savePdf: 'Save PDF',
     slipSettings: 'Template',
@@ -636,8 +648,8 @@ const messages = {
     selectRowsToPrint: 'Select outbound rows first',
     settingsSaved: 'Template saved',
     printTemplate: 'Template',
-    templateSales: 'Sales Slip',
-    templateMetal: 'Metal Slip',
+    templateSales: 'Standard Sales Slip',
+    templateMetal: 'Metal Material Slip',
     customerAddress: 'Customer Address',
     lodopPrint: 'Lodop Print',
     lodopDone: 'Lodop preview opened',
@@ -740,7 +752,13 @@ const messages = {
 const page = ref<PageKey>('dashboard')
 const currentUser = ref<LoginUser | null>(null)
 const checkingAuth = ref(true)
-const themeMode = ref<ThemeMode>((localStorage.getItem('themeMode') as ThemeMode) || 'dark')
+function getInitialThemeMode(): ThemeMode {
+  const saved = localStorage.getItem('themeMode')
+  if (saved === 'dark' || saved === 'light') return saved
+  return 'light'
+}
+
+const themeMode = ref<ThemeMode>(getInitialThemeMode())
 const languageMode = ref<Lang>((localStorage.getItem('languageMode') as Lang) || 'zh')
 const loginLoading = ref(false)
 const loginError = ref('')
@@ -749,9 +767,10 @@ const passwordDialog = ref(false)
 const helpDialog = ref(false)
 const passwordLoading = ref(false)
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
-const aiDrawer = ref(false)
+const aiFloatingOpen = ref(false)
 const snackbar = reactive({ show: false, text: '', color: 'success' })
 const appVersion = ref('')
+let echartsModule: EChartsModule | null = null
 
 const themeName = computed(() => themeMode.value === 'dark' ? 'donghaoDark' : 'donghaoLight')
 const isLedgerPage = computed(() => ['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut'].includes(page.value))
@@ -767,7 +786,6 @@ const navItems = [
   { key: 'stockIn' as PageKey, icon: '📦', label: 'stockIn', sub: 'stockInSub' },
   { key: 'stockOut' as PageKey, icon: '🚚', label: 'stockOut', sub: 'stockOutSub' },
   { key: 'inventory' as PageKey, icon: '▦', label: 'inventory', sub: 'inventorySub' },
-  { key: 'ai' as PageKey, icon: 'AI', label: 'ai', sub: 'aiSub' },
 ]
 
 const bottomItems = [
@@ -912,10 +930,11 @@ const DashboardPage = defineComponent({
       monthly.value = m
       loading.value = false
       await nextTick()
-      renderCharts()
+      await renderCharts()
     }
 
-    const renderCharts = () => {
+    const renderCharts = async () => {
+      const echarts = echartsModule || (echartsModule = await import('echarts'))
       const months: string[] = []
       const cashIn: number[] = []
       const cashOut: number[] = []
@@ -967,8 +986,10 @@ const DashboardPage = defineComponent({
         ],
       })
       init(1, {
-        color: palette, tooltip: { trigger: 'item', ...tooltip }, legend: { bottom: 0, textStyle: axisText },
-        series: [{ type: 'pie', radius: ['38%', '72%'], roseType: 'radius', itemStyle: { borderRadius: 8, borderColor: '#0b1020', borderWidth: 2 }, data: [
+        color: palette,
+        tooltip: { trigger: 'item', ...tooltip },
+        legend: { bottom: 0, textStyle: axisText, itemWidth: 18, itemHeight: 12, itemGap: 12 },
+        series: [{ type: 'pie', center: ['50%', '42%'], radius: ['42%', '68%'], avoidLabelOverlap: true, label: { show: false }, labelLine: { show: false }, itemStyle: { borderRadius: 8, borderColor: '#0b1020', borderWidth: 2 }, data: [
           { name: '现金收入', value: cashIncome }, { name: '公账进账', value: bankIn }, { name: '承兑收入', value: billsIn },
           { name: '现金支出', value: cashExpense }, { name: '公账付出', value: bankOut }, { name: '承兑付出', value: billsOut },
         ].filter(i => i.value > 0) }],
@@ -990,7 +1011,7 @@ const DashboardPage = defineComponent({
         h(StatCard, { title: '承兑票净额', value: (summary.value?.bills?.totalIn || 0) - (summary.value?.bills?.totalOut || 0), color: 'warning' }),
       ]),
       h(ChartCard, { title: '月度收支趋势' }, () => h('div', { ref: chartRefs[0], class: 'chart tall' })),
-      h('div', { class: 'chart-grid' }, ['资金结构玫瑰图', '月度净流动能曲线', '资金净流健康仪表盘', '账务规模雷达图'].map((title, i) => h(ChartCard, { title }, () => h('div', { ref: chartRefs[i + 1], class: 'chart' })))),
+      h('div', { class: 'chart-grid' }, ['资金结构环图', '月度净流动能曲线', '资金净流健康仪表盘', '账务规模雷达图'].map((title, i) => h(ChartCard, { title }, () => h('div', { ref: chartRefs[i + 1], class: 'chart' })))),
       h(ChartCard, { title: '月度资金瀑布' }, () => h('div', { ref: chartRefs[5], class: 'chart tall' })),
     ])
   },
@@ -1302,7 +1323,7 @@ const LedgerPage = defineComponent({
         offsetXMm: 1,
         offsetYMm: 0.5,
         usePreview: true,
-        overlayMode: true,
+        overlayMode: false,
       },
     })
     const printForm = reactive({ customerPhone: '', customerAddress: '', paymentReceived: '' })
@@ -1436,13 +1457,18 @@ const LedgerPage = defineComponent({
       const settings = await printAPI.getSettings()
       Object.assign(printSettings, settings)
       printTemplate.value = settings.template === 'metal' ? 'metal' : 'sales'
+      if (printTemplate.value === 'metal') printSettings.lodop.overlayMode = false
       if (!Array.isArray(printSettings.sales?.copyLabels) || !printSettings.sales.copyLabels.length) {
         printSettings.sales.copyLabels = ['第一联：存根', '第二联：客户', '第三联：记账']
       }
-      lodopAvailable.value = await checkLodopAvailable(Number(printSettings.lodop?.servicePort) || 8000)
+    }
+    const checkLodopInBackground = () => {
+      checkLodopAvailable(Number(printSettings.lodop?.servicePort) || 8000)
+        .then((available) => { lodopAvailable.value = available })
+        .catch(() => { lodopAvailable.value = false })
     }
     const buildPreviewParams = () => ({
-      ids: selected.value,
+      ids: [...selected.value],
       template: printTemplate.value,
       customerPhone: printForm.customerPhone,
       customerAddress: printForm.customerAddress,
@@ -1455,23 +1481,35 @@ const LedgerPage = defineComponent({
         emit('notify', props.t('selectRowsToPrint'), 'error')
         return
       }
-      await loadSlipSettings()
       printLoading.value = true
-      const result = await printAPI.preview(buildPreviewParams())
-      printLoading.value = false
-      if (!result.ok) {
-        emit('notify', result.error || props.t('printFailed'), 'error')
-        return
+      try {
+        await loadSlipSettings()
+        const result = await printAPI.preview(buildPreviewParams())
+        if (!result.ok) {
+          emit('notify', result.error || props.t('printFailed'), 'error')
+          return
+        }
+        printHtml.value = result.html
+        printDialog.value = true
+        checkLodopInBackground()
+      } catch (error: any) {
+        emit('notify', error?.message || props.t('printFailed'), 'error')
+      } finally {
+        printLoading.value = false
       }
-      printHtml.value = result.html
-      printDialog.value = true
     }
     const refreshPrintPreview = async () => {
       if (!selected.value.length) return
       printLoading.value = true
-      const result = await printAPI.preview(buildPreviewParams())
-      printLoading.value = false
-      if (result.ok) printHtml.value = result.html
+      try {
+        const result = await printAPI.preview(buildPreviewParams())
+        if (result.ok) printHtml.value = result.html
+        else emit('notify', result.error || props.t('printFailed'), 'error')
+      } catch (error: any) {
+        emit('notify', error?.message || props.t('printFailed'), 'error')
+      } finally {
+        printLoading.value = false
+      }
     }
     const doPrint = async () => {
       if (!printHtml.value) return
@@ -1514,13 +1552,18 @@ const LedgerPage = defineComponent({
         .split(/[；;]/)
         .map((x: string) => x.trim())
         .filter(Boolean)
-      await printAPI.saveSettings({ ...printSettings })
+      await printAPI.saveSettings(JSON.parse(JSON.stringify(printSettings)))
       printSettingsDialog.value = false
       emit('notify', props.t('settingsSaved'))
       if (printDialog.value) await refreshPrintPreview()
     }
 
     const toggleAll = (value: boolean) => selected.value = value ? Array.from(new Set([...selected.value, ...rows.value.map(r => r.id)])) : selected.value.filter(id => !rows.value.some(r => r.id === id))
+    const toggleRowSelection = (id: number) => {
+      selected.value = selected.value.includes(id)
+        ? selected.value.filter(item => item !== id)
+        : Array.from(new Set([...selected.value, id]))
+    }
     const isPageAllSelected = computed(() => rows.value.length > 0 && rows.value.every(r => selected.value.includes(r.id)))
 
     watch(() => props.page, () => { keyword.value = ''; filterValue.value = ''; yearFilter.value = ''; monthFilter.value = ''; startDate.value = ''; endDate.value = ''; selected.value = []; currentPage.value = 1; load() }, { immediate: true })
@@ -1546,10 +1589,10 @@ const LedgerPage = defineComponent({
             ? h(VBtn, {
               variant: 'tonal',
               size: 'small',
-              disabled: !selected.value.length,
+              title: selected.value.length ? props.t('printSlip') : props.t('selectRowsToPrint'),
               loading: printLoading.value,
               onClick: openPrintPreview,
-            }, () => props.t('printSlip'))
+            }, () => selected.value.length ? `${props.t('printSlip')}(${selected.value.length})` : props.t('printSlip'))
             : null,
           h(VBtn, { color: 'primary', size: 'small', onClick: openAdd }, () => props.t(props.page === 'cash' ? 'addRecord' : 'add')),
         ]),
@@ -1561,13 +1604,25 @@ const LedgerPage = defineComponent({
       h(VCard, { class: 'data-card table-card' }, () => [
         h('div', { class: 'table-scroll' }, [
           h(VTable, { class: 'ledger-table', hover: true }, () => [
-            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h(VCheckboxBtn, { modelValue: isPageAllSelected.value, 'onUpdate:modelValue': toggleAll })]), ...displayColumns.value.map((c: string) => h('th', props.t(columnLabel(c)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
-            h('tbody', loading.value ? [h('tr', [h('td', { colspan: displayColumns.value.length + 2, class: 'empty-cell' }, '加载中...')])] : rows.value.map(row => h('tr', { key: row.id }, [
-              h('td', [h(VCheckboxBtn, { modelValue: selected.value.includes(row.id), 'onUpdate:modelValue': (v: boolean) => v ? selected.value = Array.from(new Set([...selected.value, row.id])) : selected.value = selected.value.filter(id => id !== row.id) })]),
+            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected.value }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected.value) } }, isPageAllSelected.value ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', props.t(columnLabel(c)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
+            h('tbody', loading.value ? [h('tr', [h('td', { colspan: displayColumns.value.length + 2, class: 'empty-cell' }, '加载中...')])] : rows.value.map(row => h('tr', {
+              key: row.id,
+              class: ['selectable-row', { selected: selected.value.includes(row.id) }],
+              onClick: () => toggleRowSelection(row.id),
+            }, [
+              h('td', { class: 'select-cell' }, [h('button', {
+                type: 'button',
+                class: ['table-check', { checked: selected.value.includes(row.id) }],
+                title: '选择此行',
+                onClick: (event: MouseEvent) => {
+                  event.stopPropagation()
+                  toggleRowSelection(row.id)
+                },
+              }, selected.value.includes(row.id) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]),
               ...displayColumns.value.map((c: string) => c === 'attachments'
                 ? h('td', [
                   row.attachment_count
-                    ? h('button', { type: 'button', class: 'table-image-thumb', onClick: () => openAttachments(row), title: props.t('viewImages') }, [
+                    ? h('button', { type: 'button', class: 'table-image-thumb', onClick: (event: MouseEvent) => { event.stopPropagation(); openAttachments(row) }, title: props.t('viewImages') }, [
                       row.attachment_thumb ? h('img', { src: row.attachment_thumb, alt: props.t('images') }) : h('span', props.t('images')),
                       h('b', row.attachment_count),
                     ])
@@ -1575,8 +1630,8 @@ const LedgerPage = defineComponent({
                 ])
                 : h('td', { class: amountClass(c) }, formatCell(c, row[c]))),
               h('td', { class: 'action-cell sticky-action-col' }, [
-                h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: () => openEdit(row) }, () => props.t('edit')),
-                h(VBtn, { size: 'small', variant: 'text', color: 'error', onClick: () => remove(row.id) }, () => props.t('delete')),
+                h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit')),
+                h(VBtn, { size: 'small', variant: 'text', color: 'error', onClick: (event: MouseEvent) => { event.stopPropagation(); remove(row.id) } }, () => props.t('delete')),
               ]),
             ]))),
           ]),
@@ -1662,6 +1717,7 @@ const LedgerPage = defineComponent({
       props.page === 'stockOut' ? h(VDialog, { modelValue: printDialog.value, 'onUpdate:modelValue': (v: boolean) => printDialog.value = v, maxWidth: 980, scrollable: true }, () => h(VCard, { class: 'pa-5 print-dialog-card' }, [
         h(VCardTitle, props.t('printPreview')),
         h(VCardText, [
+          h(VAlert, { type: 'info', variant: 'tonal', density: 'compact', class: 'mb-3' }, () => `已选择 ${selected.value.length} 条出库记录，将合并生成一张单据。金属材料建议使用「${props.t('templateMetal')}」。`),
           h('div', { class: 'print-form-row mb-4' }, [
             h(VSelect, {
               modelValue: printTemplate.value,
@@ -1767,7 +1823,7 @@ const LedgerPage = defineComponent({
           ]),
           h('div', { class: 'record-dialog__section' }, [
             h('div', { class: 'record-dialog__section-title' }, props.t('lodopSettings')),
-            h('p', { class: 'muted tiny mb-3' }, '金属单默认 241×140mm 横版；竖版销售单 210×140mm。偏移可在试打后微调。'),
+            h('p', { class: 'muted tiny mb-3' }, '金属材料单默认 241×140mm 横版，适合材质/规格/重量类出库；普通销售单 210×140mm。偏移可在试打后微调。'),
             h('div', { class: 'record-dialog__grid' }, [
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.lodop.offsetXMm, 'onUpdate:modelValue': (v: string) => { printSettings.lodop.offsetXMm = Number(v) || 0 }, label: props.t('offsetX'), type: 'number' })]),
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.lodop.offsetYMm, 'onUpdate:modelValue': (v: string) => { printSettings.lodop.offsetYMm = Number(v) || 0 }, label: props.t('offsetY'), type: 'number' })]),
@@ -2349,44 +2405,277 @@ const AiAssistant = defineComponent({
   props: { compact: Boolean },
   emits: ['notify'],
   setup(props, { emit }) {
+    type AiRole = 'system' | 'user' | 'assistant'
+    interface AiChatMessage {
+      role: AiRole
+      content: string
+    }
+    interface AiAttachment {
+      filePath: string
+      fileName: string
+      size?: number
+      dataUrl?: string
+      mime?: string
+      kind?: 'image' | 'file'
+    }
+    interface AiSession {
+      id: string
+      title: string
+      createdAt: string
+      updatedAt: string
+      model: string
+      messages: AiChatMessage[]
+    }
+
+    const AI_SESSIONS_KEY = 'donghao-ai-sessions-v1'
+    const DEFAULT_AI_MODEL = 'deepseek-ai/DeepSeek-V3'
+    const MAX_CONTEXT_MESSAGES = 12
+    const welcomeMessage: AiChatMessage = { role: 'assistant', content: '你好，我是 AI 助手。你可以问我账务分析、Excel 导入、对账思路或经营数据解读。' }
     const configured = ref<boolean | null>(null)
     const keyTail = ref('')
-    const model = ref('deepseek-ai/DeepSeek-R1')
+    const model = ref(DEFAULT_AI_MODEL)
     const input = ref('')
+    const pendingAttachments = ref<AiAttachment[]>([])
     const loading = ref(false)
+    const typing = ref(false)
+    const sessions = ref<AiSession[]>([])
+    const activeSessionId = ref('')
+    const chatScrollRef = ref<any>(null)
+    let typingTimer: ReturnType<typeof setTimeout> | null = null
     const modelOptions = [
-      'deepseek-ai/DeepSeek-R1',
       'deepseek-ai/DeepSeek-V3',
+      'deepseek-ai/DeepSeek-R1',
       'Qwen/Qwen2.5-7B-Instruct',
       'Qwen/Qwen2.5-14B-Instruct',
       'Qwen/Qwen3-32B',
     ]
-    const messages = ref<any[]>([{ role: 'assistant', content: '你好，我是 AI 助手。你可以问我账务分析、Excel 导入、对账思路或经营数据解读。' }])
-    const toPlainMessages = (items: any[]) => items
+    const messages = ref<AiChatMessage[]>([{ ...welcomeMessage }])
+    const activeSession = computed(() => sessions.value.find((session) => session.id === activeSessionId.value) || null)
+    const aiBusy = computed(() => loading.value || typing.value)
+    const toPlainMessages = (items: any[]): AiChatMessage[] => items
       .filter((message) => message && typeof message.content === 'string' && message.content.trim())
       .map((message) => ({
         role: message.role === 'assistant' || message.role === 'system' ? message.role : 'user',
         content: message.content.trim(),
       }))
+    const contextMessages = (items: AiChatMessage[]) => toPlainMessages(items)
+      .filter((message) => message.role !== 'system')
+      .slice(-MAX_CONTEXT_MESSAGES)
+
+    const sessionTitle = (items: AiChatMessage[]) => {
+      const firstUserMessage = items.find((message) => message.role === 'user' && message.content.trim())
+      return firstUserMessage?.content.trim().slice(0, 24) || '新会话'
+    }
+
+    const formatSessionTime = (value: string) => {
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return ''
+      return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    }
+
+    const formatFileSize = (value?: number) => {
+      if (!value || value <= 0) return ''
+      if (value < 1024) return `${value} B`
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+      return `${(value / 1024 / 1024).toFixed(1)} MB`
+    }
+
+    const attachmentSummary = (items: AiAttachment[]) => items
+      .map((item, index) => `${index + 1}. ${item.fileName}${formatFileSize(item.size) ? ` (${formatFileSize(item.size)})` : ''}${item.kind === 'image' ? ' [图片]' : ' [文件]'}`)
+      .join('\n')
+
+    const persistSessions = () => {
+      localStorage.setItem(AI_SESSIONS_KEY, JSON.stringify(sessions.value.slice(0, 30)))
+    }
+
+    const scrollChatToBottom = () => nextTick(() => {
+      const el = chatScrollRef.value?.$el || chatScrollRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+
+    const stopTypingTimer = () => {
+      if (!typingTimer) return
+      clearTimeout(typingTimer)
+      typingTimer = null
+    }
+
+    const typeAssistantMessage = (baseMessages: AiChatMessage[], content: string) => {
+      stopTypingTimer()
+      typing.value = true
+      let index = 0
+      const finalText = content || 'AI 没有返回内容。'
+      messages.value = [...baseMessages, { role: 'assistant', content: '' }]
+
+      const tick = () => {
+        const step = finalText.length > 400 ? 5 : finalText.length > 180 ? 3 : 2
+        index = Math.min(finalText.length, index + step)
+        messages.value = [...baseMessages, { role: 'assistant', content: finalText.slice(0, index) }]
+        scrollChatToBottom()
+
+        if (index >= finalText.length) {
+          typing.value = false
+          stopTypingTimer()
+          saveActiveSession()
+          return
+        }
+
+        typingTimer = setTimeout(tick, 12)
+      }
+
+      tick()
+    }
+
+    const createSession = () => {
+      const now = new Date().toISOString()
+      const session: AiSession = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        title: '新会话',
+        createdAt: now,
+        updatedAt: now,
+        model: model.value || DEFAULT_AI_MODEL,
+        messages: [{ ...welcomeMessage }],
+      }
+      sessions.value = [session, ...sessions.value].slice(0, 30)
+      activeSessionId.value = session.id
+      messages.value = session.messages.map((message) => ({ ...message }))
+      model.value = session.model
+      persistSessions()
+      scrollChatToBottom()
+    }
+
+    const saveActiveSession = () => {
+      const id = activeSessionId.value
+      if (!id) return
+      const index = sessions.value.findIndex((session) => session.id === id)
+      if (index === -1) return
+      const now = new Date().toISOString()
+      const nextSession: AiSession = {
+        ...sessions.value[index],
+        title: sessionTitle(messages.value),
+        updatedAt: now,
+        model: model.value || DEFAULT_AI_MODEL,
+        messages: messages.value.map((message) => ({ ...message })),
+      }
+      const nextSessions = [...sessions.value]
+      nextSessions.splice(index, 1)
+      sessions.value = [nextSession, ...nextSessions].slice(0, 30)
+      persistSessions()
+    }
+
+    const loadSessions = () => {
+      try {
+        const raw = localStorage.getItem(AI_SESSIONS_KEY)
+        const parsed = raw ? JSON.parse(raw) : []
+        if (Array.isArray(parsed)) {
+          sessions.value = parsed
+            .filter((session) => session?.id && Array.isArray(session.messages))
+            .map((session) => ({
+              id: String(session.id),
+              title: String(session.title || '新会话'),
+              createdAt: String(session.createdAt || new Date().toISOString()),
+              updatedAt: String(session.updatedAt || session.createdAt || new Date().toISOString()),
+              model: String(session.model || DEFAULT_AI_MODEL),
+              messages: toPlainMessages(session.messages),
+            }))
+            .slice(0, 30)
+        }
+      } catch {
+        sessions.value = []
+      }
+
+      if (!sessions.value.length) {
+        createSession()
+        return
+      }
+
+      activeSessionId.value = sessions.value[0].id
+      model.value = sessions.value[0].model || DEFAULT_AI_MODEL
+      messages.value = sessions.value[0].messages.map((message) => ({ ...message }))
+      scrollChatToBottom()
+    }
+
+    const selectSession = (id: string) => {
+      if (aiBusy.value || id === activeSessionId.value) return
+      saveActiveSession()
+      const session = sessions.value.find((item) => item.id === id)
+      if (!session) return
+      activeSessionId.value = session.id
+      model.value = session.model || DEFAULT_AI_MODEL
+      messages.value = session.messages.map((message) => ({ ...message }))
+      scrollChatToBottom()
+    }
+
+    const clearCurrentSession = () => {
+      if (aiBusy.value) return
+      messages.value = [{ ...welcomeMessage }]
+      saveActiveSession()
+      emit('notify', '当前 AI 会话已清空')
+      scrollChatToBottom()
+    }
+
+    const deleteSession = (id: string) => {
+      if (aiBusy.value) return
+      sessions.value = sessions.value.filter((session) => session.id !== id)
+      if (activeSessionId.value === id) {
+        if (sessions.value[0]) {
+          activeSessionId.value = sessions.value[0].id
+          model.value = sessions.value[0].model || DEFAULT_AI_MODEL
+          messages.value = sessions.value[0].messages.map((message) => ({ ...message }))
+        } else {
+          createSession()
+          return
+        }
+      }
+      persistSessions()
+      emit('notify', 'AI 会话记录已删除')
+      scrollChatToBottom()
+    }
+
+    const chooseChatAttachments = async () => {
+      if (aiBusy.value) return
+      try {
+        const picked = await attachmentAPI.pickChat()
+        if (picked?.length) pendingAttachments.value = [...pendingAttachments.value, ...picked]
+      } catch (error: any) {
+        emit('notify', error?.message || '选择附件失败', 'error')
+      }
+    }
+
+    const removeChatAttachment = (index: number) => {
+      pendingAttachments.value = pendingAttachments.value.filter((_, itemIndex) => itemIndex !== index)
+    }
 
     onMounted(async () => {
+      loadSessions()
       try {
         const status = await aiAPI.status()
         configured.value = Boolean(status?.ok)
         keyTail.value = status?.keyTail || ''
-        if (status?.model) model.value = status.model
+        if (status?.model && !activeSession.value?.model) model.value = status.model
       } catch {
         configured.value = false
       }
     })
 
+    onBeforeUnmount(() => {
+      stopTypingTimer()
+    })
+
     const send = async () => {
       const text = input.value.trim()
-      if (!text || loading.value) return
+      const attachments = pendingAttachments.value
+      if ((!text && !attachments.length) || aiBusy.value) return
 
-      const next = toPlainMessages([...messages.value, { role: 'user', content: text }])
+      const userContent = [
+        text || '请帮我看一下这些附件。',
+        attachments.length ? `\n附件：\n${attachmentSummary(attachments)}` : '',
+      ].join('').trim()
+      const next = toPlainMessages([...messages.value, { role: 'user', content: userContent }])
       messages.value = next
+      saveActiveSession()
+      scrollChatToBottom()
       input.value = ''
+      pendingAttachments.value = []
       loading.value = true
 
       try {
@@ -2394,7 +2683,7 @@ const AiAssistant = defineComponent({
           model: model.value,
           messages: [
             { role: 'system', content: '你是东昊账务系统里的 AI 助手。请用简洁中文回答。' },
-            ...next,
+            ...contextMessages(next),
           ],
         })
 
@@ -2402,14 +2691,18 @@ const AiAssistant = defineComponent({
           const errorText = result?.error || 'AI 请求失败'
           emit('notify', errorText, 'error')
           messages.value = [...next, { role: 'assistant', content: errorText }]
+          saveActiveSession()
+          scrollChatToBottom()
           return
         }
 
-        messages.value = [...next, { role: 'assistant', content: result.content }]
+        typeAssistantMessage(next, result.content)
       } catch (error: any) {
         const errorText = error?.message || 'AI 请求异常，请重启应用后再试。'
         emit('notify', errorText, 'error')
         messages.value = [...next, { role: 'assistant', content: errorText }]
+        saveActiveSession()
+        scrollChatToBottom()
       } finally {
         loading.value = false
       }
@@ -2422,34 +2715,99 @@ const AiAssistant = defineComponent({
       }
     }
 
+    const iconSvg = (path: string) => h('svg', {
+      class: 'chat-svg-icon',
+      viewBox: '0 0 24 24',
+      'aria-hidden': 'true',
+    }, [h('path', { d: path })])
+
     return () => h('div', { class: props.compact ? 'ai-panel compact' : 'page-wrap ai-panel' }, [
       !props.compact ? h(PageHeader, { title: 'AI 助手', subtitle: 'SiliconFlow 账务问答和经营分析' }) : null,
       configured.value === false ? h(VAlert, { type: 'warning', class: 'mb-3' }, () => '还没有配置 SiliconFlow Key，请在 .env.local 中设置 SILICONFLOW_API_KEY') : null,
-      h(VCard, { class: 'content-card ai-settings-card mb-3' }, () => [
-        h('div', { class: 'section-eyebrow' }, 'Model'),
-        h('div', { class: 'ai-model-meta' }, keyTail.value ? `Key 后 4 位：${keyTail.value}` : '按文档默认使用 DeepSeek-R1'),
-        h(VSelect, {
-          modelValue: model.value,
-          'onUpdate:modelValue': (v: string) => model.value = v,
-          items: modelOptions,
-          label: '模型',
-        }),
-      ]),
-      h(VCard, { class: 'chat-card' }, () => h('div', { class: 'chat-messages' }, [
-        ...messages.value.map((m, i) => h('div', { key: i, class: ['chat-bubble', m.role] }, m.content)),
-        loading.value ? h('div', { class: 'chat-loading' }, 'AI 正在思考...') : null,
-      ])),
-      h('div', { class: 'chat-input' }, [
-        h(VTextarea, {
-          modelValue: input.value,
-          'onUpdate:modelValue': (v: string) => input.value = v,
-          rows: 2,
-          label: '输入问题',
-          placeholder: '回车发送，Shift+回车换行',
-          disabled: loading.value,
-          onKeydown: handleEnter,
-        }),
-        h(VBtn, { color: 'primary', loading: loading.value, disabled: !input.value.trim(), onClick: send }, () => '发送'),
+      h('div', { class: 'ai-workspace' }, [
+        h('aside', { class: 'ai-sidebar' }, [
+          h('div', { class: 'ai-session-toolbar' }, [
+            h(VBtn, { size: 'small', color: 'primary', variant: 'tonal', disabled: aiBusy.value, onClick: createSession }, () => '新会话'),
+            h(VBtn, { size: 'small', variant: 'text', disabled: aiBusy.value, onClick: clearCurrentSession }, () => '清空'),
+          ]),
+          h('div', { class: 'ai-session-list' }, sessions.value.map((session) => h('button', {
+            key: session.id,
+            type: 'button',
+            class: ['ai-session-item', { active: session.id === activeSessionId.value }],
+            disabled: aiBusy.value,
+            onClick: () => selectSession(session.id),
+          }, [
+            h('span', { class: 'ai-session-main' }, [
+              h('span', { class: 'ai-session-title' }, session.title),
+              h('span', { class: 'ai-session-meta' }, `${formatSessionTime(session.updatedAt)} · ${session.messages.filter((message) => message.role === 'user').length}问`),
+            ]),
+            h('span', {
+              class: 'ai-session-delete',
+              title: '删除记录',
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation()
+                deleteSession(session.id)
+              },
+            }, '×'),
+          ]))),
+        ]),
+        h('section', { class: 'ai-chat-main' }, [
+          h(VCard, { class: 'chat-card', ref: chatScrollRef }, () => h('div', { class: 'chat-messages' }, [
+            ...messages.value.map((m, i) => {
+              const isTypingMessage = typing.value && m.role === 'assistant' && i === messages.value.length - 1
+              return h('div', { key: i, class: ['chat-bubble', m.role, { typing: isTypingMessage }] }, m.content || (isTypingMessage ? ' ' : ''))
+            }),
+            loading.value ? h('div', { class: 'chat-loading' }, 'AI 正在思考...') : null,
+          ])),
+          h('div', { class: 'ai-composer-shell' }, [
+            h('div', { class: 'ai-model-bar' }, [
+              h('span', { class: 'ai-model-chip', title: '当前模型' }, `⚙ ${model.value.split('/').at(-1) || model.value}`),
+              h(VSelect, {
+                modelValue: model.value,
+                'onUpdate:modelValue': (v: string) => {
+                  model.value = v || DEFAULT_AI_MODEL
+                  saveActiveSession()
+                },
+                items: modelOptions,
+                label: '模型',
+                density: 'compact',
+                hideDetails: true,
+                disabled: aiBusy.value,
+                class: 'ai-model-select',
+              }),
+            ]),
+            h('div', { class: 'chat-input' }, [
+              h('div', { class: 'chat-compose' }, [
+                pendingAttachments.value.length ? h('div', { class: 'chat-attachment-list' }, pendingAttachments.value.map((item, index) => h('button', {
+                  key: `${item.filePath}-${index}`,
+                  type: 'button',
+                  class: ['chat-attachment-chip', { image: item.kind === 'image' }],
+                  title: '点击移除附件',
+                  disabled: aiBusy.value,
+                  onClick: () => removeChatAttachment(index),
+                }, [
+                  item.dataUrl ? h('img', { src: item.dataUrl, alt: item.fileName }) : h('span', { class: 'chat-attachment-icon' }, '📎'),
+                  h('span', { class: 'chat-attachment-name' }, item.fileName),
+                  h('span', { class: 'chat-attachment-remove' }, '×'),
+                ]))) : null,
+                h(VTextarea, {
+                  modelValue: input.value,
+                  'onUpdate:modelValue': (v: string) => input.value = v,
+                  rows: props.compact ? 3 : 5,
+                  autoGrow: true,
+                  label: '输入问题',
+                  placeholder: '回车发送，Shift+回车换行，可附带文件或图片',
+                  disabled: aiBusy.value,
+                  onKeydown: handleEnter,
+                }),
+              ]),
+              h('div', { class: 'chat-actions' }, [
+                h(VBtn, { icon: true, variant: 'tonal', disabled: aiBusy.value, title: '附件/图片', class: 'chat-icon-btn', onClick: chooseChatAttachments }, () => iconSvg('M16.5 6v11.5q0 2.08-1.46 3.54T11.5 22q-2.08 0-3.54-1.46T6.5 17V5q0-1.25.88-2.13T9.5 2q1.25 0 2.13.87T12.5 5v10.5q0 .42-.29.71t-.71.29q-.43 0-.71-.29t-.29-.71V5q0-.43-.29-.71T9.5 4q-.43 0-.71.29T8.5 5v12q0 1.25.88 2.13T11.5 20q1.25 0 2.13-.87t.87-2.13V6h2Z')),
+                h(VBtn, { icon: true, color: 'primary', loading: loading.value, disabled: aiBusy.value || (!input.value.trim() && !pendingAttachments.value.length), title: '发送', class: 'chat-icon-btn send', onClick: send }, () => iconSvg('M11 20V7.83l-5.6 5.6L4 12l8-8 8 8-1.4 1.43-5.6-5.6V20h-2Z')),
+              ]),
+            ]),
+          ]),
+        ]),
       ]),
     ])
   },

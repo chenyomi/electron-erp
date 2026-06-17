@@ -5,6 +5,8 @@ import { registerBillsHandlers } from './bills'
 import { registerCustomerHandlers } from './customer'
 import { registerStockInHandlers } from './stock-in'
 import { registerStockOutHandlers } from './stock-out'
+import { registerInventoryHandlers } from './inventory'
+import { registerProductHandlers } from './products'
 import { registerSystemHandlers } from './system'
 import { registerImportHandlers } from './import'
 import { registerAuthHandlers } from './auth'
@@ -20,6 +22,8 @@ export function registerIpcHandlers(): void {
   registerCustomerHandlers()
   registerStockInHandlers()
   registerStockOutHandlers()
+  registerInventoryHandlers()
+  registerProductHandlers()
   registerSystemHandlers()
   registerAttachmentHandlers()
   registerPrintHandlers()

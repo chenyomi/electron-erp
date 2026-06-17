@@ -98,6 +98,10 @@ body {
   min-width: 34px;
 }
 
+.v-overlay__scrim {
+  opacity: .46 !important;
+}
+
 .fill-screen {
   min-height: 100vh;
   background: var(--app-bg);
@@ -223,6 +227,18 @@ body {
 
 .tiny {
   font-size: 11px;
+}
+
+.app-version {
+  display: inline-flex;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  color: var(--app-muted-soft);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .nav-section-label {
@@ -401,8 +417,9 @@ body {
 
 .ledger-page .page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 14px;
 }
 
@@ -419,6 +436,10 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   margin-top: 0;
+}
+
+.ledger-page .page-header__actions {
+  flex-basis: 100%;
 }
 
 .page-header h1 {
@@ -456,10 +477,10 @@ body {
 
 .header-toolbar {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  gap: 10px;
+  justify-content: flex-start;
   width: 100%;
   padding: 0;
   border: 0;
@@ -474,8 +495,9 @@ body {
 }
 
 .header-toolbar-input {
-  min-width: 220px;
-  max-width: 360px;
+  min-width: 150px;
+  max-width: 260px;
+  flex: 1 1 180px;
 }
 
 .header-toolbar .v-btn {
@@ -666,8 +688,8 @@ body {
   position: sticky;
   top: 0;
   z-index: 4;
-  height: 52px;
-  padding: 0 16px;
+  height: 44px;
+  padding: 0 12px;
   color: var(--app-muted);
   font-size: 12px;
   font-weight: 900;
@@ -707,8 +729,8 @@ body {
 }
 
 .ledger-table td {
-  height: 56px;
-  padding: 0 16px;
+  height: 46px;
+  padding: 0 12px;
   border-top: 1px solid var(--app-border);
   color: var(--app-text);
   text-align: center;
@@ -977,6 +999,7 @@ body {
 
 .image-preview-card {
   display: flex;
+  width: 100%;
   min-height: 180px;
   flex-direction: column;
   overflow: hidden;
@@ -984,7 +1007,14 @@ body {
   border-radius: 18px;
   color: var(--app-text);
   text-decoration: none;
+  text-align: left;
+  cursor: zoom-in;
   background: color-mix(in srgb, var(--app-surface-2) 72%, transparent);
+}
+
+.image-preview-card:hover {
+  border-color: color-mix(in srgb, var(--app-primary) 48%, var(--app-border));
+  transform: translateY(-1px);
 }
 
 .image-preview-card.pending {
@@ -1005,6 +1035,39 @@ body {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.image-zoom-dialog {
+  overflow: hidden;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 20px !important;
+  background: color-mix(in srgb, var(--app-surface) 96%, #000) !important;
+}
+
+.image-zoom-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.image-zoom-dialog__title {
+  overflow: hidden;
+  color: var(--app-text);
+  font-size: 14px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-zoom-dialog__img {
+  display: block;
+  width: 100%;
+  max-height: 78vh;
+  object-fit: contain;
+  background: rgba(2, 8, 23, .72);
 }
 
 .table-image-thumb {
@@ -1054,7 +1117,7 @@ body {
   overflow: hidden;
   border: 1px solid var(--app-border-strong);
   border-radius: 20px !important;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--app-surface-2) 88%, transparent), var(--app-surface)) !important;
+  background: linear-gradient(180deg, var(--app-surface-2), var(--app-surface)) !important;
   box-shadow: 0 28px 80px var(--app-shadow);
 }
 
@@ -1077,6 +1140,7 @@ body {
 }
 
 .record-dialog__body {
+  background: var(--app-surface);
   padding: 18px 24px 8px !important;
   max-height: min(72vh, 760px);
   overflow-y: auto;
@@ -1117,11 +1181,60 @@ body {
   gap: 10px;
   padding: 14px 24px 20px;
   border-top: 1px solid var(--app-border);
-  background: color-mix(in srgb, var(--app-surface-2) 42%, transparent);
+  background: var(--app-surface-2);
 }
 
 .record-dialog__footer .v-btn:last-child {
   min-width: 96px;
+}
+
+.record-dialog__eyebrow {
+  margin-bottom: 6px;
+  color: var(--app-primary-2);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.help-section {
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--app-surface-2) 76%, transparent);
+}
+
+.help-section--contact,
+.help-section:first-child {
+  grid-column: 1 / -1;
+}
+
+.help-section h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.help-section p,
+.help-section li {
+  color: var(--app-muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.help-section p {
+  margin: 0;
+}
+
+.help-section ul,
+.help-section ol {
+  margin: 0;
+  padding-left: 20px;
 }
 
 .form-image-section__head {

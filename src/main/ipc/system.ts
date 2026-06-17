@@ -1,10 +1,11 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { app, ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { getDb, getDataDir } from '../db'
 import { listBackups, autoBackup, restoreFromBackup, restoreFromBackupPackage, exportBackupPackage, getBackupPathByName, getBackupPackageDefaultName } from '../backup'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import * as fs from 'fs'
 import * as XLSX from 'xlsx'
 import { buildExportWorkbook, timestampForFile, type ExportParams, type ExportTable } from '../export/ledger-export'
+import { buildDateFilterClause } from './helpers'
 
 async function confirmRestore(parent: BrowserWindow | null): Promise<boolean> {
   const options = {
@@ -35,7 +36,29 @@ async function runRestore(sourcePath: string, parent: BrowserWindow | null) {
   return result
 }
 
+function ensureXlsxPath(filePath: string) {
+  return filePath.toLowerCase().endsWith('.xlsx') ? filePath : `${filePath}.xlsx`
+}
+
+function writeExcelFile(wb: XLSX.WorkBook, filePath: string) {
+  const targetPath = ensureXlsxPath(filePath)
+  fs.mkdirSync(dirname(targetPath), { recursive: true })
+  const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
+  fs.writeFileSync(targetPath, buffer)
+  return targetPath
+}
+
+function friendlySaveError(error: any) {
+  const code = error?.code || ''
+  if (code === 'EACCES' || code === 'EPERM') return '没有权限保存到该位置，请换到桌面或文稿文件夹再试。'
+  if (code === 'EBUSY') return '文件正在被其他程序占用，请关闭 Excel 后再导出。'
+  if (code === 'ENOENT') return '保存位置不存在，请重新选择保存位置。'
+  return error?.message || '导出失败'
+}
+
 export function registerSystemHandlers(): void {
+  ipcMain.handle('system:app-version', () => app.getVersion())
+
   ipcMain.handle('system:summary', () => {
     const db = getDb()
     const cash = db.prepare(`SELECT SUM(income) as totalIncome, SUM(expense) as totalExpense FROM cash_ledger WHERE deleted_at IS NULL`).get() as any
@@ -60,20 +83,61 @@ export function registerSystemHandlers(): void {
     }
   })
 
-  ipcMain.handle('system:logs', (_e, { page = 1, pageSize = 50 } = {}) => {
+  ipcMain.handle('system:logs', (_e, {
+    page = 1,
+    pageSize = 50,
+    keyword = '',
+    tableName = '',
+    action = '',
+    startDate = '',
+    endDate = '',
+  } = {}) => {
     const db = getDb()
     const offset = (page - 1) * pageSize
-    const rows = db.prepare(`SELECT * FROM operation_logs ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(pageSize, offset)
-    const { total } = db.prepare(`SELECT COUNT(*) as total FROM operation_logs`).get() as { total: number }
+    const like = `%${keyword}%`
+    const dateWhere = buildDateFilterClause({ startDate, endDate }, 'created_at')
+    const where = `
+      WHERE (? = '' OR table_name = ?)
+        AND (? = '' OR action = ?)
+        AND (table_name LIKE ? OR action LIKE ? OR operator LIKE ? OR CAST(record_id AS TEXT) LIKE ?)
+        ${dateWhere.sql}
+    `
+    const queryParams = [tableName, tableName, action, action, like, like, like, like, ...dateWhere.params]
+    const rows = db.prepare(`SELECT * FROM operation_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...queryParams, pageSize, offset)
+    const { total } = db.prepare(`SELECT COUNT(*) as total FROM operation_logs ${where}`).get(...queryParams) as { total: number }
     return { rows, total }
   })
 
-  ipcMain.handle('system:trash-all', () => {
+  ipcMain.handle('system:trash-all', (_e, {
+    keyword = '',
+    startDate = '',
+    endDate = '',
+    deletedStartDate = '',
+    deletedEndDate = '',
+  } = {}) => {
     const db = getDb()
-    const tables = ['cash_ledger', 'bank_ledger', 'acceptance_bills', 'customer_ledger', 'stock_in_ledger', 'stock_out_ledger']
+    const tables = [
+      { name: 'cash_ledger', search: ['description', 'operator', 'note', 'date'] },
+      { name: 'bank_ledger', search: ['description', 'note', 'date'] },
+      { name: 'acceptance_bills', search: ['description', 'note', 'date'] },
+      { name: 'customer_ledger', search: ['customer_name', 'description', 'note', 'date'] },
+      { name: 'stock_in_ledger', search: ['supplier_name', 'category', 'contract_no', 'product_name', 'spec', 'unit', 'note', 'date'] },
+      { name: 'stock_out_ledger', search: ['customer_name', 'category', 'contract_no', 'product_name', 'spec', 'unit', 'note', 'date'] },
+    ]
     const result: Record<string, any[]> = {}
     for (const t of tables) {
-      result[t] = db.prepare(`SELECT * FROM ${t} WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
+      const like = `%${keyword}%`
+      const keywordSql = t.search.map(column => `${column} LIKE ?`).join(' OR ')
+      const rowDateWhere = buildDateFilterClause({ startDate, endDate })
+      const deletedDateWhere = buildDateFilterClause({ startDate: deletedStartDate, endDate: deletedEndDate }, 'deleted_at')
+      result[t.name] = db.prepare(`
+        SELECT * FROM ${t.name}
+        WHERE deleted_at IS NOT NULL
+          AND (${keywordSql})
+          ${rowDateWhere.sql}
+          ${deletedDateWhere.sql}
+        ORDER BY deleted_at DESC
+      `).all(...t.search.map(() => like), ...rowDateWhere.params, ...deletedDateWhere.params)
     }
     return result
   })
@@ -101,10 +165,10 @@ export function registerSystemHandlers(): void {
 
       if (result.canceled || !result.filePath) return { ok: false, canceled: true }
 
-      XLSX.writeFile(wb, result.filePath)
-      return { ok: true, filePath: result.filePath, totalRows }
+      const filePath = writeExcelFile(wb, result.filePath)
+      return { ok: true, filePath, totalRows }
     } catch (error: any) {
-      return { ok: false, error: error?.message || '导出失败' }
+      return { ok: false, error: friendlySaveError(error) }
     }
   })
 

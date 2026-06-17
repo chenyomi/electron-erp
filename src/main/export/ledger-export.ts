@@ -1,4 +1,5 @@
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx-js-style'
+import { buildDateFilterClause } from '../ipc/helpers'
 
 export type ExportTable = 'all' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut'
 
@@ -7,10 +8,32 @@ export interface ExportParams {
   keyword?: string
   customerName?: string
   supplierName?: string
+  year?: string | number
+  month?: string | number
+  startDate?: string
+  endDate?: string
   ids?: number[]
 }
 
 const COMPANY_NAME = '温州东昊汽车配件有限公司'
+const THEME = {
+  navy: '1F4E78',
+  blue: '2F75B5',
+  lightBlue: 'D9EAF7',
+  paleBlue: 'EAF3F8',
+  gray: 'F2F4F7',
+  white: 'FFFFFF',
+  text: '1F2937',
+  muted: '64748B',
+  border: 'D9E2EC',
+}
+
+const thinBorder = {
+  top: { style: 'thin', color: { rgb: THEME.border } },
+  bottom: { style: 'thin', color: { rgb: THEME.border } },
+  left: { style: 'thin', color: { rgb: THEME.border } },
+  right: { style: 'thin', color: { rgb: THEME.border } },
+}
 
 type ColumnType = 'text' | 'money' | 'qty'
 
@@ -57,6 +80,35 @@ function textCell(value: string | number) {
   return { v: value, t: 's' as const }
 }
 
+function encodeRange(startRow: number, startCol: number, endRow: number, endCol: number) {
+  return XLSX.utils.encode_range({ s: { r: startRow, c: startCol }, e: { r: endRow, c: endCol } })
+}
+
+function setCellStyle(sheet: XLSX.WorkSheet, row: number, col: number, style: any) {
+  const address = XLSX.utils.encode_cell({ r: row, c: col })
+  const cell = sheet[address] as any
+  if (!cell) return
+  cell.s = { ...(cell.s || {}), ...style }
+}
+
+function styleRow(sheet: XLSX.WorkSheet, row: number, colCount: number, style: any) {
+  for (let col = 0; col < colCount; col++) setCellStyle(sheet, row, col, style)
+}
+
+function styleTableCell(sheet: XLSX.WorkSheet, row: number, col: number, column: ExportColumn, fill?: string) {
+  const style: any = {
+    border: thinBorder,
+    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.text } },
+    alignment: {
+      horizontal: column.type === 'money' || column.type === 'qty' || column.key === 'index' ? 'right' : 'left',
+      vertical: 'center',
+      wrapText: ['description', 'note', 'product_name', 'spec'].includes(column.key),
+    },
+  }
+  if (fill) style.fill = { patternType: 'solid', fgColor: { rgb: fill } }
+  setCellStyle(sheet, row, col, style)
+}
+
 function buildFilterLine(params: ExportParams) {
   const parts: string[] = []
   const ids = getSelectedIds(params.ids)
@@ -64,6 +116,10 @@ function buildFilterLine(params: ExportParams) {
   if (params.keyword?.trim()) parts.push(`关键词：${params.keyword.trim()}`)
   if (params.customerName?.trim()) parts.push(`客户：${params.customerName.trim()}`)
   if (params.supplierName?.trim()) parts.push(`供应商：${params.supplierName.trim()}`)
+  if (params.year) parts.push(`年份：${params.year}`)
+  if (params.month) parts.push(`月份：${String(params.month).padStart(2, '0')}`)
+  if (params.startDate) parts.push(`开始日期：${params.startDate}`)
+  if (params.endDate) parts.push(`结束日期：${params.endDate}`)
   return parts.length ? `筛选条件：${parts.join('；')}` : '筛选条件：全部记录'
 }
 
@@ -97,10 +153,16 @@ function summarizeRows(columns: ExportColumn[], rows: Record<string, string | nu
   return summary
 }
 
+function summaryLabelKey(designColumns: ExportColumn[]) {
+  const preferred = ['description', 'supplier_name', 'customer_name', 'product_name']
+  return preferred.find(key => designColumns.some(column => column.key === key))
+}
+
 function buildSummaryCells(design: ExportDesign, designColumns: ExportColumn[], rows: Record<string, string | number>[], summary: Record<string, string | number>) {
+  const labelKey = summaryLabelKey(designColumns)
   return designColumns.map((column) => {
     if (column.key === 'index') return rows.length
-    if (column.key === 'description') return '合计'
+    if (column.key === labelKey) return '合计'
     if (column.sum === 'money' || column.sum === 'qty') return summary[column.key] ?? ''
     if (column.key === 'balance' && ['现金账', '公账', '承兑票'].includes(design.sheetName) && rows.length) {
       return num(rows[rows.length - 1][column.key])
@@ -144,6 +206,16 @@ function createWorksheet(design: ExportDesign, params: ExportParams, rawRows: an
   })
 
   sheet['!cols'] = design.columns.map((column) => ({ wch: column.width }))
+  sheet['!rows'] = [
+    { hpt: 28 },
+    { hpt: 22 },
+    { hpt: 22 },
+    { hpt: 6 },
+    { hpt: 24 },
+    ...dataRows.map(() => ({ hpt: 22 })),
+    { hpt: 6 },
+    { hpt: 24 },
+  ]
   sheet['!merges'] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(design.columns.length - 1, 1) } },
     { s: { r: 1, c: 0 }, e: { r: 1, c: Math.max(Math.floor(design.columns.length / 2) - 1, 0) } },
@@ -151,7 +223,40 @@ function createWorksheet(design: ExportDesign, params: ExportParams, rawRows: an
     { s: { r: 2, c: 0 }, e: { r: 2, c: Math.max(Math.floor(design.columns.length / 2) - 1, 0) } },
     { s: { r: 2, c: Math.max(Math.floor(design.columns.length / 2), 1) }, e: { r: 2, c: Math.max(design.columns.length - 1, 1) } },
   ]
+  sheet['!autofilter'] = { ref: encodeRange(headerRowIndex, 0, Math.max(headerRowIndex + dataRows.length, headerRowIndex), design.columns.length - 1) }
   sheet['!freeze'] = { xSplit: 0, ySplit: headerRowIndex + 1, topLeftCell: 'A' + (headerRowIndex + 2), activePane: 'bottomLeft', state: 'frozen' }
+
+  setCellStyle(sheet, 0, 0, {
+    font: { name: 'Microsoft YaHei', sz: 16, bold: true, color: { rgb: THEME.white } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.navy } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+  })
+  styleRow(sheet, 1, design.columns.length, {
+    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.gray } },
+    alignment: { vertical: 'center' },
+  })
+  styleRow(sheet, 2, design.columns.length, {
+    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.gray } },
+    alignment: { vertical: 'center' },
+  })
+  styleRow(sheet, headerRowIndex, design.columns.length, {
+    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.white } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.blue } },
+    border: thinBorder,
+    alignment: { horizontal: 'center', vertical: 'center' },
+  })
+  for (let rowIndex = headerRowIndex + 1; rowIndex < headerRowIndex + 1 + dataRows.length; rowIndex++) {
+    const fill = (rowIndex - headerRowIndex) % 2 === 0 ? THEME.paleBlue : undefined
+    design.columns.forEach((column, columnIndex) => styleTableCell(sheet, rowIndex, columnIndex, column, fill))
+  }
+  styleRow(sheet, summaryRowIndex, design.columns.length, {
+    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.text } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.lightBlue } },
+    border: thinBorder,
+    alignment: { vertical: 'center' },
+  })
 
   return { sheet, rows }
 }
@@ -188,15 +293,17 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       const columns = 'date, income, description, expense, operator, balance, note'
       if (ids.length) return idsQuery('cash_ledger', columns, ids, 'date ASC, id ASC')
       const like = `%${params.keyword || ''}%`
+      const dateWhere = buildDateFilterClause(params)
       return {
         sql: `
           SELECT ${columns}
           FROM cash_ledger
           WHERE deleted_at IS NULL
             AND (description LIKE ? OR operator LIKE ? OR note LIKE ? OR date LIKE ?)
+            ${dateWhere.sql}
           ORDER BY date ASC, id ASC
         `,
-        params: [like, like, like, like],
+        params: [like, like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
@@ -228,14 +335,16 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       const columns = 'date, description, amount_in, amount_out, balance, note'
       if (ids.length) return idsQuery('bank_ledger', columns, ids, 'date ASC, id ASC')
       const like = `%${params.keyword || ''}%`
+      const dateWhere = buildDateFilterClause(params)
       return {
         sql: `
           SELECT ${columns}
           FROM bank_ledger
           WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
+            ${dateWhere.sql}
           ORDER BY date ASC, id ASC
         `,
-        params: [like, like, like],
+        params: [like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
@@ -266,14 +375,16 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       const columns = 'date, description, amount_in, amount_out, balance, note'
       if (ids.length) return idsQuery('acceptance_bills', columns, ids, 'date ASC, id ASC')
       const like = `%${params.keyword || ''}%`
+      const dateWhere = buildDateFilterClause(params)
       return {
         sql: `
           SELECT ${columns}
           FROM acceptance_bills
           WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
+            ${dateWhere.sql}
           ORDER BY date ASC, id ASC
         `,
-        params: [like, like, like],
+        params: [like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
@@ -307,6 +418,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       if (ids.length) return idsQuery('customer_ledger', columns, ids, 'customer_name ASC, date ASC, id ASC')
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
+      const dateWhere = buildDateFilterClause(params)
       return {
         sql: `
           SELECT ${columns}
@@ -314,9 +426,10 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           WHERE deleted_at IS NULL
             AND (? = '' OR customer_name = ?)
             AND (description LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
+            ${dateWhere.sql}
           ORDER BY customer_name ASC, date ASC, id ASC
         `,
-        params: [customerName, customerName, like, like, like, like],
+        params: [customerName, customerName, like, like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
@@ -358,6 +471,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       if (ids.length) return idsQuery('stock_in_ledger', columns, ids, 'date DESC, id DESC')
       const like = `%${params.keyword || ''}%`
       const supplierName = params.supplierName || ''
+      const dateWhere = buildDateFilterClause(params)
       return {
         sql: `
           SELECT ${columns}
@@ -365,9 +479,10 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           WHERE deleted_at IS NULL
             AND (? = '' OR supplier_name = ?)
             AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
+            ${dateWhere.sql}
           ORDER BY date DESC, id DESC
         `,
-        params: [supplierName, supplierName, like, like, like, like, like, like],
+        params: [supplierName, supplierName, like, like, like, like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
@@ -412,6 +527,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       if (ids.length) return idsQuery('stock_out_ledger', columns, ids, 'date DESC, id DESC')
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
+      const dateWhere = buildDateFilterClause(params)
       return {
         sql: `
           SELECT ${columns}
@@ -419,9 +535,10 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           WHERE deleted_at IS NULL
             AND (? = '' OR customer_name = ?)
             AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
+            ${dateWhere.sql}
           ORDER BY date DESC, id DESC
         `,
-        params: [customerName, customerName, like, like, like, like, like, like],
+        params: [customerName, customerName, like, like, like, like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
@@ -489,7 +606,7 @@ function buildOverviewSheet(db: any) {
       outLabel: '总金额', outValue: num((db.prepare(`SELECT SUM(amount) as v FROM stock_out_ledger WHERE deleted_at IS NULL`).get() as any).v),
       extra: `客户数 ${(db.prepare(`SELECT COUNT(DISTINCT customer_name) as n FROM stock_out_ledger WHERE deleted_at IS NULL`).get() as any).n}`,
     },
-  ].map((item) => [item.name, item.count, item.inLabel, item.inValue, item.outLabel, item.outValue, item.extra])
+  ]
 
   const aoa = [
     ['账务总览'],
@@ -500,7 +617,38 @@ function buildOverviewSheet(db: any) {
   ]
   const sheet = XLSX.utils.aoa_to_sheet(aoa)
   sheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 22 }]
+  sheet['!rows'] = [{ hpt: 28 }, { hpt: 22 }, { hpt: 6 }, { hpt: 24 }, ...stats.map(() => ({ hpt: 22 }))]
   sheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }]
+  sheet['!autofilter'] = { ref: encodeRange(3, 0, 3 + stats.length, 6) }
+
+  setCellStyle(sheet, 0, 0, {
+    font: { name: 'Microsoft YaHei', sz: 16, bold: true, color: { rgb: THEME.white } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.navy } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+  })
+  styleRow(sheet, 1, 7, {
+    font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.muted } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.gray } },
+    alignment: { vertical: 'center' },
+  })
+  styleRow(sheet, 3, 7, {
+    font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: THEME.white } },
+    fill: { patternType: 'solid', fgColor: { rgb: THEME.blue } },
+    border: thinBorder,
+    alignment: { horizontal: 'center', vertical: 'center' },
+  })
+  for (let rowIndex = 4; rowIndex < 4 + stats.length; rowIndex++) {
+    const fill = (rowIndex - 4) % 2 === 1 ? THEME.paleBlue : undefined
+    for (let col = 0; col < 7; col++) {
+      const style: any = {
+        font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: THEME.text } },
+        border: thinBorder,
+        alignment: { horizontal: [1, 3, 5].includes(col) ? 'right' : 'left', vertical: 'center' },
+      }
+      if (fill) style.fill = { patternType: 'solid', fgColor: { rgb: fill } }
+      setCellStyle(sheet, rowIndex, col, style)
+    }
+  }
   return sheet
 }
 
@@ -518,6 +666,13 @@ export function buildExportWorkbook(db: any, table: ExportTable, params: ExportP
     }
 
   const wb = XLSX.utils.book_new()
+  wb.Props = {
+    Title: table === 'all' ? '总表导出' : exportDesigns[table].title,
+    Subject: COMPANY_NAME,
+    Author: COMPANY_NAME,
+    Company: COMPANY_NAME,
+    CreatedDate: new Date(),
+  }
   let totalRows = 0
 
   if (table === 'all') {

@@ -85,6 +85,15 @@ export const stockOutAPI = {
   restore: (id: number) => api.invoke('stockOut:restore', id),
 }
 
+export const inventoryAPI = {
+  list: (params?: any) => api.invoke('inventory:list', params),
+  options: (keyword?: string) => api.invoke('inventory:options', keyword),
+}
+
+export const productAPI = {
+  list: (params?: any) => api.invoke('products:list', params),
+}
+
 export const printAPI = {
   getSettings: () => api.invoke('print:get-settings'),
   saveSettings: (settings: any) => api.invoke('print:save-settings', settings),
@@ -109,6 +118,7 @@ export const printAPI = {
 }
 
 export const systemAPI = {
+  appVersion: () => api.invoke('system:app-version'),
   summary: () => api.invoke('system:summary'),
   logs: (params?: any) => api.invoke('system:logs', params),
   trashAll: () => api.invoke('system:trash-all'),

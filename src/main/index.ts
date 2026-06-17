@@ -41,7 +41,7 @@ function createWindow(): void {
   }
 
   mainWindow.on('close', () => {
-    autoBackup()
+    autoBackup({ automatic: true })
   })
 }
 

@@ -33,6 +33,60 @@ export function initDatabase(): void {
   db.pragma('foreign_keys = ON')
 
   createTables()
+  migrateSchema()
+  rebuildInventoryBusinessTables()
+}
+
+function columnExists(tableName: string, columnName: string) {
+  return Boolean(db!.prepare(`PRAGMA table_info(${tableName})`).all().some((row: any) => row.name === columnName))
+}
+
+function addColumnIfMissing(tableName: string, columnSql: string) {
+  const columnName = columnSql.trim().split(/\s+/)[0]
+  if (!columnExists(tableName, columnName)) db!.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnSql}`)
+}
+
+function migrateSchema(): void {
+  addColumnIfMissing('stock_in_ledger', "doc_no TEXT DEFAULT ''")
+  addColumnIfMissing('stock_out_ledger', "doc_no TEXT DEFAULT ''")
+}
+
+function rebuildInventoryBusinessTables(): void {
+  db!.exec(`
+    INSERT OR IGNORE INTO product_catalog (product_name, spec, unit, category, default_price)
+    SELECT
+      product_name,
+      COALESCE(spec, ''),
+      COALESCE(unit, ''),
+      COALESCE(category, ''),
+      COALESCE(MAX(NULLIF(unit_price, 0)), 0)
+    FROM (
+      SELECT product_name, spec, unit, category, unit_price FROM stock_in_ledger WHERE deleted_at IS NULL
+      UNION ALL
+      SELECT product_name, spec, unit, category, unit_price FROM stock_out_ledger WHERE deleted_at IS NULL
+    )
+    WHERE product_name IS NOT NULL AND product_name != ''
+    GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '');
+
+    DELETE FROM inventory_balances;
+
+    INSERT INTO inventory_balances (product_name, spec, unit, stock_qty, available_qty)
+    SELECT product_name, spec, unit, stock_qty, stock_qty
+    FROM (
+      SELECT
+        product_name,
+        COALESCE(spec, '') AS spec,
+        COALESCE(unit, '') AS unit,
+        SUM(in_qty) - SUM(out_qty) AS stock_qty
+      FROM (
+        SELECT product_name, spec, unit, quantity AS in_qty, 0 AS out_qty FROM stock_in_ledger WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT product_name, spec, unit, 0 AS in_qty, quantity AS out_qty FROM stock_out_ledger WHERE deleted_at IS NULL
+      )
+      WHERE product_name IS NOT NULL AND product_name != ''
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
+    );
+  `)
 }
 
 function createTables(): void {
@@ -95,6 +149,7 @@ function createTables(): void {
     -- 材料/产品入库
     CREATE TABLE IF NOT EXISTS stock_in_ledger (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      doc_no          TEXT    DEFAULT '',
       supplier_name   TEXT    NOT NULL,
       category        TEXT    DEFAULT '',
       date            TEXT    NOT NULL,
@@ -117,6 +172,7 @@ function createTables(): void {
     -- 产品出库
     CREATE TABLE IF NOT EXISTS stock_out_ledger (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      doc_no          TEXT    DEFAULT '',
       customer_name   TEXT    NOT NULL,
       category        TEXT    DEFAULT '',
       date            TEXT    NOT NULL,
@@ -130,6 +186,33 @@ function createTables(): void {
       note            TEXT    DEFAULT '',
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
+      updated_at      TEXT    DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 产品/物料档案
+    CREATE TABLE IF NOT EXISTS product_catalog (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_name    TEXT    NOT NULL DEFAULT '',
+      spec            TEXT    DEFAULT '',
+      unit            TEXT    DEFAULT '',
+      category        TEXT    DEFAULT '',
+      default_price   REAL    DEFAULT 0,
+      status          TEXT    NOT NULL DEFAULT 'active',
+      note            TEXT    DEFAULT '',
+      deleted_at      TEXT    DEFAULT NULL,
+      created_at      TEXT    DEFAULT (datetime('now','localtime')),
+      updated_at      TEXT    DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 库存余额
+    CREATE TABLE IF NOT EXISTS inventory_balances (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_name    TEXT    NOT NULL DEFAULT '',
+      spec            TEXT    DEFAULT '',
+      unit            TEXT    DEFAULT '',
+      stock_qty       REAL    DEFAULT 0,
+      available_qty   REAL    DEFAULT 0,
+      locked_qty      REAL    DEFAULT 0,
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
     );
 
@@ -203,6 +286,8 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_stock_out_customer ON stock_out_ledger(customer_name);
     CREATE INDEX IF NOT EXISTS idx_stock_out_date     ON stock_out_ledger(date);
     CREATE INDEX IF NOT EXISTS idx_stock_out_del      ON stock_out_ledger(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_product_catalog_name ON product_catalog(product_name, spec, unit);
+    CREATE INDEX IF NOT EXISTS idx_inventory_balance_name ON inventory_balances(product_name, spec, unit);
     CREATE INDEX IF NOT EXISTS idx_customer_name   ON customer_ledger(customer_name);
     CREATE INDEX IF NOT EXISTS idx_customer_date   ON customer_ledger(date);
     CREATE INDEX IF NOT EXISTS idx_customer_del    ON customer_ledger(deleted_at);
@@ -222,5 +307,9 @@ function createTables(): void {
       ON stock_in_ledger(supplier_name,date,contract_no,product_name,spec,quantity,unit_price,amount,note);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_out_import
       ON stock_out_ledger(customer_name,date,contract_no,product_name,spec,quantity,unit_price,amount,note);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_product_catalog_key
+      ON product_catalog(product_name,spec,unit);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_balance_key
+      ON inventory_balances(product_name,spec,unit);
   `)
 }

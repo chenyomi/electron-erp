@@ -1,32 +1,39 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { logOperation, softDelete, restore } from './helpers'
+import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 
 export function registerBankHandlers(): void {
-  ipcMain.handle('bank:list', (_e, { page = 1, pageSize = 50, keyword = '' } = {}) => {
+  ipcMain.handle('bank:list', (_e, params = {}) => {
+    const { page = 1, pageSize = 50, keyword = '' } = params as any
+    const filters = normalizeLedgerFilters(params)
     const db = getDb()
     const offset = (page - 1) * pageSize
     const like = `%${keyword}%`
+    const dateWhere = buildDateFilterClause(filters)
     const rows = db.prepare(`
       SELECT bank_ledger.*, ${attachmentPreviewSql('bank_ledger')}
       FROM bank_ledger
       WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
+      ${dateWhere.sql}
       ORDER BY date ASC, id ASC LIMIT ? OFFSET ?
-    `).all(like, like, like, pageSize, offset)
+    `).all(like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM bank_ledger
       WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
-    `).get(like, like, like) as { total: number }
+      ${dateWhere.sql}
+    `).get(like, like, like, ...dateWhere.params) as { total: number }
     return { rows: withAttachmentPreviews(rows), total }
   })
 
-  ipcMain.handle('bank:summary', () => {
+  ipcMain.handle('bank:summary', (_e, params = {}) => {
+    const filters = normalizeLedgerFilters(params)
+    const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
     return db.prepare(`
       SELECT SUM(amount_in) as totalIn, SUM(amount_out) as totalOut
-      FROM bank_ledger WHERE deleted_at IS NULL
-    `).get()
+      FROM bank_ledger WHERE deleted_at IS NULL ${dateWhere.sql}
+    `).get(...dateWhere.params)
   })
 
   ipcMain.handle('bank:monthly', () => {

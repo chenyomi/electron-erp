@@ -6,6 +6,8 @@ import JSZip from 'jszip'
 import { closeDatabase, getDataDir, getDb, initDatabase } from './db'
 
 const BACKUP_PREFIX = 'ledger_'
+const AUTO_BACKUP_NAME = 'ledger_auto'
+const AUTO_BACKUP_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000
 const MAX_BACKUPS = 30
 
 const DATA_DIRS = ['excel-images', 'attachments'] as const
@@ -50,35 +52,58 @@ function copyDirIfExists(src: string, dest: string): number {
   return countFiles(dest)
 }
 
-export function autoBackup(): { ok: boolean; path?: string; error?: string } {
+function writeBackupDirectory(backupDir: string): void {
+  fs.mkdirSync(backupDir, { recursive: true })
+
+  const dataDir = getDataDir()
+  const db = getDb()
+  const dbPath = join(backupDir, 'ledger.db')
+  db.backup(dbPath)
+
+  let imageCount = 0
+  for (const dirName of DATA_DIRS) {
+    imageCount += copyDirIfExists(join(dataDir, dirName), join(backupDir, dirName))
+  }
+
+  const manifest = {
+    version: 1,
+    type: 'full',
+    createdAt: new Date().toISOString(),
+    includes: ['ledger.db', ...DATA_DIRS],
+    imageCount,
+  }
+  fs.writeFileSync(join(backupDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
+}
+
+function shouldSkipAutomaticBackup(backupDir: string): boolean {
+  if (!fs.existsSync(backupDir)) return false
+  const lastBackupTime = fs.statSync(backupDir).mtime.getTime()
+  return Date.now() - lastBackupTime < AUTO_BACKUP_MIN_INTERVAL_MS
+}
+
+export function autoBackup(options: { automatic?: boolean; force?: boolean } = {}): { ok: boolean; path?: string; error?: string } {
   try {
     const dataDir = getDataDir()
     const backupRoot = join(dataDir, 'backups')
     if (!fs.existsSync(backupRoot)) fs.mkdirSync(backupRoot, { recursive: true })
 
-    const backupName = `${BACKUP_PREFIX}${backupTimestamp()}`
+    const backupName = options.automatic ? AUTO_BACKUP_NAME : `${BACKUP_PREFIX}${backupTimestamp()}`
     const backupDir = join(backupRoot, backupName)
-    fs.mkdirSync(backupDir, { recursive: true })
 
-    const db = getDb()
-    const dbPath = join(backupDir, 'ledger.db')
-    db.backup(dbPath)
+    if (options.automatic) {
+      if (!options.force && shouldSkipAutomaticBackup(backupDir)) {
+        return { ok: true, path: backupDir }
+      }
 
-    let imageCount = 0
-    for (const dirName of DATA_DIRS) {
-      imageCount += copyDirIfExists(join(dataDir, dirName), join(backupDir, dirName))
+      const tempBackupDir = join(backupRoot, `${AUTO_BACKUP_NAME}_tmp_${backupTimestamp()}`)
+      removeIfExists(tempBackupDir)
+      writeBackupDirectory(tempBackupDir)
+      removeIfExists(backupDir)
+      fs.renameSync(tempBackupDir, backupDir)
+    } else {
+      writeBackupDirectory(backupDir)
+      pruneOldBackups(backupRoot)
     }
-
-    const manifest = {
-      version: 1,
-      type: 'full',
-      createdAt: new Date().toISOString(),
-      includes: ['ledger.db', ...DATA_DIRS],
-      imageCount,
-    }
-    fs.writeFileSync(join(backupDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
-
-    pruneOldBackups(backupRoot)
     return { ok: true, path: backupDir }
   } catch (e: any) {
     console.error('Backup failed:', e)
@@ -87,7 +112,7 @@ export function autoBackup(): { ok: boolean; path?: string; error?: string } {
 }
 
 function pruneOldBackups(backupRoot: string): void {
-  const entries = listBackupEntries(backupRoot)
+  const entries = listBackupEntries(backupRoot).filter(entry => entry.name !== AUTO_BACKUP_NAME)
   if (entries.length <= MAX_BACKUPS) return
   for (const entry of entries.slice(MAX_BACKUPS)) {
     if (entry.isDirectory) {
@@ -151,6 +176,33 @@ function removeIfExists(target: string): void {
 function replaceDir(src: string, dest: string): void {
   removeIfExists(dest)
   if (fs.existsSync(src)) fs.cpSync(src, dest, { recursive: true })
+}
+
+function resolveRestoredDataPath(filePath: string): string | null {
+  const normalized = filePath.replace(/\\/g, '/')
+  for (const dirName of DATA_DIRS) {
+    const marker = `/${dirName}/`
+    const markerIndex = normalized.indexOf(marker)
+    if (markerIndex === -1) continue
+
+    const relativePath = normalized.slice(markerIndex + marker.length)
+    if (!relativePath) continue
+    return join(getDataDir(), dirName, ...relativePath.split('/'))
+  }
+  return null
+}
+
+function normalizeRestoredAttachmentPaths(): void {
+  const db = getDb()
+  const rows = db.prepare('SELECT id, file_path FROM attachments').all() as Array<{ id: number; file_path: string }>
+  const update = db.prepare('UPDATE attachments SET file_path = ? WHERE id = ?')
+
+  for (const row of rows) {
+    const restoredPath = resolveRestoredDataPath(row.file_path)
+    if (restoredPath && restoredPath !== row.file_path && fs.existsSync(restoredPath)) {
+      update.run(restoredPath, row.id)
+    }
+  }
 }
 
 function replaceDbFile(src: string, dest: string): void {
@@ -252,7 +304,7 @@ export function restoreFromBackup(sourcePath: string): { ok: boolean; error?: st
   }
 
   try {
-    autoBackup()
+    autoBackup({ automatic: true, force: true })
 
     const dataDir = getDataDir()
     const targetDbPath = join(dataDir, 'ledger.db')
@@ -267,6 +319,7 @@ export function restoreFromBackup(sourcePath: string): { ok: boolean; error?: st
     }
 
     initDatabase()
+    normalizeRestoredAttachmentPaths()
     return { ok: true }
   } catch (e: any) {
     try {

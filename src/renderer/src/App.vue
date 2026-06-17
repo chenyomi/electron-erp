@@ -25,6 +25,7 @@
           <div>
             <div class="brand-title">{{ t('appName') }}</div>
             <div class="muted">{{ t('loginSubtitle') }}</div>
+            <div v-if="appVersion" class="app-version">v{{ appVersion }}</div>
           </div>
         </div>
 
@@ -58,6 +59,7 @@
           <div>
             <div class="drawer-title">{{ t('appName') }}</div>
             <div class="muted tiny">{{ t('companyName') }}</div>
+            <div v-if="appVersion" class="app-version">v{{ appVersion }}</div>
           </div>
         </div>
 
@@ -89,6 +91,8 @@
 
       <main class="content-shell">
         <DashboardPage v-if="page === 'dashboard'" :t="t" />
+        <ProductCatalogPage v-else-if="page === 'products'" :t="t" />
+        <InventoryPage v-else-if="page === 'inventory'" :t="t" />
         <LedgerPage v-else-if="isLedgerPage" :page="page" :t="t" @notify="notify" />
         <ImportPage v-else-if="page === 'import'" :t="t" @notify="notify" />
         <TrashPage v-else-if="page === 'trash'" :t="t" @notify="notify" />
@@ -107,6 +111,7 @@
         <div class="user-actions">
           <v-btn icon size="small" variant="tonal" :title="themeMode === 'dark' ? '浅色模式' : '深色模式'" @click="toggleTheme">{{ themeMode === 'dark' ? '☀' : '☾' }}</v-btn>
           <v-btn icon size="small" variant="tonal" :title="languageMode === 'zh' ? 'English' : '中文'" @click="toggleLanguage">{{ languageMode === 'zh' ? 'EN' : '中' }}</v-btn>
+          <v-btn icon size="small" variant="tonal" :title="t('helpTitle')" @click="helpDialog = true">?</v-btn>
           <v-btn icon size="small" variant="tonal" :title="t('changePassword')" @click="passwordDialog = true">🔒</v-btn>
         </div>
         <v-btn class="logout-compact" color="error" variant="tonal" size="small" :title="t('logout')" @click="handleLogout">⏻</v-btn>
@@ -146,6 +151,59 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="helpDialog" max-width="780" scrollable>
+      <v-card class="record-dialog help-dialog">
+        <div class="record-dialog__header">
+          <div>
+            <div class="record-dialog__eyebrow">Hello</div>
+            <h2 class="record-dialog__title">{{ t('helpTitle') }}</h2>
+            <p class="record-dialog__subtitle">{{ t('helpSubtitle') }}</p>
+          </div>
+        </div>
+        <v-card-text class="record-dialog__body">
+          <div class="help-grid">
+            <section class="help-section">
+              <h3>{{ t('helpProjectTitle') }}</h3>
+              <p>{{ t('helpProjectDesc') }}</p>
+            </section>
+            <section class="help-section">
+              <h3>{{ t('helpBusinessTitle') }}</h3>
+              <ul>
+                <li>{{ t('helpBusinessFinance') }}</li>
+                <li>{{ t('helpBusinessStock') }}</li>
+                <li>{{ t('helpBusinessData') }}</li>
+              </ul>
+            </section>
+            <section class="help-section">
+              <h3>{{ t('helpTutorialTitle') }}</h3>
+              <ol>
+                <li>{{ t('helpTutorialStep1') }}</li>
+                <li>{{ t('helpTutorialStep2') }}</li>
+                <li>{{ t('helpTutorialStep3') }}</li>
+                <li>{{ t('helpTutorialStep4') }}</li>
+              </ol>
+            </section>
+            <section class="help-section">
+              <h3>{{ t('helpTipsTitle') }}</h3>
+              <ul>
+                <li>{{ t('helpTipBackup') }}</li>
+                <li>{{ t('helpTipDate') }}</li>
+                <li>{{ t('helpTipExport') }}</li>
+              </ul>
+            </section>
+            <section class="help-section help-section--contact">
+              <h3>{{ t('helpAuthorTitle') }}</h3>
+              <p>{{ t('helpAuthorName') }}</p>
+              <p>{{ t('helpAuthorEmail') }}</p>
+            </section>
+          </div>
+        </v-card-text>
+        <div class="record-dialog__footer">
+          <v-btn color="primary" @click="helpDialog = false">{{ t('close') }}</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" timeout="2600">{{ snackbar.text }}</v-snackbar>
   </v-app>
 </template>
@@ -176,10 +234,10 @@ import {
   VTextarea,
   VTextField,
 } from 'vuetify/components'
-import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI } from './api'
+import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI } from './api'
 import { runLodopScript, checkLodopAvailable } from './lodop-print'
 
-type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'ai' | 'trash' | 'logs' | 'import'
+type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'products' | 'inventory' | 'ai' | 'trash' | 'logs' | 'import'
 type ThemeMode = 'dark' | 'light'
 type Lang = 'zh' | 'en'
 
@@ -208,6 +266,7 @@ const messages = {
     confirmNewPassword: '确认新密码',
     save: '保存',
     cancel: '取消',
+    close: '关闭',
     navFinance: '账务管理',
     navTools: '工具',
     dashboard: '总账首页',
@@ -224,6 +283,11 @@ const messages = {
     stockInSub: '材料/外协入库',
     stockOut: '产品出库',
     stockOutSub: '产品出库记录',
+    products: '产品档案',
+    productsSub: '产品/规格/单位标准化',
+    inventory: '库存汇总',
+    inventorySub: '入库减出库结存',
+    docNo: '单据号',
     supplierName: '供应商',
     filterSupplier: '筛选供应商',
     category: '类别',
@@ -240,6 +304,15 @@ const messages = {
     totalQuantity: '总数量',
     totalAmount: '总金额',
     totalRecords: '记录数',
+    totalInQuantity: '入库总量',
+    totalOutQuantity: '出库总量',
+    totalStockQuantity: '当前库存',
+    stockQty: '库存数量',
+    searchInventory: '搜索产品/规格/单位…',
+    searchProduct: '搜索产品/规格/单位/分类…',
+    defaultPrice: '默认单价',
+    availableQty: '可用库存',
+    selectInventoryProduct: '选择库存产品',
     supplierCount: '供应商数',
     customerCount: '客户数',
     searchStock: '搜索产品/规格/合同号…',
@@ -286,6 +359,22 @@ const messages = {
     noImages: '暂无图片',
     search: '搜索…',
     searchCash: '搜索摘要/经办人/日期…',
+    filterYear: '年份',
+    filterMonth: '月份',
+    filterStartDate: '开始日期',
+    filterEndDate: '结束日期',
+    filterProductName: '产品名称',
+    filterSpec: '规格',
+    filterUnit: '单位',
+    filterStockStatus: '库存状态',
+    stockStatusAll: '全部库存',
+    stockStatusInStock: '有库存',
+    stockStatusOutOfStock: '无库存/负库存',
+    filterModule: '模块',
+    filterAction: '操作类型',
+    filterDeletedStartDate: '删除开始',
+    filterDeletedEndDate: '删除结束',
+    resetFilters: '重置筛选',
     export: '导出',
     exportAllExcel: '导出总表',
     exportDone: '导出完成，共 {count} 条',
@@ -382,6 +471,26 @@ const messages = {
     module: '所属模块',
     beforeChange: '变更前',
     afterChange: '变更后',
+    helpTitle: 'Hello，使用帮助',
+    helpSubtitle: '项目介绍、业务说明、操作教程和作者联系方式',
+    helpProjectTitle: '项目介绍',
+    helpProjectDesc: '东昊账务是面向汽配业务的本地账务和库存管理系统，用于记录现金、公账、承兑票、客户往来、材料入库、产品出库、库存结存、图片附件、导入导出和备份恢复。',
+    helpBusinessTitle: '业务范围',
+    helpBusinessFinance: '财务账本：现金账、公账、承兑票、客户往来，支持新增、编辑、删除、筛选、导出和审计追踪。',
+    helpBusinessStock: '库存业务：产品档案、材料/外协入库、产品出库、库存汇总，出库会校验当前库存。',
+    helpBusinessData: '数据管理：Excel 导入、总表导出、本机备份、备份包迁移和回收站恢复。',
+    helpTutorialTitle: '快速教程',
+    helpTutorialStep1: '先在左侧选择业务模块，例如现金账、材料入库或产品出库。',
+    helpTutorialStep2: '点击“新增”录入数据；日期使用日期选择器，金额和数量按实际业务填写。',
+    helpTutorialStep3: '用顶部筛选栏按客户、供应商、日期、关键词等条件查找数据；导出会按当前筛选结果导出。',
+    helpTutorialStep4: '换电脑或重要操作前，进入“数据管理”先备份，也可以导出备份包带走。',
+    helpTipsTitle: '使用细节',
+    helpTipBackup: '建议每天收工前备份一次，重要导入或恢复前也先备份。',
+    helpTipDate: '日期统一使用标准格式，便于月份、年份和区间筛选。',
+    helpTipExport: '导出不受当前分页限制；勾选行时优先导出勾选内容。',
+    helpAuthorTitle: '作者联系方式',
+    helpAuthorName: '作者：chenyomi',
+    helpAuthorEmail: '邮箱：408550179@qq.com',
   },
   en: {
     appName: 'Donghao Ledger',
@@ -400,6 +509,7 @@ const messages = {
     confirmNewPassword: 'Confirm Password',
     save: 'Save',
     cancel: 'Cancel',
+    close: 'Close',
     navFinance: 'Finance',
     navTools: 'Tools',
     dashboard: 'Dashboard',
@@ -416,6 +526,11 @@ const messages = {
     stockInSub: 'Material inbound',
     stockOut: 'Stock Out',
     stockOutSub: 'Product outbound',
+    products: 'Products',
+    productsSub: 'Standard product catalog',
+    inventory: 'Inventory',
+    inventorySub: 'Inbound minus outbound stock',
+    docNo: 'Doc No',
     supplierName: 'Supplier',
     filterSupplier: 'Supplier',
     category: 'Category',
@@ -432,6 +547,15 @@ const messages = {
     totalQuantity: 'Total Qty',
     totalAmount: 'Total Amount',
     totalRecords: 'Records',
+    totalInQuantity: 'Inbound Qty',
+    totalOutQuantity: 'Outbound Qty',
+    totalStockQuantity: 'Stock Qty',
+    stockQty: 'Stock Qty',
+    searchInventory: 'Search product/spec/unit…',
+    searchProduct: 'Search product/spec/unit/category…',
+    defaultPrice: 'Default Price',
+    availableQty: 'Available Qty',
+    selectInventoryProduct: 'Select inventory product',
     supplierCount: 'Suppliers',
     customerCount: 'Customers',
     searchStock: 'Search product/spec/contract…',
@@ -478,6 +602,22 @@ const messages = {
     noImages: 'No images',
     search: 'Search…',
     searchCash: 'Search description/operator/date…',
+    filterYear: 'Year',
+    filterMonth: 'Month',
+    filterStartDate: 'Start date',
+    filterEndDate: 'End date',
+    filterProductName: 'Product',
+    filterSpec: 'Spec',
+    filterUnit: 'Unit',
+    filterStockStatus: 'Stock status',
+    stockStatusAll: 'All stock',
+    stockStatusInStock: 'In stock',
+    stockStatusOutOfStock: 'No/negative stock',
+    filterModule: 'Module',
+    filterAction: 'Action',
+    filterDeletedStartDate: 'Deleted from',
+    filterDeletedEndDate: 'Deleted to',
+    resetFilters: 'Reset',
     export: 'Export',
     exportAllExcel: 'Export All',
     exportDone: 'Export complete, {count} rows',
@@ -574,6 +714,26 @@ const messages = {
     module: 'Module',
     beforeChange: 'Before',
     afterChange: 'After',
+    helpTitle: 'Hello, Help',
+    helpSubtitle: 'Project intro, business details, tutorial, and author contact',
+    helpProjectTitle: 'Project',
+    helpProjectDesc: 'Donghao Ledger is a local finance and inventory system for auto parts operations, covering cash, bank, acceptance bills, customers, inbound materials, outbound products, inventory, attachments, import/export, backup, and restore.',
+    helpBusinessTitle: 'Business Scope',
+    helpBusinessFinance: 'Finance: cash, bank, acceptance bills, and customer ledgers with create, edit, delete, filters, export, and audit logs.',
+    helpBusinessStock: 'Inventory: product catalog, material inbound, product outbound, and stock summary with outbound stock validation.',
+    helpBusinessData: 'Data: Excel import, workbook export, local backup, backup package migration, and trash restore.',
+    helpTutorialTitle: 'Quick Tutorial',
+    helpTutorialStep1: 'Choose a module from the left navigation, such as Cash, Stock In, or Stock Out.',
+    helpTutorialStep2: 'Click Add to enter records. Use the date picker and fill amounts or quantities according to the business record.',
+    helpTutorialStep3: 'Use the filter bar to search by customer, supplier, date, keyword, and more. Export follows the current filters.',
+    helpTutorialStep4: 'Before moving computers or important operations, open Data Management and create a backup or backup package.',
+    helpTipsTitle: 'Details',
+    helpTipBackup: 'Back up at the end of each day, and before import or restore operations.',
+    helpTipDate: 'Use standard dates so monthly, yearly, and range filters work reliably.',
+    helpTipExport: 'Export is not limited by pagination. Selected rows take priority when checked.',
+    helpAuthorTitle: 'Author Contact',
+    helpAuthorName: 'Author: chenyomi',
+    helpAuthorEmail: 'Email: 408550179@qq.com',
   },
 } as const
 
@@ -586,10 +746,12 @@ const loginLoading = ref(false)
 const loginError = ref('')
 const loginForm = reactive({ username: '', password: '' })
 const passwordDialog = ref(false)
+const helpDialog = ref(false)
 const passwordLoading = ref(false)
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const aiDrawer = ref(false)
 const snackbar = reactive({ show: false, text: '', color: 'success' })
+const appVersion = ref('')
 
 const themeName = computed(() => themeMode.value === 'dark' ? 'donghaoDark' : 'donghaoLight')
 const isLedgerPage = computed(() => ['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut'].includes(page.value))
@@ -601,8 +763,10 @@ const navItems = [
   { key: 'bank' as PageKey, icon: '🏦', label: 'bank', sub: 'bankSub' },
   { key: 'bills' as PageKey, icon: '📄', label: 'bills', sub: 'billsSub' },
   { key: 'customer' as PageKey, icon: '🏭', label: 'customer', sub: 'customerSub' },
+  { key: 'products' as PageKey, icon: '▣', label: 'products', sub: 'productsSub' },
   { key: 'stockIn' as PageKey, icon: '📦', label: 'stockIn', sub: 'stockInSub' },
   { key: 'stockOut' as PageKey, icon: '🚚', label: 'stockOut', sub: 'stockOutSub' },
+  { key: 'inventory' as PageKey, icon: '▦', label: 'inventory', sub: 'inventorySub' },
   { key: 'ai' as PageKey, icon: 'AI', label: 'ai', sub: 'aiSub' },
 ]
 
@@ -694,12 +858,37 @@ watch(languageMode, (mode) => {
 }, { immediate: true })
 
 onMounted(async () => {
-  currentUser.value = await authAPI.me()
-  checkingAuth.value = false
+  try {
+    appVersion.value = await systemAPI.appVersion()
+    currentUser.value = await authAPI.me()
+  } finally {
+    checkingAuth.value = false
+  }
 })
 
 function money(value: any) {
   return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function normalizeDateValue(value: any) {
+  const text = String(value || '').trim().replace(/[/.]/g, '-')
+  const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (!match) return text
+  return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
+}
+
+function monthFromDate(value: any) {
+  const normalized = normalizeDateValue(value)
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized.slice(0, 7) : ''
+}
+
+function yearOptions() {
+  const current = new Date().getFullYear()
+  return Array.from({ length: 12 }, (_, index) => String(current + 1 - index))
+}
+
+function monthOptions() {
+  return Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'))
 }
 
 function formatWan(value: number) {
@@ -836,13 +1025,170 @@ const ChartCard = defineComponent({
   },
 })
 
+const InventoryPage = defineComponent({
+  props: { t: { type: Function, required: true } },
+  setup(props) {
+    const rows = ref<any[]>([])
+    const total = ref(0)
+    const currentPage = ref(1)
+    const pageSize = 20
+    const keyword = ref('')
+    const productName = ref('')
+    const specFilter = ref('')
+    const unitFilter = ref('')
+    const stockStatus = ref('')
+    const loading = ref(false)
+    const summary = ref<any>({})
+    const columns = ['product_name', 'spec', 'unit', 'total_in', 'total_out', 'stock_qty']
+    const stockStatusOptions = computed(() => [
+      { title: props.t('stockStatusAll'), value: '' },
+      { title: props.t('stockStatusInStock'), value: 'inStock' },
+      { title: props.t('stockStatusOutOfStock'), value: 'outOfStock' },
+    ])
+
+    const buildFilters = () => ({
+      keyword: keyword.value,
+      productName: productName.value,
+      spec: specFilter.value,
+      unit: unitFilter.value,
+      stockStatus: stockStatus.value,
+    })
+
+    const load = async () => {
+      loading.value = true
+      const res = await inventoryAPI.list({ page: currentPage.value, pageSize, ...buildFilters() })
+      rows.value = res.rows || []
+      total.value = res.total || 0
+      summary.value = res.summary || {}
+      loading.value = false
+    }
+    const resetFilters = () => {
+      keyword.value = ''
+      productName.value = ''
+      specFilter.value = ''
+      unitFilter.value = ''
+      stockStatus.value = ''
+      currentPage.value = 1
+      load()
+    }
+
+    watch([keyword, productName, specFilter, unitFilter, stockStatus], () => {
+      if (currentPage.value !== 1) currentPage.value = 1
+      else load()
+    })
+    watch(currentPage, load)
+    onMounted(load)
+
+    return () => h('div', { class: 'page-wrap ledger-page' }, [
+      h(PageHeader, { title: props.t('inventory'), subtitle: props.t('inventorySub') }, {
+        actions: () => h('div', { class: 'header-toolbar' }, [
+          h(VTextField, {
+            modelValue: keyword.value,
+            'onUpdate:modelValue': (v: string) => { keyword.value = v },
+            label: props.t('searchInventory'),
+            density: 'compact',
+            hideDetails: true,
+            class: 'toolbar-input header-toolbar-input',
+          }),
+          h(VTextField, { modelValue: productName.value, 'onUpdate:modelValue': (v: string) => { productName.value = v }, label: props.t('filterProductName'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: specFilter.value, 'onUpdate:modelValue': (v: string) => { specFilter.value = v }, label: props.t('filterSpec'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: unitFilter.value, 'onUpdate:modelValue': (v: string) => { unitFilter.value = v }, label: props.t('filterUnit'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VSelect, { modelValue: stockStatus.value, 'onUpdate:modelValue': (v: string) => { stockStatus.value = v || '' }, items: stockStatusOptions.value, label: props.t('filterStockStatus'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
+        ]),
+      }),
+      h('div', { class: 'stat-grid' }, [
+        h(StatCard, { title: props.t('totalRecords'), value: summary.value.totalRecords || 0, color: 'primary' }),
+        h(StatCard, { title: props.t('totalInQuantity'), value: summary.value.totalIn || 0, color: 'success' }),
+        h(StatCard, { title: props.t('totalOutQuantity'), value: summary.value.totalOut || 0, color: 'error' }),
+        h(StatCard, { title: props.t('totalStockQuantity'), value: summary.value.totalStock || 0, color: 'warning' }),
+      ]),
+      h(VCard, { class: 'data-card table-card' }, () => [
+        h('div', { class: 'table-scroll' }, [
+          h(VTable, { class: 'ledger-table', hover: true }, () => [
+            h('thead', [h('tr', columns.map(c => h('th', props.t(columnLabel(c)))))]) ,
+            h('tbody', loading.value
+              ? [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '加载中...')])]
+              : rows.value.length
+                ? rows.value.map(row => h('tr', { key: `${row.product_name}-${row.spec}-${row.unit}` }, columns.map(c => h('td', { class: amountClass(c) }, formatCell(c, row[c])))))
+                : [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '暂无库存记录')])]),
+          ]),
+        ]),
+        h('div', { class: 'table-footer' }, [
+          h('span', `${props.t('total', { count: total.value })} · 每页 ${pageSize} 条`),
+          h(VPagination, { modelValue: currentPage.value, 'onUpdate:modelValue': (v: number) => currentPage.value = v, length: Math.max(1, Math.ceil(total.value / pageSize)), density: 'comfortable', size: 'small', totalVisible: 7 }),
+        ]),
+      ]),
+    ])
+  },
+})
+
+const ProductCatalogPage = defineComponent({
+  props: { t: { type: Function, required: true } },
+  setup(props) {
+    const rows = ref<any[]>([])
+    const total = ref(0)
+    const currentPage = ref(1)
+    const pageSize = 20
+    const keyword = ref('')
+    const loading = ref(false)
+    const columns = ['product_name', 'spec', 'unit', 'category', 'default_price', 'stock_qty', 'available_qty']
+
+    const load = async () => {
+      loading.value = true
+      const res = await productAPI.list({ page: currentPage.value, pageSize, keyword: keyword.value })
+      rows.value = res.rows || []
+      total.value = res.total || 0
+      loading.value = false
+    }
+
+    watch(keyword, () => {
+      if (currentPage.value !== 1) currentPage.value = 1
+      else load()
+    })
+    watch(currentPage, load)
+    onMounted(load)
+
+    return () => h('div', { class: 'page-wrap ledger-page' }, [
+      h(PageHeader, { title: props.t('products'), subtitle: props.t('productsSub') }, {
+        actions: () => h('div', { class: 'header-toolbar' }, [
+          h(VTextField, {
+            modelValue: keyword.value,
+            'onUpdate:modelValue': (v: string) => { keyword.value = v },
+            label: props.t('searchProduct'),
+            density: 'compact',
+            hideDetails: true,
+            class: 'toolbar-input header-toolbar-input',
+          }),
+        ]),
+      }),
+      h(VCard, { class: 'data-card table-card' }, () => [
+        h('div', { class: 'table-scroll' }, [
+          h(VTable, { class: 'ledger-table', hover: true }, () => [
+            h('thead', [h('tr', columns.map(c => h('th', props.t(columnLabel(c)))))]) ,
+            h('tbody', loading.value
+              ? [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '加载中...')])]
+              : rows.value.length
+                ? rows.value.map(row => h('tr', { key: row.id }, columns.map(c => h('td', { class: amountClass(c) }, formatCell(c, row[c])))))
+                : [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '暂无产品档案')])]),
+          ]),
+        ]),
+        h('div', { class: 'table-footer' }, [
+          h('span', `${props.t('total', { count: total.value })} · 每页 ${pageSize} 条`),
+          h(VPagination, { modelValue: currentPage.value, 'onUpdate:modelValue': (v: number) => currentPage.value = v, length: Math.max(1, Math.ceil(total.value / pageSize)), density: 'comfortable', size: 'small', totalVisible: 7 }),
+        ]),
+      ]),
+    ])
+  },
+})
+
 const ledgerConfigs: any = {
   cash: { title: 'cash', api: cashAPI, pageSize: 20, search: 'searchCash', columns: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], fields: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], summary: ['totalIncome', 'totalExpense', 'currentSurplus'], table: 'cash', relatedTable: 'cash_ledger' },
   bank: { title: 'bank', api: bankAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'netAmount'], table: 'bank', relatedTable: 'bank_ledger' },
   bills: { title: 'bills', api: billsAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'netAmount'], table: 'bills', relatedTable: 'acceptance_bills' },
   customer: { title: 'customer', api: customerAPI, pageSize: 20, search: 'search', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['customer_name', 'date', 'description', 'amount_in', 'amount_out', 'balance', 'note', 'month_label'], summary: [], table: 'customer', relatedTable: 'customer_ledger' },
-  stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
-  stockOut: { title: 'stockOut', api: stockOutAPI, pageSize: 20, search: 'searchStock', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockOut', relatedTable: 'stock_out_ledger' },
+  stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['doc_no', 'supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
+  stockOut: { title: 'stockOut', api: stockOutAPI, pageSize: 20, search: 'searchStock', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['doc_no', 'customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockOut', relatedTable: 'stock_out_ledger' },
 }
 
 type FormFieldSpec = string | { key: string; span?: 'full' | 'half' }
@@ -911,12 +1257,18 @@ const LedgerPage = defineComponent({
     const editing = ref<any>(null)
     const form = reactive<any>({})
     const filterValue = ref('')
+    const yearFilter = ref('')
+    const monthFilter = ref('')
+    const startDate = ref('')
+    const endDate = ref('')
     const filterOptions = ref<string[]>([])
+    const inventoryOptions = ref<any[]>([])
     const attachmentDialog = ref(false)
     const attachmentRow = ref<any>(null)
     const attachments = ref<any[]>([])
     const pendingAttachments = ref<any[]>([])
     const attachmentLoading = ref(false)
+    const imagePreview = ref<any>(null)
     const printDialog = ref(false)
     const printSettingsDialog = ref(false)
     const printLoading = ref(false)
@@ -955,35 +1307,82 @@ const LedgerPage = defineComponent({
     })
     const printForm = reactive({ customerPhone: '', customerAddress: '', paymentReceived: '' })
     const displayColumns = computed(() => [...config.value.columns, 'attachments'])
+    const years = yearOptions()
+    const months = monthOptions()
+
+    const buildLedgerFilters = () => {
+      const params: any = { keyword: keyword.value }
+      if (config.value.filterField) params[config.value.filterField] = filterValue.value
+      if (yearFilter.value) params.year = yearFilter.value
+      if (monthFilter.value) params.month = monthFilter.value
+      if (startDate.value) params.startDate = startDate.value
+      if (endDate.value) params.endDate = endDate.value
+      return params
+    }
 
     const load = async () => {
       loading.value = true
-      const params: any = { page: currentPage.value, pageSize: config.value.pageSize, keyword: keyword.value }
-      if (config.value.filterField) params[config.value.filterField] = filterValue.value
+      const params: any = { ...buildLedgerFilters(), page: currentPage.value, pageSize: config.value.pageSize }
       const res = await config.value.api.list(params)
       rows.value = res.rows
       total.value = res.total
       if (config.value.filterField) {
         const names = await config.value.api.names()
         filterOptions.value = names.map((x: any) => x[config.value.filterKey])
-        summary.value = await config.value.api.summary(filterValue.value || undefined)
+        summary.value = await config.value.api.summary(buildLedgerFilters())
       } else {
-        summary.value = await config.value.api.summary()
+        summary.value = await config.value.api.summary(buildLedgerFilters())
       }
       loading.value = false
     }
 
     const resetSelection = () => { selected.value = []; currentPage.value = 1 }
-    const openAdd = () => { editing.value = null; Object.keys(form).forEach(k => delete form[k]); attachments.value = []; pendingAttachments.value = []; if (filterValue.value && config.value.filterKey) form[config.value.filterKey] = filterValue.value; dialog.value = true }
-    const openEdit = async (row: any) => { editing.value = row; Object.assign(form, row); pendingAttachments.value = []; dialog.value = true; await loadAttachments(row) }
-    const save = async () => {
-      const saved = editing.value ? await config.value.api.update({ ...form, id: editing.value.id }) : await config.value.api.add({ ...form })
-      if (pendingAttachments.value.length && saved?.id) {
-        await attachmentAPI.add(config.value.relatedTable, saved.id, pendingAttachments.value.map((item: any) => item.filePath))
-      }
-      dialog.value = false
-      emit('notify', editing.value ? '已更新' : '已添加')
+    const resetFilters = () => {
+      keyword.value = ''
+      filterValue.value = ''
+      yearFilter.value = ''
+      monthFilter.value = ''
+      startDate.value = ''
+      endDate.value = ''
+      resetSelection()
       load()
+    }
+    const loadInventoryOptions = async () => {
+      if (props.page === 'stockOut') inventoryOptions.value = await inventoryAPI.options()
+    }
+    const openAdd = async () => {
+      editing.value = null
+      Object.keys(form).forEach(k => delete form[k])
+      attachments.value = []
+      pendingAttachments.value = []
+      if (filterValue.value && config.value.filterKey) form[config.value.filterKey] = filterValue.value
+      await loadInventoryOptions()
+      dialog.value = true
+    }
+    const openEdit = async (row: any) => {
+      editing.value = row
+      Object.assign(form, row)
+      form.date = normalizeDateValue(form.date)
+      pendingAttachments.value = []
+      await loadInventoryOptions()
+      dialog.value = true
+      await loadAttachments(row)
+    }
+    const save = async () => {
+      try {
+        const payload = { ...form }
+        if (payload.date) payload.date = normalizeDateValue(payload.date)
+        if ('month_label' in payload && payload.date) payload.month_label = monthFromDate(payload.date)
+        const saved = editing.value ? await config.value.api.update({ ...payload, id: editing.value.id }) : await config.value.api.add(payload)
+        if (pendingAttachments.value.length && saved?.id) {
+          await attachmentAPI.add(config.value.relatedTable, saved.id, pendingAttachments.value.map((item: any) => item.filePath))
+        }
+        dialog.value = false
+        emit('notify', editing.value ? '已更新' : '已添加')
+        load()
+      } catch (error: any) {
+        emit('notify', error?.message || '保存失败', 'error')
+      }
     }
     const remove = async (id: number) => { await config.value.api.delete(id); emit('notify', '已移入回收站'); load() }
     const loadAttachments = async (row: any) => {
@@ -997,6 +1396,12 @@ const LedgerPage = defineComponent({
       attachments.value = []
       attachmentDialog.value = true
       await loadAttachments(row)
+    }
+    const openImagePreview = (item: any) => {
+      imagePreview.value = item
+    }
+    const closeImagePreview = () => {
+      imagePreview.value = null
     }
     const addAttachment = async () => {
       if (!attachmentRow.value?.id) return
@@ -1017,9 +1422,8 @@ const LedgerPage = defineComponent({
       exporting.value = true
       try {
         const selectedCount = selected.value.length
-        const exportParams: any = { table: config.value.table, keyword: keyword.value }
+        const exportParams: any = { table: config.value.table, ...buildLedgerFilters() }
         if (selectedCount) exportParams.ids = [...selected.value]
-        if (config.value.filterField) exportParams[config.value.filterField] = filterValue.value
         const result = await systemAPI.exportExcel(exportParams)
         notifyExportResult(emit, props.t, result, selectedCount)
       } catch (error: any) {
@@ -1119,19 +1523,24 @@ const LedgerPage = defineComponent({
     const toggleAll = (value: boolean) => selected.value = value ? Array.from(new Set([...selected.value, ...rows.value.map(r => r.id)])) : selected.value.filter(id => !rows.value.some(r => r.id === id))
     const isPageAllSelected = computed(() => rows.value.length > 0 && rows.value.every(r => selected.value.includes(r.id)))
 
-    watch(() => props.page, () => { keyword.value = ''; selected.value = []; currentPage.value = 1; load() }, { immediate: true })
+    watch(() => props.page, () => { keyword.value = ''; filterValue.value = ''; yearFilter.value = ''; monthFilter.value = ''; startDate.value = ''; endDate.value = ''; selected.value = []; currentPage.value = 1; load() }, { immediate: true })
     watch(keyword, () => {
       selected.value = []
       if (currentPage.value !== 1) currentPage.value = 1
       else load()
     })
-    watch([currentPage, filterValue], () => { selected.value = []; load() })
+    watch([currentPage, filterValue, yearFilter, monthFilter, startDate, endDate], () => { selected.value = []; load() })
 
     return () => h('div', { class: 'page-wrap ledger-page' }, [
       h(PageHeader, { title: props.t(config.value.title), subtitle: props.t(`${config.value.title}Sub`) }, {
         actions: () => h('div', { class: 'header-toolbar' }, [
           config.value.filterField ? h(VSelect, { modelValue: filterValue.value, 'onUpdate:modelValue': (v: string) => { filterValue.value = v || ''; resetSelection() }, items: filterOptions.value, label: props.t(config.value.filterLabel), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }) : null,
+          h(VSelect, { modelValue: yearFilter.value, 'onUpdate:modelValue': (v: string) => { yearFilter.value = v || ''; resetSelection() }, items: years, label: props.t('filterYear'), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VSelect, { modelValue: monthFilter.value, 'onUpdate:modelValue': (v: string) => { monthFilter.value = v || ''; resetSelection() }, items: months, label: props.t('filterMonth'), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: startDate.value, 'onUpdate:modelValue': (v: string) => { startDate.value = v || ''; resetSelection() }, label: props.t('filterStartDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: endDate.value, 'onUpdate:modelValue': (v: string) => { endDate.value = v || ''; resetSelection() }, label: props.t('filterEndDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VTextField, { modelValue: keyword.value, 'onUpdate:modelValue': (v: string) => { keyword.value = v; resetSelection() }, label: props.t(config.value.search), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
           h(VBtn, { variant: 'tonal', size: 'small', loading: exporting.value, onClick: exportRows }, () => props.t('export')),
           props.page === 'stockOut'
             ? h(VBtn, {
@@ -1193,6 +1602,7 @@ const LedgerPage = defineComponent({
               form,
               config: config.value,
               filterOptions: filterOptions.value,
+              inventoryOptions: inventoryOptions.value,
               t: props.t,
             }))),
           ])),
@@ -1207,11 +1617,11 @@ const LedgerPage = defineComponent({
               ]),
               attachments.value.length || pendingAttachments.value.length
                 ? h('div', { class: 'image-preview-grid compact' }, [
-                  ...attachments.value.map((item: any) => h('a', { key: `old-${item.id}`, class: 'image-preview-card', href: item.dataUrl, target: '_blank' }, [
+                  ...attachments.value.map((item: any) => h('button', { key: `old-${item.id}`, type: 'button', class: 'image-preview-card', onClick: () => openImagePreview(item) }, [
                     h('img', { src: item.dataUrl, alt: item.fileName }),
                     h('span', item.fileName),
                   ])),
-                  ...pendingAttachments.value.map((item: any, index: number) => h('a', { key: `pending-${index}`, class: 'image-preview-card pending', href: item.dataUrl, target: '_blank' }, [
+                  ...pendingAttachments.value.map((item: any, index: number) => h('button', { key: `pending-${index}`, type: 'button', class: 'image-preview-card pending', onClick: () => openImagePreview(item) }, [
                     h('img', { src: item.dataUrl, alt: item.fileName }),
                     h('span', item.fileName),
                   ])),
@@ -1233,13 +1643,22 @@ const LedgerPage = defineComponent({
           attachmentLoading.value
             ? h('div', { class: 'empty-cell' }, '加载中...')
             : attachments.value.length
-              ? h('div', { class: 'image-preview-grid' }, attachments.value.map((item: any) => h('a', { key: item.id, class: 'image-preview-card', href: item.dataUrl, target: '_blank' }, [
+              ? h('div', { class: 'image-preview-grid' }, attachments.value.map((item: any) => h('button', { key: item.id, type: 'button', class: 'image-preview-card', onClick: () => openImagePreview(item) }, [
                 h('img', { src: item.dataUrl, alt: item.fileName }),
                 h('span', item.fileName),
               ])))
               : h('div', { class: 'empty-image-state' }, props.t('noImages')),
         ],
       }),
+      h(VDialog, { modelValue: Boolean(imagePreview.value), 'onUpdate:modelValue': (v: boolean) => { if (!v) closeImagePreview() }, maxWidth: 1180 }, () => h(VCard, { class: 'image-zoom-dialog' }, [
+        h('div', { class: 'image-zoom-dialog__head' }, [
+          h('div', { class: 'image-zoom-dialog__title' }, imagePreview.value?.fileName || props.t('images')),
+          h(VBtn, { variant: 'text', onClick: closeImagePreview }, () => props.t('cancel')),
+        ]),
+        imagePreview.value?.dataUrl
+          ? h('img', { class: 'image-zoom-dialog__img', src: imagePreview.value.dataUrl, alt: imagePreview.value.fileName || props.t('images') })
+          : null,
+      ])),
       props.page === 'stockOut' ? h(VDialog, { modelValue: printDialog.value, 'onUpdate:modelValue': (v: boolean) => printDialog.value = v, maxWidth: 980, scrollable: true }, () => h(VCard, { class: 'pa-5 print-dialog-card' }, [
         h(VCardTitle, props.t('printPreview')),
         h(VCardText, [
@@ -1377,12 +1796,46 @@ function renderLedgerStats(pageKey: string, summary: any, tFn: any) {
 function columnLabel(col: string) {
   return ({
     amount_in: 'amountIn', amount_out: 'amountOut', customer_name: 'customerName', supplier_name: 'supplierName',
-    contract_no: 'contractNo', product_name: 'productName', unit_price: 'unitPrice',
+    doc_no: 'docNo', contract_no: 'contractNo', product_name: 'productName', unit_price: 'unitPrice',
     tax_rate: 'taxRate', tax_amount: 'taxAmount', invoice_amount: 'invoiceAmount',
+    total_in: 'totalInQuantity', total_out: 'totalOutQuantity', stock_qty: 'stockQty',
+    default_price: 'defaultPrice', available_qty: 'availableQty',
     month_label: 'date', attachments: 'images',
   } as any)[col] || col
 }
-function numericField(field: string) { return ['income', 'expense', 'amount_in', 'amount_out', 'balance', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount'].includes(field) }
+function inventoryOptionTitle(item: any) {
+  if (!item || typeof item !== 'object') return String(item || '')
+  const spec = item.spec ? ` / ${item.spec}` : ''
+  const unit = item.unit ? ` ${item.unit}` : ''
+  return `${item.product_name}${spec} · 库存 ${money(item.stock_qty)}${unit}`
+}
+function roundMoneyValue(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
+function autoFillAmountFields(form: any, changedKey: string) {
+  if (['quantity', 'unit_price'].includes(changedKey)) {
+    form.amount = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+  }
+  if (changedKey === 'amount' && Number(form.quantity || 0) > 0 && Number(form.unit_price || 0) === 0) {
+    form.unit_price = roundMoneyValue(Number(form.amount || 0) / Number(form.quantity || 1))
+  }
+  if (changedKey === 'amount' && Number(form.unit_price || 0) > 0 && Number(form.quantity || 0) === 0) {
+    form.quantity = roundMoneyValue(Number(form.amount || 0) / Number(form.unit_price || 1))
+  }
+  if (['quantity', 'unit_price', 'amount', 'tax_rate'].includes(changedKey) && 'tax_rate' in form) {
+    const rateValue = Number(form.tax_rate || 0)
+    const rate = rateValue > 1 ? rateValue / 100 : rateValue
+    form.tax_amount = roundMoneyValue(Number(form.amount || 0) * rate)
+    form.invoice_amount = roundMoneyValue(Number(form.amount || 0) + Number(form.tax_amount || 0))
+  }
+  if (changedKey === 'tax_amount' && 'invoice_amount' in form) {
+    form.invoice_amount = roundMoneyValue(Number(form.amount || 0) + Number(form.tax_amount || 0))
+  }
+  if (changedKey === 'invoice_amount' && 'tax_amount' in form) {
+    form.tax_amount = roundMoneyValue(Number(form.invoice_amount || 0) - Number(form.amount || 0))
+  }
+}
+function numericField(field: string) { return ['income', 'expense', 'amount_in', 'amount_out', 'balance', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'total_in', 'total_out', 'stock_qty', 'default_price', 'available_qty'].includes(field) }
 function amountClass(col: string) { return numericField(col) ? 'amount-cell' : '' }
 function formatCell(col: string, value: any) { return numericField(col) ? (Number(value || 0) ? money(value) : '—') : (value || '') }
 
@@ -1401,10 +1854,10 @@ function getFormSections(pageKey: string, fields: string[]): FormSectionSpec[] {
 
 function renderRecordFormField(
   field: FormFieldSpec,
-  ctx: { form: any; config: any; filterOptions: string[]; t: (key: string, params?: any) => string },
+  ctx: { form: any; config: any; filterOptions: string[]; inventoryOptions?: any[]; t: (key: string, params?: any) => string },
 ) {
   const { key, span } = normalizeFormField(field)
-  const { form, config, filterOptions, t } = ctx
+  const { form, config, filterOptions, inventoryOptions = [], t } = ctx
   const wrapClass = `record-dialog__field record-dialog__field--${span === 'full' ? 'full' : 'half'}`
   const base = commonFormFieldProps()
 
@@ -1423,6 +1876,36 @@ function renderRecordFormField(
     ])
   }
 
+  if (config.table === 'stockOut' && key === 'product_name') {
+    const selected = inventoryOptions.find(item =>
+      item.product_name === form.product_name &&
+      (item.spec || '') === (form.spec || '') &&
+      (item.unit || '') === (form.unit || '')
+    ) || form.product_name || null
+    return h('div', { class: wrapClass, key }, [
+      h(VCombobox, {
+        ...base,
+        modelValue: selected,
+        'onUpdate:modelValue': (v: any) => {
+          if (v && typeof v === 'object') {
+            form.product_name = v.product_name
+            form.spec = v.spec || ''
+            form.unit = v.unit || ''
+          } else {
+            form.product_name = String(v || '')
+          }
+        },
+        items: inventoryOptions,
+        itemTitle: inventoryOptionTitle,
+        label: t(columnLabel(key)),
+        placeholder: t('selectInventoryProduct'),
+        returnObject: true,
+        clearable: true,
+        hideNoData: false,
+      }),
+    ])
+  }
+
   if (key === 'note' || key === 'description') {
     return h('div', { class: 'record-dialog__field record-dialog__field--full', key }, [
       h(VTextarea, {
@@ -1436,14 +1919,32 @@ function renderRecordFormField(
     ])
   }
 
+  if (key === 'date') {
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: normalizeDateValue(form[key]),
+        'onUpdate:modelValue': (v: any) => {
+          form[key] = normalizeDateValue(v)
+          if ('month_label' in form) form.month_label = monthFromDate(v)
+        },
+        label: t(columnLabel(key)),
+        type: 'date',
+      }),
+    ])
+  }
+
   return h('div', { class: wrapClass, key }, [
     h(VTextField, {
       ...base,
       modelValue: form[key],
-      'onUpdate:modelValue': (v: any) => { form[key] = v },
+      'onUpdate:modelValue': (v: any) => {
+        form[key] = numericField(key) ? Number(v || 0) : v
+        autoFillAmountFields(form, key)
+      },
       label: t(columnLabel(key)),
       type: numericField(key) ? 'number' : 'text',
-      placeholder: key === 'date' ? '2026.03.15' : undefined,
+      readonly: key === 'month_label',
       ...(numericField(key) ? { step: 'any' } : {}),
     }),
   ])
@@ -1719,12 +2220,41 @@ const TrashPage = defineComponent({
   setup(props, { emit }) {
     const data = ref<any>({})
     const tab = ref('cash_ledger')
-    const load = async () => data.value = await systemAPI.trashAll()
+    const keyword = ref('')
+    const startDate = ref('')
+    const endDate = ref('')
+    const deletedStartDate = ref('')
+    const deletedEndDate = ref('')
+    const load = async () => data.value = await systemAPI.trashAll({
+      keyword: keyword.value,
+      startDate: startDate.value,
+      endDate: endDate.value,
+      deletedStartDate: deletedStartDate.value,
+      deletedEndDate: deletedEndDate.value,
+    })
+    const resetFilters = () => {
+      keyword.value = ''
+      startDate.value = ''
+      endDate.value = ''
+      deletedStartDate.value = ''
+      deletedEndDate.value = ''
+      load()
+    }
     const restore = async (table: string, id: number) => { const apis: any = { cash_ledger: cashAPI, bank_ledger: bankAPI, acceptance_bills: billsAPI, customer_ledger: customerAPI, stock_in_ledger: stockInAPI, stock_out_ledger: stockOutAPI }; await apis[table]?.restore(id); emit('notify', props.t('restored')); load() }
+    watch([keyword, startDate, endDate, deletedStartDate, deletedEndDate], load)
     onMounted(load)
     const tabs = [{ key: 'cash_ledger', label: 'cash' }, { key: 'bank_ledger', label: 'bank' }, { key: 'acceptance_bills', label: 'bills' }, { key: 'customer_ledger', label: 'customer' }, { key: 'stock_in_ledger', label: 'stockIn' }, { key: 'stock_out_ledger', label: 'stockOut' }]
-    return () => h('div', { class: 'page-wrap' }, [
-      h(PageHeader, { title: props.t('trash') }),
+    return () => h('div', { class: 'page-wrap ledger-page' }, [
+      h(PageHeader, { title: props.t('trash') }, {
+        actions: () => h('div', { class: 'header-toolbar' }, [
+          h(VTextField, { modelValue: startDate.value, 'onUpdate:modelValue': (v: string) => { startDate.value = v || '' }, label: props.t('filterStartDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: endDate.value, 'onUpdate:modelValue': (v: string) => { endDate.value = v || '' }, label: props.t('filterEndDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: deletedStartDate.value, 'onUpdate:modelValue': (v: string) => { deletedStartDate.value = v || '' }, label: props.t('filterDeletedStartDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: deletedEndDate.value, 'onUpdate:modelValue': (v: string) => { deletedEndDate.value = v || '' }, label: props.t('filterDeletedEndDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: keyword.value, 'onUpdate:modelValue': (v: string) => { keyword.value = v }, label: props.t('search'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
+        ]),
+      }),
       h(VTabs, { modelValue: tab.value, 'onUpdate:modelValue': (v: string) => tab.value = v }, () => tabs.map(x => h(VTab, { value: x.key }, () => `${props.t(x.label)} (${(data.value[x.key] || []).length})`))),
       h(VCard, { class: 'data-card table-card utility-table-card' }, () => h('div', { class: 'table-scroll' }, [
         h(VTable, { class: 'ledger-table', hover: true }, () => [
@@ -1734,7 +2264,9 @@ const TrashPage = defineComponent({
             h('th', props.t('deletedAt')),
             h('th', { class: 'sticky-action-col' }, props.t('action')),
           ])]),
-          h('tbody', (data.value[tab.value] || []).map((row: any) => h('tr', [h('td', row.date), h('td', row.description || row.customer_name || row.product_name || row.supplier_name), h('td', row.deleted_at), h('td', { class: 'action-cell sticky-action-col' }, [h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: () => restore(tab.value, row.id) }, () => props.t('restore'))])]))),
+          h('tbody', (data.value[tab.value] || []).length
+            ? (data.value[tab.value] || []).map((row: any) => h('tr', [h('td', row.date), h('td', row.description || row.customer_name || row.product_name || row.supplier_name), h('td', row.deleted_at), h('td', { class: 'action-cell sticky-action-col' }, [h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: () => restore(tab.value, row.id) }, () => props.t('restore'))])]))
+            : [h('tr', [h('td', { colspan: 4, class: 'empty-cell' }, '暂无删除记录')])]),
         ]),
       ])),
     ])
@@ -1748,10 +2280,58 @@ const LogsPage = defineComponent({
     const total = ref(0)
     const currentPage = ref(1)
     const pageSize = 20
-    const load = async () => { const r = await systemAPI.logs({ page: currentPage.value, pageSize }); rows.value = r.rows; total.value = r.total }
+    const keyword = ref('')
+    const tableName = ref('')
+    const action = ref('')
+    const startDate = ref('')
+    const endDate = ref('')
+    const moduleOptions = [
+      { title: props.t('cash'), value: 'cash_ledger' },
+      { title: props.t('bank'), value: 'bank_ledger' },
+      { title: props.t('bills'), value: 'acceptance_bills' },
+      { title: props.t('customer'), value: 'customer_ledger' },
+      { title: props.t('stockIn'), value: 'stock_in_ledger' },
+      { title: props.t('stockOut'), value: 'stock_out_ledger' },
+    ]
+    const actionOptions = ['INSERT', 'UPDATE', 'DELETE', 'RESTORE']
+    const load = async () => {
+      const r = await systemAPI.logs({
+        page: currentPage.value,
+        pageSize,
+        keyword: keyword.value,
+        tableName: tableName.value,
+        action: action.value,
+        startDate: startDate.value,
+        endDate: endDate.value,
+      })
+      rows.value = r.rows
+      total.value = r.total
+    }
+    const resetFilters = () => {
+      keyword.value = ''
+      tableName.value = ''
+      action.value = ''
+      startDate.value = ''
+      endDate.value = ''
+      currentPage.value = 1
+      load()
+    }
+    watch([keyword, tableName, action, startDate, endDate], () => {
+      if (currentPage.value !== 1) currentPage.value = 1
+      else load()
+    })
     watch(currentPage, load, { immediate: true })
-    return () => h('div', { class: 'page-wrap' }, [
-      h(PageHeader, { title: props.t('logsTitle'), subtitle: props.t('logsPageSub') }),
+    return () => h('div', { class: 'page-wrap ledger-page' }, [
+      h(PageHeader, { title: props.t('logsTitle'), subtitle: props.t('logsPageSub') }, {
+        actions: () => h('div', { class: 'header-toolbar' }, [
+          h(VSelect, { modelValue: tableName.value, 'onUpdate:modelValue': (v: string) => { tableName.value = v || '' }, items: moduleOptions, label: props.t('filterModule'), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VSelect, { modelValue: action.value, 'onUpdate:modelValue': (v: string) => { action.value = v || '' }, items: actionOptions, label: props.t('filterAction'), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: startDate.value, 'onUpdate:modelValue': (v: string) => { startDate.value = v || '' }, label: props.t('filterStartDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: endDate.value, 'onUpdate:modelValue': (v: string) => { endDate.value = v || '' }, label: props.t('filterEndDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VTextField, { modelValue: keyword.value, 'onUpdate:modelValue': (v: string) => { keyword.value = v }, label: props.t('search'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
+          h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
+        ]),
+      }),
       h(VCard, { class: 'data-card table-card utility-table-card' }, () => [
         h('div', { class: 'table-scroll' }, [
           h(VTable, { class: 'ledger-table', hover: true }, () => [

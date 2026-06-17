@@ -1,40 +1,47 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { logOperation, softDelete, restore } from './helpers'
+import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 
 export function registerCashHandlers(): void {
   // 获取列表
-  ipcMain.handle('cash:list', (_e, { page = 1, pageSize = 50, keyword = '' } = {}) => {
+  ipcMain.handle('cash:list', (_e, params = {}) => {
+    const { page = 1, pageSize = 50, keyword = '' } = params as any
+    const filters = normalizeLedgerFilters(params)
     const db = getDb()
     const offset = (page - 1) * pageSize
     const like = `%${keyword}%`
+    const dateWhere = buildDateFilterClause(filters)
     const rows = db.prepare(`
       SELECT cash_ledger.*, ${attachmentPreviewSql('cash_ledger')}
       FROM cash_ledger
       WHERE deleted_at IS NULL
         AND (description LIKE ? OR operator LIKE ? OR note LIKE ? OR date LIKE ?)
+        ${dateWhere.sql}
       ORDER BY date ASC, id ASC
       LIMIT ? OFFSET ?
-    `).all(like, like, like, like, pageSize, offset)
+    `).all(like, like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM cash_ledger
       WHERE deleted_at IS NULL
         AND (description LIKE ? OR operator LIKE ? OR note LIKE ? OR date LIKE ?)
-    `).get(like, like, like, like) as { total: number }
+        ${dateWhere.sql}
+    `).get(like, like, like, like, ...dateWhere.params) as { total: number }
     return { rows: withAttachmentPreviews(rows), total }
   })
 
   // 汇总
-  ipcMain.handle('cash:summary', () => {
+  ipcMain.handle('cash:summary', (_e, params = {}) => {
+    const filters = normalizeLedgerFilters(params)
+    const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
     return db.prepare(`
       SELECT
         SUM(income)  as totalIncome,
         SUM(expense) as totalExpense,
         MAX(balance) as lastBalance
-      FROM cash_ledger WHERE deleted_at IS NULL
-    `).get()
+      FROM cash_ledger WHERE deleted_at IS NULL ${dateWhere.sql}
+    `).get(...dateWhere.params)
   })
 
   // 月度汇总（图表用）

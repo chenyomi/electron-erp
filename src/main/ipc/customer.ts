@@ -1,6 +1,6 @@
 import { dialog, ipcMain } from 'electron'
 import { getDataDir, getDb } from '../db'
-import { logOperation, softDelete, restore } from './helpers'
+import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import * as fs from 'fs'
 import * as path from 'path'
 import sharp from 'sharp'
@@ -12,10 +12,13 @@ export function registerCustomerHandlers(): void {
     return db.prepare(`SELECT DISTINCT customer_name FROM customer_ledger WHERE deleted_at IS NULL ORDER BY customer_name`).all()
   })
 
-  ipcMain.handle('customer:list', (_e, { customerName, page = 1, pageSize = 100, keyword = '' } = {}) => {
+  ipcMain.handle('customer:list', (_e, params = {}) => {
+    const { customerName, page = 1, pageSize = 100, keyword = '' } = params as any
     const db = getDb()
     const offset = (page - 1) * pageSize
     const like = `%${keyword}%`
+    const filters = normalizeLedgerFilters(params, 'customerName')
+    const dateWhere = buildDateFilterClause(filters)
     const rows = db.prepare(`
       SELECT customer_ledger.*,
         (SELECT COUNT(*) FROM attachments
@@ -29,37 +32,42 @@ export function registerCustomerHandlers(): void {
       WHERE deleted_at IS NULL
         AND (? = '' OR customer_name = ?)
         AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
+        ${dateWhere.sql}
       ORDER BY customer_name ASC, date ASC, id ASC
       LIMIT ? OFFSET ?
-    `).all(customerName || '', customerName || '', like, like, like, pageSize, offset) as any[]
+    `).all(customerName || '', customerName || '', like, like, like, ...dateWhere.params, pageSize, offset) as any[]
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM customer_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR customer_name = ?)
         AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
-    `).get(customerName || '', customerName || '', like, like, like) as { total: number }
+        ${dateWhere.sql}
+    `).get(customerName || '', customerName || '', like, like, like, ...dateWhere.params) as { total: number }
     return { rows: rows.map(row => ({ ...row, attachment_thumb: imageDataUrl(row.attachment_thumb_path) })), total }
   })
 
-  ipcMain.handle('customer:summary', (_e, customerName = '') => {
+  ipcMain.handle('customer:summary', (_e, params: any = {}) => {
+    const filters = normalizeLedgerFilters(params, 'customerName')
+    const customerName = filters.customerName || ''
+    const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
     if (customerName) {
       return db.prepare(`
         SELECT customer_name,
           SUM(amount_in) as totalIn, SUM(amount_out) as totalOut
         FROM customer_ledger
-        WHERE deleted_at IS NULL AND customer_name = ?
+        WHERE deleted_at IS NULL AND customer_name = ? ${dateWhere.sql}
         GROUP BY customer_name
-      `).get(customerName)
+      `).get(customerName, ...dateWhere.params)
     }
     return db.prepare(`
       SELECT customer_name,
         SUM(amount_in) as totalIn, SUM(amount_out) as totalOut
       FROM customer_ledger
-      WHERE deleted_at IS NULL
+      WHERE deleted_at IS NULL ${dateWhere.sql}
       GROUP BY customer_name
       ORDER BY customer_name
-    `).all()
+    `).all(...dateWhere.params)
   })
 
   ipcMain.handle('customer:add', (_e, row) => {

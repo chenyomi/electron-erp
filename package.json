@@ -73,18 +73,18 @@
       "title": "东昊账务 ${version}",
       "background": "resources/dmg-background.png",
       "window": {
-        "width": 540,
-        "height": 380
+        "width": 680,
+        "height": 500
       },
       "contents": [
         {
-          "x": 144,
-          "y": 180,
+          "x": 190,
+          "y": 390,
           "type": "file"
         },
         {
-          "x": 396,
-          "y": 180,
+          "x": 490,
+          "y": 390,
           "type": "link",
           "path": "/Applications"
         }
@@ -109,6 +109,7 @@
       "installerLanguages": [
         "zh_CN"
       ],
+      "include": "build/installer.nsh",
       "language": "2052",
       "displayLanguageSelector": false,
       "runAfterFinish": true,

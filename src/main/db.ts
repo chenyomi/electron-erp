@@ -3,10 +3,17 @@ import { app } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
 
-let db: Database.Database
+let db: Database.Database | undefined
 
 export function getDb(): Database.Database {
+  if (!db) throw new Error('数据库未初始化')
   return db
+}
+
+export function closeDatabase(): void {
+  if (!db) return
+  db.close()
+  db = undefined
 }
 
 export function getDataDir(): string {
@@ -16,6 +23,8 @@ export function getDataDir(): string {
 }
 
 export function initDatabase(): void {
+  if (db) return
+
   const dataDir = getDataDir()
   const dbPath = join(dataDir, 'ledger.db')
 

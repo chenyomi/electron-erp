@@ -1,6 +1,6 @@
 import { join } from 'path'
 import * as fs from 'fs'
-import { getDataDir, getDb } from './db'
+import { closeDatabase, getDataDir, getDb, initDatabase } from './db'
 
 const BACKUP_PREFIX = 'ledger_'
 const MAX_BACKUPS = 30
@@ -116,6 +116,86 @@ function listBackupEntries(backupRoot: string): BackupEntry[] {
   }
 
   return entries.sort((a, b) => b.time - a.time)
+}
+
+interface BackupSource {
+  baseDir: string
+  dbPath: string
+  hasImages: boolean
+}
+
+function resolveBackupSource(sourcePath: string): BackupSource | null {
+  if (!fs.existsSync(sourcePath)) return null
+
+  const stat = fs.statSync(sourcePath)
+  if (stat.isFile() && sourcePath.endsWith('.db')) {
+    return { baseDir: sourcePath, dbPath: sourcePath, hasImages: false }
+  }
+
+  if (!stat.isDirectory()) return null
+
+  const dbPath = join(sourcePath, 'ledger.db')
+  if (!fs.existsSync(dbPath)) return null
+
+  const hasImages = DATA_DIRS.some(dirName => fs.existsSync(join(sourcePath, dirName)))
+  return { baseDir: sourcePath, dbPath, hasImages }
+}
+
+function removeIfExists(target: string): void {
+  if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true })
+}
+
+function replaceDir(src: string, dest: string): void {
+  removeIfExists(dest)
+  if (fs.existsSync(src)) fs.cpSync(src, dest, { recursive: true })
+}
+
+function replaceDbFile(src: string, dest: string): void {
+  removeIfExists(dest)
+  removeIfExists(`${dest}-wal`)
+  removeIfExists(`${dest}-shm`)
+  fs.copyFileSync(src, dest)
+}
+
+export function restoreFromBackup(sourcePath: string): { ok: boolean; error?: string } {
+  const source = resolveBackupSource(sourcePath)
+  if (!source) {
+    return { ok: false, error: '未找到有效备份，请选择包含 ledger.db 的备份文件夹' }
+  }
+
+  try {
+    autoBackup()
+
+    const dataDir = getDataDir()
+    const targetDbPath = join(dataDir, 'ledger.db')
+
+    closeDatabase()
+    replaceDbFile(source.dbPath, targetDbPath)
+
+    if (source.hasImages) {
+      for (const dirName of DATA_DIRS) {
+        replaceDir(join(source.baseDir, dirName), join(dataDir, dirName))
+      }
+    }
+
+    initDatabase()
+    return { ok: true }
+  } catch (e: any) {
+    try {
+      initDatabase()
+    } catch {
+      // ignore re-init failure; caller will surface original error
+    }
+    console.error('Restore failed:', e)
+    return { ok: false, error: e?.message || '恢复失败' }
+  }
+}
+
+export function getBackupPathByName(name: string): string | null {
+  const backupRoot = join(getDataDir(), 'backups')
+  const path = join(backupRoot, name)
+  if (!fs.existsSync(path)) return null
+  return resolveBackupSource(path) ? path : null
 }
 
 export function listBackups(): BackupInfo[] {

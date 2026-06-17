@@ -318,12 +318,20 @@ const messages = {
     auditor: '审核人',
     pickNote: '提货提示',
     dataMgmtTitle: '数据管理',
-    dataMgmtSub: '导入账本、备份数据、导出报表，三步搞定',
-    importSection: '导入数据',
+    dataMgmtSub: '备份、恢复、导出，换电脑也能搬数据',
+    restoreSection: '恢复数据',
+    restoreTitle: '从备份恢复',
+    restoreDesc: '选择一份备份文件夹（本机备份、U 盘或旧电脑拷来的都可以），一键还原全部账本和图片。',
+    pickBackupFolder: '选择备份文件夹',
+    restoreThisBackup: '恢复',
+    restoreDone: '恢复成功',
+    restoreFailed: '恢复失败',
+    legacySection: '旧版 Excel 迁移',
+    legacyHint: '仅限首次从老 Excel 账本迁入，格式需与原账本一致。日常使用请用上面的备份恢复。',
     importLedgerTitle: '导入账本',
-    importLedgerDesc: '选择以前的 Excel 账本，自动导入现金账、公账、承兑票和客户往来。',
+    importLedgerDesc: '从以前的 Excel 账本首次迁入历史数据。',
     importStockTitle: '导入入库单',
-    importStockDesc: '选择材料入库 Excel，自动按供应商导入入库记录。',
+    importStockDesc: '从材料入库 Excel 按供应商导入记录。',
     importTitle: '导入数据',
     importPageSub: '从 Excel 账本导入历史数据',
     pickExcel: '选择账本文件',
@@ -494,12 +502,20 @@ const messages = {
     auditor: 'Auditor',
     pickNote: 'Pickup note',
     dataMgmtTitle: 'Data Management',
-    dataMgmtSub: 'Import ledgers, back up data, and export reports in three steps',
-    importSection: 'Import',
+    dataMgmtSub: 'Back up, restore, and export — move data between computers easily',
+    restoreSection: 'Restore',
+    restoreTitle: 'Restore from Backup',
+    restoreDesc: 'Pick a backup folder from this computer, a USB drive, or another machine to restore all ledger data and images.',
+    pickBackupFolder: 'Choose Backup Folder',
+    restoreThisBackup: 'Restore',
+    restoreDone: 'Restore complete',
+    restoreFailed: 'Restore failed',
+    legacySection: 'Legacy Excel Migration',
+    legacyHint: 'For first-time migration from the old Excel ledger only. For daily use, prefer backup restore above.',
     importLedgerTitle: 'Import Ledger',
-    importLedgerDesc: 'Choose a legacy Excel ledger to import cash, bank, bills, and customer records.',
+    importLedgerDesc: 'One-time migration from a legacy Excel ledger.',
     importStockTitle: 'Import Stock In',
-    importStockDesc: 'Choose a stock-in Excel file to import inbound records by supplier.',
+    importStockDesc: 'Import inbound records from a stock-in Excel file.',
     importTitle: 'Import Data',
     importPageSub: 'Import historical data from Excel',
     pickExcel: 'Choose Ledger File',
@@ -1482,7 +1498,9 @@ const ImportPage = defineComponent({
   setup(props, { emit }) {
     const loading = ref(false)
     const stockLoading = ref(false)
+    const restoring = ref(false)
     const exporting = ref(false)
+    const legacyOpen = ref(false)
     const result = ref<any>(null)
     const stockResult = ref<any>(null)
     const error = ref('')
@@ -1491,6 +1509,28 @@ const ImportPage = defineComponent({
     const loadInfo = async () => { backups.value = await systemAPI.backupsList() }
     const importExcel = async () => { const file = await importAPI.pickFile(); if (!file) return; loading.value = true; error.value = ''; result.value = null; const r = await importAPI.excel(file); loading.value = false; if (r.ok) { result.value = r.imported; emit('notify', props.t('importDone')) } else { error.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
     const importStockIn = async () => { const file = await importAPI.pickFile(); if (!file) return; stockLoading.value = true; stockError.value = ''; stockResult.value = null; const r = await importAPI.stockIn(file); stockLoading.value = false; if (r.ok) { stockResult.value = r.imported; emit('notify', props.t('importStockInDone')) } else { stockError.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
+    const restoreFromFolder = async () => {
+      const folder = await systemAPI.pickBackup()
+      if (!folder) return
+      restoring.value = true
+      try {
+        const r = await systemAPI.restoreBackup(folder)
+        if (r?.ok) emit('notify', props.t('restoreDone'))
+        else if (!r?.canceled) emit('notify', r?.error || props.t('restoreFailed'), 'error')
+      } finally {
+        restoring.value = false
+      }
+    }
+    const restoreByName = async (name: string) => {
+      restoring.value = true
+      try {
+        const r = await systemAPI.restoreBackupByName(name)
+        if (r?.ok) emit('notify', props.t('restoreDone'))
+        else if (!r?.canceled) emit('notify', r?.error || props.t('restoreFailed'), 'error')
+      } finally {
+        restoring.value = false
+      }
+    }
     const backup = async () => {
       const result = await systemAPI.backup()
       await loadInfo()
@@ -1517,33 +1557,33 @@ const ImportPage = defineComponent({
       h(PageHeader, { title: props.t('dataMgmtTitle'), subtitle: props.t('dataMgmtSub') }),
 
       h('section', { class: 'data-section' }, [
-        h('h3', { class: 'data-section-title' }, props.t('importSection')),
-        h('div', { class: 'data-action-grid' }, [
-          h(VCard, { class: 'content-card data-action-card' }, () => [
-            h('div', { class: 'data-action-icon' }, '📒'),
-            h('h4', { class: 'data-action-title' }, props.t('importLedgerTitle')),
-            h('p', { class: 'data-action-copy' }, props.t('importLedgerDesc')),
-            h(VBtn, { color: 'primary', loading: loading.value, onClick: importExcel }, () => props.t('pickExcel')),
+        h('h3', { class: 'data-section-title' }, props.t('restoreSection')),
+        h(VCard, { class: 'content-card data-action-card data-action-card-wide' }, () => [
+          h('div', { class: 'data-action-row' }, [
+            h('div', { class: 'data-action-main' }, [
+              h('div', { class: 'data-action-icon' }, '📥'),
+              h('div', [
+                h('h4', { class: 'data-action-title' }, props.t('restoreTitle')),
+                h('p', { class: 'data-action-copy' }, props.t('restoreDesc')),
+              ]),
+            ]),
+            h(VBtn, { color: 'primary', size: 'large', loading: restoring.value, onClick: restoreFromFolder }, () => props.t('pickBackupFolder')),
           ]),
-          h(VCard, { class: 'content-card data-action-card' }, () => [
-            h('div', { class: 'data-action-icon' }, '📦'),
-            h('h4', { class: 'data-action-title' }, props.t('importStockTitle')),
-            h('p', { class: 'data-action-copy' }, props.t('importStockDesc')),
-            h(VBtn, { color: 'primary', variant: 'outlined', loading: stockLoading.value, onClick: importStockIn }, () => props.t('importStockIn')),
+          h('div', { class: 'backup-history' }, [
+            h('div', { class: 'backup-history-title' }, props.t('recentBackups')),
+            backups.value.length
+              ? backups.value.slice(0, 5).map(b => h('div', { class: 'backup-history-item', key: b.name }, [
+                h('span', { class: 'backup-history-time' }, formatBackupTime(b.name, b.time)),
+                h('div', { class: 'backup-history-actions' }, [
+                  h('span', { class: 'backup-history-meta' }, formatBackupSize(b.size)),
+                  h(VBtn, { size: 'small', variant: 'text', color: 'primary', disabled: restoring.value, onClick: () => restoreByName(b.name) }, () => props.t('restoreThisBackup')),
+                ]),
+              ]))
+              : h('div', { class: 'backup-history-empty' }, props.t('noBackupsYet')),
+            h('a', { class: 'backup-folder-link', href: '#', onClick: openBackupFolder }, props.t('openBackupFolder')),
           ]),
         ]),
       ]),
-
-      error.value ? h(VAlert, { type: 'error', class: 'mb-4' }, () => error.value) : null,
-      result.value ? h(VAlert, { type: 'success', class: 'mb-4' }, () => [
-        h('div', { class: 'import-result-title' }, props.t('importDone')),
-        h('div', props.t('importSummary', result.value)),
-      ]) : null,
-      stockError.value ? h(VAlert, { type: 'error', class: 'mb-4' }, () => stockError.value) : null,
-      stockResult.value ? h(VAlert, { type: 'success', class: 'mb-4' }, () => [
-        h('div', { class: 'import-result-title' }, props.t('importStockInDone')),
-        h('div', props.t('importStockInSummary', stockResult.value)),
-      ]) : null,
 
       h('section', { class: 'data-section' }, [
         h('h3', { class: 'data-section-title' }, props.t('backupSection')),
@@ -1557,16 +1597,6 @@ const ImportPage = defineComponent({
               ]),
             ]),
             h(VBtn, { color: 'primary', size: 'large', onClick: backup }, () => props.t('backupNow')),
-          ]),
-          h('div', { class: 'backup-history' }, [
-            h('div', { class: 'backup-history-title' }, props.t('recentBackups')),
-            backups.value.length
-              ? backups.value.slice(0, 5).map(b => h('div', { class: 'backup-history-item', key: b.name }, [
-                h('span', { class: 'backup-history-time' }, formatBackupTime(b.name, b.time)),
-                h('span', { class: 'backup-history-meta' }, formatBackupSize(b.size)),
-              ]))
-              : h('div', { class: 'backup-history-empty' }, props.t('noBackupsYet')),
-            h('a', { class: 'backup-folder-link', href: '#', onClick: openBackupFolder }, props.t('openBackupFolder')),
           ]),
         ]),
       ]),
@@ -1585,6 +1615,42 @@ const ImportPage = defineComponent({
             h(VBtn, { loading: exporting.value, onClick: exportAll }, () => props.t('exportAllExcel')),
           ]),
         ]),
+      ]),
+
+      h('section', { class: 'data-section data-section-legacy' }, [
+        h('button', {
+          type: 'button',
+          class: 'legacy-toggle',
+          onClick: () => { legacyOpen.value = !legacyOpen.value },
+        }, [
+          h('span', props.t('legacySection')),
+          h('span', { class: 'legacy-toggle-icon' }, legacyOpen.value ? '▾' : '▸'),
+        ]),
+        legacyOpen.value ? h('div', { class: 'legacy-panel' }, [
+          h('p', { class: 'legacy-hint' }, props.t('legacyHint')),
+          h('div', { class: 'data-action-grid' }, [
+            h(VCard, { class: 'content-card data-action-card data-action-card-compact' }, () => [
+              h('h4', { class: 'data-action-title' }, props.t('importLedgerTitle')),
+              h('p', { class: 'data-action-copy' }, props.t('importLedgerDesc')),
+              h(VBtn, { variant: 'outlined', loading: loading.value, onClick: importExcel }, () => props.t('pickExcel')),
+            ]),
+            h(VCard, { class: 'content-card data-action-card data-action-card-compact' }, () => [
+              h('h4', { class: 'data-action-title' }, props.t('importStockTitle')),
+              h('p', { class: 'data-action-copy' }, props.t('importStockDesc')),
+              h(VBtn, { variant: 'outlined', loading: stockLoading.value, onClick: importStockIn }, () => props.t('importStockIn')),
+            ]),
+          ]),
+          error.value ? h(VAlert, { type: 'error', class: 'mt-4' }, () => error.value) : null,
+          result.value ? h(VAlert, { type: 'success', class: 'mt-4' }, () => [
+            h('div', { class: 'import-result-title' }, props.t('importDone')),
+            h('div', props.t('importSummary', result.value)),
+          ]) : null,
+          stockError.value ? h(VAlert, { type: 'error', class: 'mt-4' }, () => stockError.value) : null,
+          stockResult.value ? h(VAlert, { type: 'success', class: 'mt-4' }, () => [
+            h('div', { class: 'import-result-title' }, props.t('importStockInDone')),
+            h('div', props.t('importStockInSummary', stockResult.value)),
+          ]) : null,
+        ]) : null,
       ]),
     ])
   },

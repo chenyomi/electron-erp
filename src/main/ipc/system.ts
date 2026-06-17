@@ -1,6 +1,6 @@
 import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { getDb, getDataDir } from '../db'
-import { listBackups, autoBackup } from '../backup'
+import { listBackups, autoBackup, restoreFromBackup, getBackupPathByName } from '../backup'
 import { join } from 'path'
 import * as fs from 'fs'
 import * as XLSX from 'xlsx'
@@ -81,6 +81,83 @@ export function registerSystemHandlers(): void {
 
   ipcMain.handle('system:backups-list', () => {
     return listBackups()
+  })
+
+  ipcMain.handle('system:pick-backup', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: '选择备份文件夹',
+      properties: ['openDirectory'] as Array<'openDirectory'>,
+    }
+    const result = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    return result.filePaths[0] || null
+  })
+
+  ipcMain.handle('system:restore-backup', async (event, sourcePath: string) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const confirm = parent
+      ? await dialog.showMessageBox(parent, {
+        type: 'warning',
+        buttons: ['取消', '确认恢复'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '恢复备份',
+        message: '恢复会覆盖当前所有账本数据',
+        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
+      })
+      : await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['取消', '确认恢复'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '恢复备份',
+        message: '恢复会覆盖当前所有账本数据',
+        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
+      })
+
+    if (confirm.response !== 1) return { ok: false, canceled: true }
+
+    const result = restoreFromBackup(sourcePath)
+    if (result.ok) {
+      BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
+    }
+    return result
+  })
+
+  ipcMain.handle('system:restore-backup-by-name', async (event, name: string) => {
+    const path = getBackupPathByName(name)
+    if (!path) return { ok: false, error: '备份不存在或已损坏' }
+
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const confirm = parent
+      ? await dialog.showMessageBox(parent, {
+        type: 'warning',
+        buttons: ['取消', '确认恢复'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '恢复备份',
+        message: '恢复会覆盖当前所有账本数据',
+        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
+      })
+      : await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['取消', '确认恢复'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '恢复备份',
+        message: '恢复会覆盖当前所有账本数据',
+        detail: '系统会先自动备份当前数据，再替换为所选备份。恢复后页面会自动刷新。',
+      })
+
+    if (confirm.response !== 1) return { ok: false, canceled: true }
+
+    const result = restoreFromBackup(path)
+    if (result.ok) {
+      BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
+    }
+    return result
   })
 
   ipcMain.handle('system:data-dir', () => {

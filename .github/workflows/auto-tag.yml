@@ -46,12 +46,18 @@ jobs:
           if [[ -n "$PREVIOUS" && "$CURRENT" == "$PREVIOUS" ]]; then
             echo "Version unchanged, skipping tag"
             echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "## Release skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "版本号未变化（仍为 \`${CURRENT}\`），不会打 tag，也不会打包。" >> "$GITHUB_STEP_SUMMARY"
+            echo "如需重新打包：去 **Actions → Release → Run workflow**，或 bump 版本后再 push。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
             echo "Tag ${TAG} already exists on remote, skipping"
             echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "## Release skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Tag \`${TAG}\` 已存在，不会重复打 tag / 打包。" >> "$GITHUB_STEP_SUMMARY"
+            echo "如需重新打包：去 **Actions → Release → Run workflow**，tag 填 \`${TAG}\`。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 

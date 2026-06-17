@@ -125,6 +125,9 @@
       "better-sqlite3",
       "electron",
       "sharp"
-    ]
+    ],
+    "overrides": {
+      "@electron/node-gyp": "10.2.0-electron.1"
+    }
   }
 }

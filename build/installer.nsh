@@ -38,7 +38,8 @@ FunctionEnd
 
 Function DonghaoShowcaseSetImage
   ${If} $DonghaoShowcaseImageHandle <> 0
-    DeleteObject $DonghaoShowcaseImageHandle
+    System::Call 'gdi32::DeleteObject(p r$DonghaoShowcaseImageHandle)'
+    StrCpy $DonghaoShowcaseImageHandle 0
   ${EndIf}
 
   ${If} $DonghaoShowcaseSlide == 1
@@ -113,7 +114,8 @@ FunctionEnd
 Function DonghaoShowcaseLeave
   ${NSD_KillTimer} DonghaoShowcaseTick
   ${If} $DonghaoShowcaseImageHandle <> 0
-    DeleteObject $DonghaoShowcaseImageHandle
+    System::Call 'gdi32::DeleteObject(p r$DonghaoShowcaseImageHandle)'
+    StrCpy $DonghaoShowcaseImageHandle 0
   ${EndIf}
 FunctionEnd
 

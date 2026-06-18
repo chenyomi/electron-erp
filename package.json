@@ -1,6 +1,6 @@
 {
   "name": "donghao-ledger",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "温州东昊汽车配件有限公司 账务管理系统",
   "author": "chenyomi <408550179@qq.com>",
   "main": "out/main/index.js",
@@ -109,7 +109,6 @@
       "installerLanguages": [
         "zh_CN"
       ],
-      "include": "build/installer.nsh",
       "language": "2052",
       "displayLanguageSelector": false,
       "runAfterFinish": true,

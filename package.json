@@ -1,6 +1,6 @@
 {
   "name": "donghao-ledger",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "温州东昊汽车配件有限公司 账务管理系统",
   "author": "chenyomi <408550179@qq.com>",
   "main": "out/main/index.js",
@@ -70,7 +70,7 @@
       "hardenedRuntime": false
     },
     "dmg": {
-      "title": "东昊账务 ${version}",
+      "title": "Donghao-Ledger-${version}-${arch}",
       "background": "resources/dmg-background.png",
       "window": {
         "width": 680,

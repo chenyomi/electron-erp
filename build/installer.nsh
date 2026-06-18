@@ -9,6 +9,8 @@
   !define PBM_SETRANGE32 0x0406
 !endif
 
+!ifndef BUILD_UNINSTALLER
+
 Var DonghaoShowcaseDialog
 Var DonghaoShowcaseImage
 Var DonghaoShowcaseImageHandle
@@ -122,3 +124,5 @@ FunctionEnd
 !macro customPageBeforeInstall
   Page custom DonghaoShowcaseCreate DonghaoShowcaseLeave
 !macroend
+
+!endif

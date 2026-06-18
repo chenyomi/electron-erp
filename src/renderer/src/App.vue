@@ -328,6 +328,7 @@ const messages = {
     supplierCount: '供应商数',
     customerCount: '客户数',
     searchStock: '搜索产品/规格/合同号…',
+    typeProductName: '输入或选择产品',
     typeSupplierName: '输入或选择供应商',
     typeCustomerName: '输入或选择客户',
     importStockIn: '导入入库 Excel',
@@ -571,6 +572,7 @@ const messages = {
     supplierCount: 'Suppliers',
     customerCount: 'Customers',
     searchStock: 'Search product/spec/contract…',
+    typeProductName: 'Type or select product',
     typeSupplierName: 'Type or select supplier',
     typeCustomerName: 'Type or select customer',
     importStockIn: 'Import Stock In Excel',
@@ -1284,6 +1286,7 @@ const LedgerPage = defineComponent({
     const endDate = ref('')
     const filterOptions = ref<string[]>([])
     const inventoryOptions = ref<any[]>([])
+    const productOptions = ref<any[]>([])
     const attachmentDialog = ref(false)
     const attachmentRow = ref<any>(null)
     const attachments = ref<any[]>([])
@@ -1371,13 +1374,21 @@ const LedgerPage = defineComponent({
     const loadInventoryOptions = async () => {
       if (props.page === 'stockOut') inventoryOptions.value = await inventoryAPI.options()
     }
+    const loadProductOptions = async () => {
+      if (props.page !== 'stockIn') return
+      const res = await productAPI.list({ page: 1, pageSize: 500, keyword: '' })
+      productOptions.value = res.rows || []
+    }
+    const loadRecordOptions = async () => {
+      await Promise.all([loadInventoryOptions(), loadProductOptions()])
+    }
     const openAdd = async () => {
       editing.value = null
       Object.keys(form).forEach(k => delete form[k])
       attachments.value = []
       pendingAttachments.value = []
       if (filterValue.value && config.value.filterKey) form[config.value.filterKey] = filterValue.value
-      await loadInventoryOptions()
+      await loadRecordOptions()
       dialog.value = true
     }
     const openEdit = async (row: any) => {
@@ -1385,7 +1396,7 @@ const LedgerPage = defineComponent({
       Object.assign(form, row)
       form.date = normalizeDateValue(form.date)
       pendingAttachments.value = []
-      await loadInventoryOptions()
+      await loadRecordOptions()
       dialog.value = true
       await loadAttachments(row)
     }
@@ -1658,6 +1669,7 @@ const LedgerPage = defineComponent({
               config: config.value,
               filterOptions: filterOptions.value,
               inventoryOptions: inventoryOptions.value,
+              productOptions: productOptions.value,
               t: props.t,
             }))),
           ])),
@@ -1865,6 +1877,13 @@ function inventoryOptionTitle(item: any) {
   const unit = item.unit ? ` ${item.unit}` : ''
   return `${item.product_name}${spec} · 库存 ${money(item.stock_qty)}${unit}`
 }
+function productOptionTitle(item: any) {
+  if (!item || typeof item !== 'object') return String(item || '')
+  const spec = item.spec ? ` / ${item.spec}` : ''
+  const unit = item.unit ? ` ${item.unit}` : ''
+  const price = Number(item.default_price || 0) ? ` · 默认单价 ${money(item.default_price)}` : ''
+  return `${item.product_name}${spec}${unit}${price}`
+}
 function roundMoneyValue(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100
 }
@@ -1910,10 +1929,10 @@ function getFormSections(pageKey: string, fields: string[]): FormSectionSpec[] {
 
 function renderRecordFormField(
   field: FormFieldSpec,
-  ctx: { form: any; config: any; filterOptions: string[]; inventoryOptions?: any[]; t: (key: string, params?: any) => string },
+  ctx: { form: any; config: any; filterOptions: string[]; inventoryOptions?: any[]; productOptions?: any[]; t: (key: string, params?: any) => string },
 ) {
   const { key, span } = normalizeFormField(field)
-  const { form, config, filterOptions, inventoryOptions = [], t } = ctx
+  const { form, config, filterOptions, inventoryOptions = [], productOptions = [], t } = ctx
   const wrapClass = `record-dialog__field record-dialog__field--${span === 'full' ? 'full' : 'half'}`
   const base = commonFormFieldProps()
 
@@ -1928,6 +1947,41 @@ function renderRecordFormField(
         placeholder: t(key === 'supplier_name' ? 'typeSupplierName' : 'typeCustomerName'),
         clearable: true,
         hideNoData: true,
+      }),
+    ])
+  }
+
+  if (config.table === 'stockIn' && key === 'product_name') {
+    const selected = productOptions.find(item =>
+      item.product_name === form.product_name &&
+      (item.spec || '') === (form.spec || '') &&
+      (item.unit || '') === (form.unit || '')
+    ) || form.product_name || null
+    return h('div', { class: wrapClass, key }, [
+      h(VCombobox, {
+        ...base,
+        modelValue: selected,
+        'onUpdate:modelValue': (v: any) => {
+          if (v && typeof v === 'object') {
+            form.product_name = v.product_name
+            form.spec = v.spec || ''
+            form.unit = v.unit || ''
+            if (v.category) form.category = v.category
+            if (Number(v.default_price || 0) > 0) {
+              form.unit_price = Number(v.default_price || 0)
+              autoFillAmountFields(form, 'unit_price')
+            }
+          } else {
+            form.product_name = String(v || '')
+          }
+        },
+        items: productOptions,
+        itemTitle: productOptionTitle,
+        label: t(columnLabel(key)),
+        placeholder: t('typeProductName'),
+        returnObject: true,
+        clearable: true,
+        hideNoData: false,
       }),
     ])
   }

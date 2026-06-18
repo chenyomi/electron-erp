@@ -8,6 +8,7 @@ import { getDataDir } from '../db'
 import sharp from 'sharp'
 import { insertAttachmentIfMissing } from './attachments'
 import { importStockInExcel } from './stock-import'
+import { rebuildInventoryBusinessTables } from './stock-business'
 
 export function registerImportHandlers(): void {
   ipcMain.handle('import:pick-file', async () => {
@@ -30,7 +31,9 @@ export function registerImportHandlers(): void {
   ipcMain.handle('import:stock-in', async (_e, filePath: string) => {
     try {
       const db = getDb()
-      return { ok: true, imported: importStockInExcel(db, filePath) }
+      const imported = importStockInExcel(db, filePath)
+      rebuildInventoryBusinessTables()
+      return { ok: true, imported }
     } catch (e: any) {
       return { ok: false, error: e.message }
     }

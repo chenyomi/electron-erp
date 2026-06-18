@@ -24,6 +24,13 @@ function normalizeStockInRow(row: any, fallbackDocNo = '') {
   }
 }
 
+function validateStockInRow(row: any) {
+  if (!String(row?.supplier_name || '').trim()) throw new Error('请填写供应商')
+  if (!String(row?.date || '').trim()) throw new Error('请填写日期')
+  if (!String(row?.product_name || '').trim()) throw new Error('请填写产品名称')
+  if (Number(row?.quantity || 0) <= 0) throw new Error('入库数量必须大于 0')
+}
+
 export function registerStockInHandlers(): void {
   ipcMain.handle('stockIn:names', () => {
     const db = getDb()
@@ -88,6 +95,7 @@ export function registerStockInHandlers(): void {
   ipcMain.handle('stockIn:add', (_e, row) => {
     const db = getDb()
     const payload = normalizeStockInRow(row, generateDocNo('RK', 'stock_in_ledger', row?.date))
+    validateStockInRow(payload)
     ensureProductCatalog(payload)
     const result = db.prepare(`
       INSERT INTO stock_in_ledger (
@@ -108,6 +116,7 @@ export function registerStockInHandlers(): void {
     const db = getDb()
     const oldRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as any
     const payload = normalizeStockInRow(row, oldRow?.doc_no || generateDocNo('RK', 'stock_in_ledger', row?.date))
+    validateStockInRow(payload)
     ensureProductCatalog(payload)
     db.prepare(`
       UPDATE stock_in_ledger SET

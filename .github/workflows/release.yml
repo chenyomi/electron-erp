@@ -86,7 +86,10 @@ jobs:
           name: installer-${{ matrix.platform }}
           path: |
             release/*.dmg
+            release/*.zip
             release/*.exe
+            release/*.yml
+            release/*.blockmap
           if-no-files-found: error
 
   publish:
@@ -115,6 +118,13 @@ jobs:
             | Apple 芯片 Mac (M1/M2/M3) | `东昊账务-*-mac-arm64.dmg` |
             | Intel Mac | `东昊账务-*-mac-x64.dmg` |
             | Windows 64 位 | `东昊账务-*-win-x64.exe` |
+            | 自动更新 | 应用启动后会检查 GitHub Release；也可在「帮助 > 检查更新」手动检查 |
+
+            ### 自动更新说明
+
+            - Windows：支持下载后重启安装
+            - macOS：需要 Release 中包含对应架构的 `.zip` 和 `latest-mac*.yml`
+            - 未签名 macOS 应用更新后，仍可能需要右键打开或执行 `xattr -cr`
 
             ### macOS 提示「已损坏，无法打开」？
 

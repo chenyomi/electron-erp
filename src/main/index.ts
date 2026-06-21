@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDataDir, initDatabase } from './db'
 import { registerIpcHandlers } from './ipc'
 import { autoBackup } from './backup'
+import { initAutoUpdater, checkForUpdates } from './updater'
 import * as fs from 'fs'
 
 const appIconPath = join(__dirname, '../../resources/icon.png')
@@ -143,6 +144,14 @@ function createApplicationMenu(): void {
       label: '帮助',
       submenu: [
         {
+          label: '检查更新',
+          click: () => {
+            focusedWindow()?.webContents.send('update:open-dialog')
+            checkForUpdates().catch(() => {})
+          },
+        },
+        { type: 'separator' },
+        {
           label: '关于东昊账务',
           click: () => showInfo(
             '东昊账务',
@@ -215,6 +224,7 @@ app.whenReady().then(() => {
 
   initDatabase()
   registerIpcHandlers()
+  initAutoUpdater()
   createApplicationMenu()
   createWindow()
 

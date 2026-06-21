@@ -13,6 +13,7 @@ import { registerAuthHandlers } from './auth'
 import { registerAiHandlers } from './ai'
 import { registerAttachmentHandlers } from './attachments'
 import { registerPrintHandlers } from './print'
+import { registerUpdateHandlers } from './update'
 
 export function registerIpcHandlers(): void {
   registerAuthHandlers()
@@ -29,4 +30,5 @@ export function registerIpcHandlers(): void {
   registerPrintHandlers()
   registerImportHandlers()
   registerAiHandlers()
+  registerUpdateHandlers()
 }

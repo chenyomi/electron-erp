@@ -212,6 +212,8 @@
           </div>
         </v-card-text>
         <div class="record-dialog__footer">
+          <v-btn variant="text" @click="runUpdateCheck">{{ t('checkUpdate') }}</v-btn>
+          <v-spacer />
           <v-btn color="primary" @click="helpDialog = false">{{ t('close') }}</v-btn>
         </div>
       </v-card>
@@ -228,6 +230,38 @@
         <div class="record-dialog__footer">
           <v-btn variant="text" @click="resolveConfirm(false)">{{ confirmDialog.cancelLabel }}</v-btn>
           <v-btn :color="confirmDialog.confirmColor" @click="resolveConfirm(true)">{{ confirmDialog.confirmLabel }}</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="updateDialog" max-width="520" persistent>
+      <v-card class="record-dialog">
+        <div class="record-dialog__header">
+          <div>
+            <h2 class="record-dialog__title">{{ t('updateTitle') }}</h2>
+            <p class="record-dialog__subtitle">{{ updateDialogSubtitle }}</p>
+          </div>
+        </div>
+        <v-card-text class="record-dialog__body">
+          <v-alert v-if="updateState.status === 'error'" type="error" variant="tonal" density="compact">{{ updateState.error }}</v-alert>
+          <v-alert v-else-if="updateState.status === 'not-available'" type="success" variant="tonal" density="compact">
+            {{ t('updateLatest', { version: updateState.currentVersion || appVersion }) }}
+          </v-alert>
+          <div v-else-if="updateState.status === 'available' || updateState.status === 'downloaded'">
+            <p>{{ t('updateFound', { current: updateState.currentVersion || appVersion, latest: updateState.version }) }}</p>
+            <pre v-if="updateState.releaseNotes" class="update-release-notes">{{ updateState.releaseNotes }}</pre>
+          </div>
+          <div v-else-if="updateState.status === 'downloading'">
+            <v-progress-linear :model-value="updateState.percent || 0" color="primary" height="8" rounded />
+            <p class="muted tiny mt-2">{{ t('updateDownloading', { percent: Math.round(updateState.percent || 0) }) }}</p>
+          </div>
+          <p v-else-if="updateState.status === 'checking'" class="muted">{{ t('updateChecking') }}</p>
+        </v-card-text>
+        <div class="record-dialog__footer">
+          <v-btn variant="text" @click="updateDialog = false">{{ t('cancel') }}</v-btn>
+          <v-btn v-if="updateState.status === 'available'" color="primary" :loading="updateBusy" @click="downloadUpdatePackage">{{ t('updateDownload') }}</v-btn>
+          <v-btn v-else-if="updateState.status === 'downloaded'" color="primary" @click="installUpdateNow">{{ t('updateInstall') }}</v-btn>
+          <v-btn v-else-if="updateState.status === 'error' || updateState.status === 'not-available'" color="primary" :loading="updateBusy" @click="runUpdateCheck">{{ t('updateRetry') }}</v-btn>
         </div>
       </v-card>
     </v-dialog>
@@ -252,6 +286,7 @@ import {
   VListItemTitle,
   VPagination,
   VCombobox,
+  VProgressLinear,
   VSelect,
   VSpacer,
   VTab,
@@ -260,7 +295,7 @@ import {
   VTextarea,
   VTextField,
 } from 'vuetify/components'
-import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI } from './api'
+import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI, updateAPI } from './api'
 import { runLodopScript, checkLodopAvailable } from './lodop-print'
 
 type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'products' | 'inventory' | 'trash' | 'logs' | 'import'
@@ -307,6 +342,17 @@ const messages = {
     confirmClearAiSession: '确定清空当前 AI 会话内容吗？',
     confirmDeleteAiSession: '确定删除这条 AI 会话记录吗？',
     confirmLogout: '确定要退出登录吗？',
+    checkUpdate: '检查更新',
+    updateTitle: '软件更新',
+    updateChecking: '正在检查更新…',
+    updateFound: '发现新版本 v{latest}，当前版本 v{current}。',
+    updateLatest: '当前已是最新版本 v{version}。',
+    updateDownload: '下载更新',
+    updateInstall: '立即重启安装',
+    updateDownloading: '正在下载 {percent}%',
+    updateRetry: '重新检查',
+    updateSubtitleIdle: '启动后会自动检查 GitHub 发布的新版本。',
+    updateSubtitleReady: '更新包已下载完成，重启后即可安装。',
     close: '关闭',
     navFinance: '账务管理',
     navTools: '工具',
@@ -565,6 +611,17 @@ const messages = {
     confirmClearAiSession: 'Clear the current AI conversation?',
     confirmDeleteAiSession: 'Delete this AI conversation?',
     confirmLogout: 'Log out now?',
+    checkUpdate: 'Check for Updates',
+    updateTitle: 'Software Update',
+    updateChecking: 'Checking for updates…',
+    updateFound: 'Version v{latest} is available. Current version: v{current}.',
+    updateLatest: 'You are on the latest version v{version}.',
+    updateDownload: 'Download Update',
+    updateInstall: 'Restart and Install',
+    updateDownloading: 'Downloading {percent}%',
+    updateRetry: 'Check Again',
+    updateSubtitleIdle: 'The app checks GitHub Releases for new versions after startup.',
+    updateSubtitleReady: 'The update package is ready. Restart to install.',
     close: 'Close',
     navFinance: 'Finance',
     navTools: 'Tools',
@@ -824,11 +881,53 @@ const confirmDialog = reactive({
 })
 let confirmResolver: ((value: boolean) => void) | null = null
 const appVersion = ref('')
+const updateDialog = ref(false)
+const updateBusy = ref(false)
+const updateState = ref<any>({ status: 'idle', currentVersion: '' })
+let offUpdateState: (() => void) | undefined
+let offUpdateOpenDialog: (() => void) | undefined
 let echartsModule: EChartsModule | null = null
 
 const themeName = computed(() => themeMode.value === 'dark' ? 'donghaoDark' : 'donghaoLight')
 const isLedgerPage = computed(() => ['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut'].includes(page.value))
 const userInitial = computed(() => (currentUser.value?.displayName || currentUser.value?.username || '东').slice(0, 1).toUpperCase())
+const updateDialogSubtitle = computed(() => {
+  if (updateState.value.status === 'downloaded') return t('updateSubtitleReady')
+  return t('updateSubtitleIdle')
+})
+
+function maybeOpenUpdateDialog(state: any) {
+  if (!currentUser.value) return
+  if (state?.status === 'available' || state?.status === 'downloaded') updateDialog.value = true
+}
+
+async function runUpdateCheck() {
+  updateBusy.value = true
+  updateDialog.value = true
+  try {
+    const state = await updateAPI.check()
+    updateState.value = state
+  } catch (error: any) {
+    updateState.value = { ...updateState.value, status: 'error', error: error?.message || t('updateRetry') }
+  } finally {
+    updateBusy.value = false
+  }
+}
+
+async function downloadUpdatePackage() {
+  updateBusy.value = true
+  try {
+    updateState.value = await updateAPI.download()
+  } catch (error: any) {
+    updateState.value = { ...updateState.value, status: 'error', error: error?.message || t('updateRetry') }
+  } finally {
+    updateBusy.value = false
+  }
+}
+
+async function installUpdateNow() {
+  await updateAPI.install()
+}
 
 const navItems = [
   { key: 'dashboard' as PageKey, icon: '◼', label: 'dashboard', sub: 'dashboardSub' },
@@ -962,12 +1061,26 @@ watch(languageMode, (mode) => {
 }, { immediate: true })
 
 onMounted(async () => {
+  offUpdateState = updateAPI.onState((state) => {
+    updateState.value = state
+    maybeOpenUpdateDialog(state)
+  })
+  offUpdateOpenDialog = updateAPI.onOpenDialog(() => {
+    updateDialog.value = true
+  })
   try {
     appVersion.value = await systemAPI.appVersion()
     currentUser.value = await authAPI.me()
+    updateState.value = await updateAPI.getState()
+    maybeOpenUpdateDialog(updateState.value)
   } finally {
     checkingAuth.value = false
   }
+})
+
+onBeforeUnmount(() => {
+  offUpdateState?.()
+  offUpdateOpenDialog?.()
 })
 
 function money(value: any) {

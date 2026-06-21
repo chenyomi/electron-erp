@@ -2,6 +2,7 @@ declare global {
   interface Window {
     electronAPI: {
       invoke: (channel: string, ...args: any[]) => Promise<any>
+      on: (channel: string, listener: (...args: any[]) => void) => () => void
     }
   }
 }
@@ -158,4 +159,13 @@ export const aiAPI = {
     messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
     model?: string
   }) => api.invoke('ai:chat', params),
+}
+
+export const updateAPI = {
+  getState: () => api.invoke('update:get-state'),
+  check: (options?: { silent?: boolean }) => api.invoke('update:check', options),
+  download: () => api.invoke('update:download'),
+  install: () => api.invoke('update:install'),
+  onState: (listener: (state: any) => void) => window.electronAPI.on('update:state', listener),
+  onOpenDialog: (listener: () => void) => window.electronAPI.on('update:open-dialog', listener),
 }

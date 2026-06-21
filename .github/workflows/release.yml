@@ -104,6 +104,11 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
+      - name: Verify update manifests match release files
+        run: |
+          node scripts/align-release-assets.cjs release-artifacts
+          node scripts/verify-release-yml.cjs release-artifacts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -115,9 +120,9 @@ jobs:
 
             | 系统 | 文件 |
             | --- | --- |
-            | Apple 芯片 Mac (M1/M2/M3) | `东昊账务-*-mac-arm64.dmg` |
-            | Intel Mac | `东昊账务-*-mac-x64.dmg` |
-            | Windows 64 位 | `东昊账务-*-win-x64.exe` |
+            | Apple 芯片 Mac (M1/M2/M3) | `donghao-ledger-*-arm64-mac.zip`（自动更新）或 `donghao-ledger-*.dmg`（手动安装） |
+            | Intel Mac | `donghao-ledger-*-mac.zip`（自动更新）或 `donghao-ledger-*.dmg`（手动安装） |
+            | Windows 64 位 | `donghao-ledger-setup-*.exe` |
             | 自动更新 | 应用启动后会检查 GitHub Release；也可在「帮助 > 检查更新」手动检查 |
 
             ### 自动更新说明

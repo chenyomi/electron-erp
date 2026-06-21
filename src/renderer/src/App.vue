@@ -551,11 +551,59 @@ const messages = {
     netAmount: '净额',
     amountIn: '进账',
     amountOut: '付出',
+    customerReceivable: '应收金额',
+    customerReceived: '收款',
+    customerBalance: '欠款余额',
+    customerOverpaid: '多收',
+    customerDebtTag: '欠款',
+    customerOverpaidTag: '多收',
+    customerBalanceColumn: '欠款/多收',
+    addCustomerSale: '登记应收',
+    addCustomerPayment: '登记收款',
+    customerPaymentFormHint: '客户每转来一笔钱，登记一条收款；不支持批量合并收款。',
+    customerOverview: '客户欠款一览',
+    customerOverviewSub: '点客户名或「台账」查看明细；在台账内登记应收与收款。',
+    amountAutoCalc: '自动计算（数量 × 单价）',
+    addCustomer: '新增客户',
+    addCustomerSub: '新建客户档案（可设期初欠款），保存后自动打开该客户台账。',
+    customerCreated: '客户已添加',
+    selectCustomerToAdd: '请选择客户',
+    customerPickTitle: '登记客户往来',
+    customerPickSub: '选择客户后将打开台账并进入登记表单。',
+    openCustomerLedger: '打开台账',
+    customerWorkspaceTitle: '客户台账',
+    customerQuickSale: '应收',
+    customerQuickPayment: '收款',
+    customerSelectForDetail: '请从上方客户欠款一览打开客户台账。',
+    customerSaleDetail: '应收明细',
+    customerSaleDetailSub: '产品、数量、单价与应收金额；汇总见弹窗上方卡片。',
+    customerPaymentDetail: '收款记录',
+    customerPaymentDetailSub: '收款大于应收时显示「多收」，不是负数欠款。',
+    customerWorkspaceSummaryHint: '收多了显示「多收」',
+    customerAnomalyBanner: '发现 {count} 条数据异常（如收款金额错列），可一键修复。',
+    customerPaymentMissingDateHint: '{count} 条收款未填日期，可在编辑中补充。',
+    viewCustomerDetail: '查看明细',
     billIn: '收票',
     receipt: '收款',
     payment: '付款',
     customerName: '客户',
     filterCustomer: '筛选客户',
+    openingBalance: '上期欠款',
+    periodAmount: '本期金额',
+    periodPaid: '已收金额',
+    totalPayable: '累计应付',
+    currentArrears: '当前欠款',
+    customerProfile: '期初欠款',
+    customerProfileSub: '对应 Excel 表头的「上期欠款」。保存后按「期初 + 应收 − 收款」重算余额。',
+    customerProfileSaved: '期初欠款已保存，余额已重算',
+    selectCustomerForProfile: '请先筛选一个客户，再设置期初欠款',
+    customerDataCheck: '数据检查',
+    customerAnomalyTitle: '客户数据异常',
+    customerAnomalyEmpty: '未发现可识别的数据异常',
+    customerAnomalyFix: '自动修复',
+    customerAnomalyFixDone: '已修复 {fixed} 条，并重算 {count} 个客户余额',
+    customerAnomalyNeedManual: '需手工处理',
+    customerAnomalyAutoFix: '可自动修复',
     allCustomerSummary: '所有客户汇总',
     deletedAt: '删除时间',
     restored: '已恢复',
@@ -820,11 +868,58 @@ const messages = {
     netAmount: 'Net',
     amountIn: 'In',
     amountOut: 'Out',
+    customerReceivable: 'Receivable',
+    customerReceived: 'Received',
+    customerBalance: 'Balance Due',
+    customerOverpaid: 'Overpaid',
+    customerDebtTag: 'Due',
+    customerOverpaidTag: 'Overpaid',
+    customerBalanceColumn: 'Due / Overpaid',
+    addCustomerSale: 'Add Receivable',
+    addCustomerPayment: 'Record Payment',
+    customerPaymentFormHint: 'Record one payment per transfer. Batch collection is not supported.',
+    customerOverview: 'Customer Balances',
+    customerOverviewSub: 'Click a customer or 台账 to view details. Register receivables and payments inside the ledger.',
+    amountAutoCalc: 'Auto-calculated (qty × price)',
+    addCustomer: 'Add Customer',
+    addCustomerSub: 'Create a customer profile with optional opening balance.',
+    customerCreated: 'Customer added',
+    selectCustomerToAdd: 'Select a customer',
+    customerPickTitle: 'Add Customer Entry',
+    customerPickSub: 'Opens the ledger and the entry form for this customer.',
+    customerSelectForDetail: 'Open a customer from the overview above.',
+    customerSaleDetail: 'Receivables',
+    customerSaleDetailSub: 'Products, qty, price and receivable amount. See summary cards above.',
+    customerPaymentDetail: 'Payments',
+    customerPaymentDetailSub: 'Balance = opening + receivable − received. Negative means overpaid.',
+    customerWorkspaceSummaryHint: 'Balance = opening + receivable − received',
+    customerAnomalyBanner: '{count} data issue(s) found (e.g. misaligned payment amounts). You can auto-fix.',
+    customerPaymentMissingDateHint: '{count} payment(s) have no date. Edit to add if needed.',
+    openCustomerLedger: 'Open Ledger',
+    customerWorkspaceTitle: 'Customer Ledger',
+    customerQuickSale: 'Receivable',
+    customerQuickPayment: 'Receive',
     billIn: 'Received',
     receipt: 'Receipt',
     payment: 'Payment',
     customerName: 'Customer',
     filterCustomer: 'Customer',
+    openingBalance: 'Opening Balance',
+    periodAmount: 'Period Amount',
+    periodPaid: 'Received',
+    totalPayable: 'Total Payable',
+    currentArrears: 'Current Balance',
+    customerProfile: 'Opening Balance',
+    customerProfileSub: 'Matches Excel opening arrears. Saving recalculates row balances from opening + credits - payments.',
+    customerProfileSaved: 'Opening balance saved and balances recalculated',
+    selectCustomerForProfile: 'Select a customer first to set opening balance',
+    customerDataCheck: 'Data Check',
+    customerAnomalyTitle: 'Customer Data Issues',
+    customerAnomalyEmpty: 'No recognizable data issues found',
+    customerAnomalyFix: 'Auto Fix',
+    customerAnomalyFixDone: 'Fixed {fixed} rows and recalculated {count} customers',
+    customerAnomalyNeedManual: 'Manual fix needed',
+    customerAnomalyAutoFix: 'Auto-fixable',
     allCustomerSummary: 'All Customer Summary',
     deletedAt: 'Deleted At',
     restored: 'Restored',
@@ -1104,6 +1199,31 @@ function monthFromDate(value: any) {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized.slice(0, 7) : ''
 }
 
+function todayIsoDate() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function normalizeCustomerLedgerPayload(payload: any) {
+  payload.customer_name = String(payload.customer_name || '').trim()
+  payload.date = normalizeDateValue(payload.date || '')
+  payload.month_label = monthFromDate(payload.date)
+  payload.contract_no = String(payload.contract_no || '')
+  payload.product_name = String(payload.product_name || '')
+  payload.spec = String(payload.spec || '')
+  payload.unit = String(payload.unit || '')
+  payload.quantity = Number(payload.quantity || 0)
+  payload.unit_price = Number(payload.unit_price || 0)
+  payload.amount_in = Number(payload.amount_in || 0)
+  payload.amount_out = Number(payload.amount_out || 0)
+  payload.balance = 0
+  payload.note = String(payload.note || '')
+  return payload
+}
+
 function yearOptions() {
   const current = new Date().getFullYear()
   return Array.from({ length: 12 }, (_, index) => String(current + 1 - index))
@@ -1234,9 +1354,13 @@ const PageHeader = defineComponent({
 })
 
 const StatCard = defineComponent({
-  props: { title: String, value: [Number, String], color: String },
-  setup(props) {
-    return () => h(VCard, { class: 'stat-card' }, [
+  props: { title: String, value: [Number, String], color: String, clickable: Boolean, compact: Boolean },
+  emits: ['click'],
+  setup(props, { emit }) {
+    return () => h(VCard, {
+      class: ['stat-card', props.compact ? 'stat-card--compact' : '', props.clickable ? 'stat-card--clickable' : ''],
+      onClick: props.clickable ? () => emit('click') : undefined,
+    }, [
       h('div', { class: 'stat-title' }, props.title),
       h('div', { class: `stat-value text-${props.color || 'primary'}` }, typeof props.value === 'number' ? money(props.value) : props.value),
     ])
@@ -1436,9 +1560,14 @@ const formSections: Record<string, FormSectionSpec[]> = {
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   customer: [
-    { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'month_label', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
     { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
-    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }, { key: 'balance', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount_in', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  customerPayment: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_out', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   stockIn: [
@@ -1532,13 +1661,39 @@ const LedgerPage = defineComponent({
       },
     })
     const printForm = reactive({ customerPhone: '', customerAddress: '', paymentReceived: '' })
-    const displayColumns = computed(() => [...config.value.columns, 'attachments'])
+    const customerProfileDialog = ref(false)
+    const customerProfileForm = reactive({ opening_balance: 0, note: '' })
+    const customerEntryMode = ref<'sale' | 'payment'>('sale')
+    const customerPaymentRows = ref<any[]>([])
+    const customerPaymentTotal = ref(0)
+    const customerPaymentPage = ref(1)
+    const customerPaymentPageSize = 10
+    const customerDetailDialog = ref(false)
+    const customerDetailName = ref('')
+    const customerDetailTab = ref<'sale' | 'payment'>('sale')
+    const customerDetailSummary = ref<any>({})
+    const customerPickDialog = ref(false)
+    const customerPickMode = ref<'sale' | 'payment'>('sale')
+    const customerPickName = ref('')
+    const customerCreateDialog = ref(false)
+    const customerCreateForm = reactive({ customer_name: '', opening_balance: 0, note: '' })
+    const customerSaleColumnKeys = ['date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'note']
+    const customerPaymentColumnKeys = ['date', 'amount_out', 'note']
+    const displayColumns = computed(() => {
+      if (props.page === 'customer' && customerDetailDialog.value) {
+        return [...customerSaleColumnKeys, 'attachments']
+      }
+      return [...config.value.columns, 'attachments']
+    })
     const years = yearOptions()
     const months = monthOptions()
 
-    const buildLedgerFilters = () => {
+    const buildLedgerFilters = (customerName = '') => {
       const params: any = { keyword: keyword.value }
-      if (config.value.filterField) params[config.value.filterField] = filterValue.value
+      if (config.value.filterField) {
+        params[config.value.filterField] = customerName
+          || (props.page === 'customer' && customerDetailDialog.value ? customerDetailName.value : filterValue.value)
+      }
       if (yearFilter.value) params.year = yearFilter.value
       if (monthFilter.value) params.month = monthFilter.value
       if (startDate.value) params.startDate = startDate.value
@@ -1546,12 +1701,49 @@ const LedgerPage = defineComponent({
       return params
     }
 
+    const fetchCustomerDetailData = async () => {
+      if (!customerDetailName.value) return
+      const filters = buildLedgerFilters(customerDetailName.value)
+      const saleParams = { ...filters, entryType: 'sale', page: currentPage.value, pageSize: config.value.pageSize }
+      const payParams = { ...filters, entryType: 'payment', page: customerPaymentPage.value, pageSize: customerPaymentPageSize }
+      const [res, payRes, sum] = await Promise.all([
+        config.value.api.list(saleParams),
+        config.value.api.list(payParams),
+        config.value.api.summary(filters),
+      ])
+      rows.value = res.rows
+      total.value = res.total
+      customerPaymentRows.value = payRes.rows
+      customerPaymentTotal.value = payRes.total
+      customerDetailSummary.value = sum
+    }
+
+    const fetchCustomerOverview = async () => {
+      rows.value = []
+      total.value = 0
+      selected.value = []
+      const names = await config.value.api.names()
+      filterOptions.value = names.map((x: any) => x[config.value.filterKey])
+      summary.value = await config.value.api.summary(buildLedgerFilters())
+    }
+
     const load = async () => {
       loading.value = true
+      if (props.page === 'customer') {
+        if (customerDetailDialog.value && customerDetailName.value) {
+          await fetchCustomerDetailData()
+        } else {
+          await fetchCustomerOverview()
+        }
+        loading.value = false
+        return
+      }
       const params: any = { ...buildLedgerFilters(), page: currentPage.value, pageSize: config.value.pageSize }
       const res = await config.value.api.list(params)
       rows.value = res.rows
       total.value = res.total
+      customerPaymentRows.value = []
+      customerPaymentTotal.value = 0
       if (config.value.filterField) {
         const names = await config.value.api.names()
         filterOptions.value = names.map((x: any) => x[config.value.filterKey])
@@ -1562,7 +1754,7 @@ const LedgerPage = defineComponent({
       loading.value = false
     }
 
-    const resetSelection = () => { selected.value = []; currentPage.value = 1 }
+    const resetSelection = () => { selected.value = []; currentPage.value = 1; customerPaymentPage.value = 1 }
     const resetFilters = () => {
       keyword.value = ''
       filterValue.value = ''
@@ -1584,23 +1776,117 @@ const LedgerPage = defineComponent({
     const loadRecordOptions = async () => {
       await Promise.all([loadInventoryOptions(), loadProductOptions()])
     }
-    const openAdd = async () => {
+    const openAdd = async (mode: 'sale' | 'payment' = 'sale') => {
+      if (props.page === 'customer' && !customerDetailName.value && !filterValue.value) {
+        openCustomerPickAndAdd(mode)
+        return
+      }
       editing.value = null
       Object.keys(form).forEach(k => delete form[k])
       attachments.value = []
       pendingAttachments.value = []
-      if (filterValue.value && config.value.filterKey) form[config.value.filterKey] = filterValue.value
+      if (props.page === 'customer') customerEntryMode.value = mode
+      const activeName = customerDetailName.value || filterValue.value
+      if (activeName && config.value.filterKey) form[config.value.filterKey] = activeName
+      if (props.page === 'customer') form.date = todayIsoDate()
+      if (props.page === 'customer' && mode === 'payment') {
+        form.product_name = '付款'
+        form.amount_in = 0
+      }
+      if (props.page === 'customer' && mode === 'sale') {
+        form.amount_out = 0
+        form.quantity = 1
+        form.unit_price = 0
+        autoFillAmountFields(form, 'quantity')
+      }
       await loadRecordOptions()
+      if (customerDetailDialog.value) await nextTick()
       dialog.value = true
     }
+    const openCustomerWorkspace = async (customerName: string, tab: 'sale' | 'payment' = 'sale') => {
+      customerDetailName.value = customerName
+      filterValue.value = customerName
+      customerDetailTab.value = tab
+      customerDetailDialog.value = true
+      resetSelection()
+      await load()
+    }
+    const closeCustomerWorkspace = () => {
+      customerDetailDialog.value = false
+      customerDetailName.value = ''
+      filterValue.value = ''
+      customerDetailSummary.value = {}
+      resetSelection()
+      load()
+    }
+    const openCustomerAddDirect = async (customerName: string, mode: 'sale' | 'payment') => {
+      customerDetailName.value = customerName
+      filterValue.value = customerName
+      customerEntryMode.value = mode
+      await openAdd(mode)
+    }
+    const openCustomerPickAndAdd = (mode: 'sale' | 'payment') => {
+      if (filterOptions.value.length === 1) {
+        openCustomerAddDirect(String(filterOptions.value[0]), mode)
+        return
+      }
+      customerPickMode.value = mode
+      customerPickName.value = ''
+      customerPickDialog.value = true
+    }
+    const confirmCustomerPick = async () => {
+      if (!customerPickName.value) {
+        emit('notify', props.t('selectCustomerToAdd'), 'warning')
+        return
+      }
+      customerPickDialog.value = false
+      await openCustomerAddDirect(customerPickName.value, customerPickMode.value)
+    }
+    const openCustomerCreate = () => {
+      customerCreateForm.customer_name = ''
+      customerCreateForm.opening_balance = 0
+      customerCreateForm.note = ''
+      customerCreateDialog.value = true
+    }
+    const saveCustomerCreate = async () => {
+      const name = String(customerCreateForm.customer_name || '').trim()
+      if (!name) {
+        emit('notify', props.t('selectCustomerToAdd'), 'warning')
+        return
+      }
+      try {
+        await customerAPI.create({
+          customer_name: name,
+          opening_balance: Number(customerCreateForm.opening_balance || 0),
+          note: customerCreateForm.note || '',
+        })
+        customerCreateDialog.value = false
+        emit('notify', props.t('customerCreated'))
+        await load()
+      } catch (error: any) {
+        emit('notify', error?.message || '添加失败', 'error')
+      }
+    }
+    const renderOverviewActionLink = (label: string, onClick: () => void) => h('button', {
+      type: 'button',
+      class: 'overview-action-link',
+      onClick: (event: MouseEvent) => {
+        event.stopPropagation()
+        onClick()
+      },
+    }, label)
     const openEdit = async (row: any) => {
       editing.value = row
       Object.assign(form, row)
       form.date = normalizeDateValue(form.date)
       if (props.page === 'customer' && isCustomerPaymentDescription(form.description)) {
         form.product_name = '付款'
+        customerEntryMode.value = 'payment'
       } else if (props.page === 'customer' && !form.product_name && form.description) {
         Object.assign(form, parseCustomerDescription(form.description))
+        customerEntryMode.value = 'sale'
+      } else if (props.page === 'customer') {
+        customerEntryMode.value = Number(form.amount_out) > 0 && !Number(form.amount_in) ? 'payment' : 'sale'
       }
       pendingAttachments.value = []
       await loadRecordOptions()
@@ -1611,9 +1897,12 @@ const LedgerPage = defineComponent({
       try {
         const payload = { ...form }
         if (payload.date) payload.date = normalizeDateValue(payload.date)
-        if ('month_label' in payload && payload.date) payload.month_label = monthFromDate(payload.date)
         if (props.page === 'customer') {
-          if (form.product_name === '付款' || (Number(payload.amount_out) > 0 && !payload.product_name && !payload.contract_no && !Number(payload.quantity))) {
+          if (!String(payload.customer_name || '').trim()) {
+            emit('notify', props.t('selectCustomerToAdd'), 'warning')
+            return
+          }
+          if (customerEntryMode.value === 'payment' || form.product_name === '付款' || (Number(payload.amount_out) > 0 && !payload.product_name && !payload.contract_no && !Number(payload.quantity))) {
             payload.description = '付款'
             payload.product_name = '付款'
             payload.contract_no = ''
@@ -1621,9 +1910,29 @@ const LedgerPage = defineComponent({
             payload.unit = ''
             payload.quantity = 0
             payload.unit_price = 0
+            payload.amount_in = 0
+            if (Number(payload.amount_out || 0) <= 0) {
+              emit('notify', '请填写收款金额', 'warning')
+              return
+            }
           } else {
             payload.description = buildCustomerDescription(payload)
+            payload.amount_out = 0
+            const amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
+            if (amount <= 0) {
+              emit('notify', '请填写数量与单价', 'warning')
+              return
+            }
+            payload.amount_in = amount
           }
+          normalizeCustomerLedgerPayload(payload)
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.date)) {
+            emit('notify', '请填写日期', 'warning')
+            return
+          }
+        }
+        if (props.page === 'stockIn' || props.page === 'stockOut') {
+          payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
         }
         const saved = editing.value ? await config.value.api.update({ ...payload, id: editing.value.id }) : await config.value.api.add(payload)
         if (pendingAttachments.value.length && saved?.id) {
@@ -1631,7 +1940,13 @@ const LedgerPage = defineComponent({
         }
         dialog.value = false
         emit('notify', editing.value ? '已更新' : '已添加')
-        load()
+        if (customerDetailDialog.value) {
+          load()
+        } else {
+          customerDetailName.value = ''
+          filterValue.value = ''
+          load()
+        }
       } catch (error: any) {
         emit('notify', error?.message || '保存失败', 'error')
       }
@@ -1799,7 +2114,33 @@ const LedgerPage = defineComponent({
       emit('notify', props.t('settingsSaved'))
       if (printDialog.value) await refreshPrintPreview()
     }
+    const activeCustomerName = () => customerDetailName.value || filterValue.value
 
+    const openCustomerProfile = async () => {
+      if (props.page !== 'customer') return
+      const name = activeCustomerName()
+      if (!name) {
+        emit('notify', props.t('selectCustomerForProfile'), 'error')
+        return
+      }
+      filterValue.value = name
+      const profile = await customerAPI.profile(name)
+      customerProfileForm.opening_balance = Number(profile.opening_balance || 0)
+      customerProfileForm.note = profile.note || ''
+      customerProfileDialog.value = true
+    }
+    const saveCustomerProfile = async () => {
+      const name = activeCustomerName()
+      if (!name) return
+      await customerAPI.setProfile({
+        customer_name: name,
+        opening_balance: Number(customerProfileForm.opening_balance || 0),
+        note: customerProfileForm.note || '',
+      })
+      customerProfileDialog.value = false
+      emit('notify', props.t('customerProfileSaved'))
+      load()
+    }
     const toggleAll = (value: boolean) => selected.value = value ? Array.from(new Set([...selected.value, ...rows.value.map(r => r.id)])) : selected.value.filter(id => !rows.value.some(r => r.id === id))
     const toggleRowSelection = (id: number) => {
       selected.value = selected.value.includes(id)
@@ -1808,18 +2149,145 @@ const LedgerPage = defineComponent({
     }
     const isPageAllSelected = computed(() => rows.value.length > 0 && rows.value.every(r => selected.value.includes(r.id)))
 
-    watch(() => props.page, () => { keyword.value = ''; filterValue.value = ''; yearFilter.value = ''; monthFilter.value = ''; startDate.value = ''; endDate.value = ''; selected.value = []; currentPage.value = 1; load() }, { immediate: true })
+    watch(() => props.page, () => {
+      keyword.value = ''
+      filterValue.value = ''
+      customerDetailDialog.value = false
+      customerDetailName.value = ''
+      yearFilter.value = ''
+      monthFilter.value = ''
+      startDate.value = ''
+      endDate.value = ''
+      selected.value = []
+      currentPage.value = 1
+      load()
+    }, { immediate: true })
     watch(keyword, () => {
       selected.value = []
       if (currentPage.value !== 1) currentPage.value = 1
       else load()
     })
-    watch([currentPage, filterValue, yearFilter, monthFilter, startDate, endDate], () => { selected.value = []; load() })
+    watch([currentPage, customerPaymentPage, filterValue, yearFilter, monthFilter, startDate, endDate], () => { selected.value = []; load() })
+
+    const formatLedgerCell = (col: string, value: any) => {
+      if (props.page === 'customer') {
+        if (col === 'amount_in') return formatCustomerReceivableDisplay(value)
+        if (col === 'amount_out') return formatCustomerReceivedDisplay(value)
+        if (col === 'balance') return formatCustomerBalanceDisplay(value).text
+      }
+      return formatCell(col, value)
+    }
+
+    const renderRowCells = (row: any, columnKeys: string[]) => columnKeys.map((c: string) => c === 'attachments'
+      ? h('td', [
+        row.attachment_count
+          ? h('button', { type: 'button', class: 'table-image-thumb', onClick: (event: MouseEvent) => { event.stopPropagation(); openAttachments(row) }, title: props.t('viewImages') }, [
+            row.attachment_thumb ? h('img', { src: row.attachment_thumb, alt: props.t('images') }) : h('span', props.t('images')),
+            h('b', row.attachment_count),
+          ])
+          : h('span', { class: 'muted tiny' }, props.t('noImages'))
+      ])
+      : h('td', { class: amountClass(c) }, formatLedgerCell(c, row[c])))
+
+    const renderActionCell = (row: any) => h('td', { class: 'action-cell sticky-action-col' }, [
+      h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit')),
+      h(VBtn, { size: 'small', variant: 'text', color: 'error', onClick: (event: MouseEvent) => { event.stopPropagation(); remove(row.id) } }, () => props.t('delete')),
+    ])
+
+    const renderLedgerTableCard = (options: {
+      title: string
+      subtitle?: string
+      headerAction?: any
+      tableRows: any[]
+      columnKeys: string[]
+      totalCount: number
+      page: number
+      pageSize: number
+      onPageChange: (v: number) => void
+      withSelect?: boolean
+      emptyAction?: () => any
+    }) => h(VCard, { class: ['data-card', 'table-card', options.title ? '' : 'table-card--flat'], style: options.title ? 'margin-bottom: 12px' : 'margin-bottom: 0; box-shadow: none !important; border: 0 !important' }, () => [
+      options.title || options.subtitle || options.headerAction
+        ? h('div', { class: 'page-header page-header--compact', style: 'padding: 10px 12px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px' }, [
+          h('div', [
+            options.title ? h('div', { class: 'drawer-title' }, options.title) : null,
+            options.subtitle ? h('div', { class: 'muted tiny' }, options.subtitle) : null,
+          ]),
+          options.headerAction || null,
+        ])
+        : null,
+      h('div', { class: 'table-scroll' }, [
+        h(VTable, { class: 'ledger-table', hover: true }, () => [
+          h('thead', [h('tr', [
+            options.withSelect
+              ? h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected.value }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected.value) } }, isPageAllSelected.value ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)])
+              : null,
+            ...options.columnKeys.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))),
+            h('th', { class: 'sticky-action-col' }, props.t('action')),
+          ])]),
+          h('tbody', loading.value
+            ? [h('tr', [h('td', { colspan: options.columnKeys.length + (options.withSelect ? 2 : 1), class: 'empty-cell' }, '加载中...')])]
+            : options.tableRows.length
+              ? options.tableRows.map(row => h('tr', {
+                key: row.id,
+                class: options.withSelect ? ['selectable-row', { selected: selected.value.includes(row.id) }] : undefined,
+                onClick: options.withSelect ? () => toggleRowSelection(row.id) : undefined,
+              }, [
+                options.withSelect
+                  ? h('td', { class: 'select-cell' }, [h('button', {
+                    type: 'button',
+                    class: ['table-check', { checked: selected.value.includes(row.id) }],
+                    title: '选择此行',
+                    onClick: (event: MouseEvent) => {
+                      event.stopPropagation()
+                      toggleRowSelection(row.id)
+                    },
+                  }, selected.value.includes(row.id) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)])
+                  : null,
+                ...renderRowCells(row, options.columnKeys),
+                renderActionCell(row),
+              ]))
+              : [h('tr', [h('td', { colspan: options.columnKeys.length + (options.withSelect ? 2 : 1), class: 'empty-cell ledger-empty-cell' }, [
+                h('span', '暂无记录'),
+                options.emptyAction ? h('div', { class: 'ledger-empty-cell__action' }, options.emptyAction()) : null,
+              ])])]),
+        ]),
+      ]),
+      h('div', { class: 'table-footer' }, [
+        h('span', `${props.t('total', { count: options.totalCount })} · 每页 ${options.pageSize} 条`),
+        h(VPagination, {
+          modelValue: options.page,
+          'onUpdate:modelValue': options.onPageChange,
+          length: Math.max(1, Math.ceil(options.totalCount / options.pageSize)),
+          density: 'comfortable',
+          size: 'small',
+          totalVisible: 7,
+        }),
+      ]),
+    ])
 
     return () => h('div', { class: 'page-wrap ledger-page' }, [
       h(PageHeader, { title: props.t(config.value.title), subtitle: props.t(`${config.value.title}Sub`) }, {
         actions: () => h('div', { class: 'header-toolbar' }, [
-          config.value.filterField ? h(VSelect, { modelValue: filterValue.value, 'onUpdate:modelValue': (v: string) => { filterValue.value = v || ''; resetSelection() }, items: filterOptions.value, label: props.t(config.value.filterLabel), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }) : null,
+          config.value.filterField ? h(VSelect, {
+            modelValue: props.page === 'customer' ? (customerDetailDialog.value ? customerDetailName.value : null) : filterValue.value,
+            'onUpdate:modelValue': (v: string) => {
+              if (props.page === 'customer') {
+                if (v) openCustomerWorkspace(v)
+                else closeCustomerWorkspace()
+                return
+              }
+              filterValue.value = v || ''
+              resetSelection()
+              load()
+            },
+            items: filterOptions.value,
+            label: props.t(config.value.filterLabel),
+            clearable: true,
+            density: 'compact',
+            hideDetails: true,
+            class: 'toolbar-input header-toolbar-input',
+          }) : null,
           h(VSelect, { modelValue: yearFilter.value, 'onUpdate:modelValue': (v: string) => { yearFilter.value = v || ''; resetSelection() }, items: years, label: props.t('filterYear'), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VSelect, { modelValue: monthFilter.value, 'onUpdate:modelValue': (v: string) => { monthFilter.value = v || ''; resetSelection() }, items: months, label: props.t('filterMonth'), clearable: true, density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VTextField, { modelValue: startDate.value, 'onUpdate:modelValue': (v: string) => { startDate.value = v || ''; resetSelection() }, label: props.t('filterStartDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
@@ -1836,17 +2304,82 @@ const LedgerPage = defineComponent({
               onClick: openPrintPreview,
             }, () => selected.value.length ? `${props.t('printSlip')}(${selected.value.length})` : props.t('printSlip'))
             : null,
-          h(VBtn, { color: 'primary', size: 'small', onClick: openAdd }, () => props.t(props.page === 'cash' ? 'addRecord' : 'add')),
+          props.page === 'customer'
+            ? h(VBtn, { variant: 'tonal', size: 'small', onClick: openCustomerCreate }, () => props.t('addCustomer'))
+            : null,
+          props.page === 'customer'
+            ? null
+            : props.page === 'cash'
+              ? h(VBtn, { color: 'primary', size: 'small', onClick: () => openAdd() }, () => props.t('addRecord'))
+              : h(VBtn, { color: 'primary', size: 'small', onClick: () => openAdd() }, () => props.t('add')),
         ]),
       }),
       (() => {
-        const stats = renderLedgerStats(props.page, summary.value, props.t)
-        return stats.length ? h('div', { class: 'stat-grid' }, stats) : null
+        const stats = renderLedgerStats(props.page, summary.value, props.t, {
+          onOpeningBalanceClick: openCustomerProfile,
+        })
+        if (stats.length && props.page !== 'customer') {
+          return h('div', { class: 'stat-grid' }, stats)
+        }
+        if (props.page === 'customer' && Array.isArray(summary.value) && summary.value.length) {
+          return h(VCard, { class: 'data-card table-card', style: 'margin-bottom: 12px' }, () => [
+            h('div', { class: 'page-header page-header--compact customer-overview-head', style: 'padding: 12px 16px 0' }, [
+              h('div', [
+                h('div', { class: 'drawer-title' }, props.t('customerOverview')),
+                h('div', { class: 'muted tiny' }, props.t('customerOverviewSub')),
+              ]),
+              h('div', { class: 'customer-overview-head__actions' }, [
+                h(VBtn, { size: 'x-small', variant: 'tonal', onClick: openCustomerCreate }, () => props.t('addCustomer')),
+              ]),
+            ]),
+            h('div', { class: 'table-scroll' }, [
+              h(VTable, { class: 'ledger-table customer-overview-table', hover: true }, () => [
+                h('thead', [h('tr', [
+                  h('th', props.t('customerName')),
+                  h('th', props.t('openingBalance')),
+                  h('th', props.t('customerReceivable')),
+                  h('th', props.t('customerReceived')),
+                  h('th', { class: 'customer-balance-col' }, [
+                    h('div', { class: 'customer-balance-col-head' }, props.t('customerBalanceColumn')),
+                    h('div', { class: 'customer-balance-col-legend' }, [
+                      h('span', { class: 'customer-balance-tag customer-balance-tag--debt' }, props.t('customerDebtTag')),
+                      h('span', { class: 'customer-balance-tag customer-balance-tag--credit' }, props.t('customerOverpaidTag')),
+                    ]),
+                  ]),
+                  h('th', { class: 'sticky-action-col customer-overview-action-col' }, props.t('action')),
+                ])]),
+                h('tbody', summary.value.map((row: any) => h('tr', {
+                  key: row.customer_name,
+                  class: 'customer-overview-row',
+                  onClick: () => openCustomerWorkspace(row.customer_name),
+                }, [
+                  h('td', { class: 'customer-name-cell customer-overview-name' }, row.customer_name),
+                  h('td', { class: customerOverviewAmountClass('opening', row.openingBalance) }, formatCell('amount_in', row.openingBalance)),
+                  h('td', { class: customerOverviewAmountClass('in', row.totalIn) }, formatCustomerReceivableDisplay(row.totalIn)),
+                  h('td', { class: customerOverviewAmountClass('out', row.totalOut) }, formatCustomerReceivedDisplay(row.totalOut)),
+                  h('td', { class: customerOverviewAmountClass('balance', row.currentBalance) }, renderCustomerBalanceCell(row.currentBalance, props.t)),
+                  h('td', {
+                    class: 'action-cell customer-overview-actions sticky-action-col customer-overview-action-col',
+                    onClick: (event: MouseEvent) => event.stopPropagation(),
+                  }, [
+                    renderOverviewActionLink('台账', () => openCustomerWorkspace(row.customer_name)),
+                  ]),
+                ]))),
+              ]),
+            ]),
+          ])
+        }
+        if (props.page === 'customer' && Array.isArray(summary.value) && !summary.value.length && !loading.value) {
+          return h(VCard, { class: 'data-card table-card' }, () => [
+            h('div', { class: 'empty-cell', style: 'padding: 48px 24px' }, '暂无客户往来数据'),
+          ])
+        }
+        return null
       })(),
-      h(VCard, { class: 'data-card table-card' }, () => [
+      props.page !== 'customer' ? h(VCard, { class: 'data-card table-card' }, () => [
         h('div', { class: 'table-scroll' }, [
           h(VTable, { class: 'ledger-table', hover: true }, () => [
-            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected.value }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected.value) } }, isPageAllSelected.value ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', props.t(columnLabel(c)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
+            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected.value }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected.value) } }, isPageAllSelected.value ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
             h('tbody', loading.value ? [h('tr', [h('td', { colspan: displayColumns.value.length + 2, class: 'empty-cell' }, '加载中...')])] : rows.value.map(row => h('tr', {
               key: row.id,
               class: ['selectable-row', { selected: selected.value.includes(row.id) }],
@@ -1861,20 +2394,8 @@ const LedgerPage = defineComponent({
                   toggleRowSelection(row.id)
                 },
               }, selected.value.includes(row.id) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]),
-              ...displayColumns.value.map((c: string) => c === 'attachments'
-                ? h('td', [
-                  row.attachment_count
-                    ? h('button', { type: 'button', class: 'table-image-thumb', onClick: (event: MouseEvent) => { event.stopPropagation(); openAttachments(row) }, title: props.t('viewImages') }, [
-                      row.attachment_thumb ? h('img', { src: row.attachment_thumb, alt: props.t('images') }) : h('span', props.t('images')),
-                      h('b', row.attachment_count),
-                    ])
-                    : h('span', { class: 'muted tiny' }, props.t('noImages'))
-                ])
-                : h('td', { class: amountClass(c) }, formatCell(c, row[c]))),
-              h('td', { class: 'action-cell sticky-action-col' }, [
-                h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit')),
-                h(VBtn, { size: 'small', variant: 'text', color: 'error', onClick: (event: MouseEvent) => { event.stopPropagation(); remove(row.id) } }, () => props.t('delete')),
-              ]),
+              ...renderRowCells(row, displayColumns.value),
+              renderActionCell(row),
             ]))),
           ]),
         ]),
@@ -1882,18 +2403,154 @@ const LedgerPage = defineComponent({
           h('span', `${props.t('total', { count: total.value })} · 每页 ${config.value.pageSize} 条`),
           h(VPagination, { modelValue: currentPage.value, 'onUpdate:modelValue': (v: number) => currentPage.value = v, length: Math.max(1, Math.ceil(total.value / config.value.pageSize)), density: 'comfortable', size: 'small', totalVisible: 7 }),
         ]),
-      ]),
+      ]) : null,
+      RecordDialogShell({
+        show: customerCreateDialog.value,
+        maxWidth: 480,
+        title: props.t('addCustomer'),
+        subtitle: props.t('addCustomerSub'),
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { customerCreateDialog.value = false },
+        onSave: saveCustomerCreate,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerCreateForm.customer_name,
+                  'onUpdate:modelValue': (v: string) => { customerCreateForm.customer_name = v },
+                  label: props.t('customerName'),
+                  autofocus: true,
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerCreateForm.opening_balance,
+                  'onUpdate:modelValue': (v: any) => { customerCreateForm.opening_balance = Number(v || 0) },
+                  label: props.t('openingBalance'),
+                  type: 'number',
+                  step: 'any',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerCreateForm.note,
+                  'onUpdate:modelValue': (v: string) => { customerCreateForm.note = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
+        ],
+      }),
+      RecordDialogShell({
+        show: customerPickDialog.value,
+        maxWidth: 420,
+        title: props.t(customerPickMode.value === 'payment' ? 'addCustomerPayment' : 'addCustomerSale'),
+        subtitle: props.t('customerPickSub'),
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { customerPickDialog.value = false },
+        onSave: confirmCustomerPick,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VSelect, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerPickName.value,
+                  'onUpdate:modelValue': (v: string) => { customerPickName.value = v || '' },
+                  items: filterOptions.value,
+                  label: props.t('filterCustomer'),
+                }),
+              ]),
+            ]),
+          ]),
+        ],
+      }),
+      h(VDialog, {
+        modelValue: customerDetailDialog.value,
+        'onUpdate:modelValue': (v: boolean) => { if (!v) closeCustomerWorkspace() },
+        maxWidth: 1180,
+        class: 'customer-workspace-dialog-wrap',
+      }, () => h(VCard, { class: 'customer-workspace-dialog' }, [
+        h('div', { class: 'customer-workspace-dialog__head' }, [
+          h('div', { class: 'drawer-title' }, `${props.t('customerWorkspaceTitle')} · ${customerDetailName.value}`),
+          h('div', { class: 'customer-workspace-dialog__actions' }, [
+            h(VBtn, { size: 'small', variant: 'text', onClick: closeCustomerWorkspace }, () => props.t('cancel')),
+          ]),
+        ]),
+        h(VCardText, { class: 'customer-workspace-dialog__body' }, [
+          renderCustomerWorkspaceSummary(customerDetailSummary.value, props.t, {
+            onOpeningBalanceClick: openCustomerProfile,
+          }),
+          customerPaymentRows.value.some((row: any) => !String(row.date || '').trim())
+            ? h(VAlert, { type: 'info', variant: 'tonal', density: 'compact' }, () => props.t('customerPaymentMissingDateHint', {
+              count: customerPaymentRows.value.filter((row: any) => !String(row.date || '').trim()).length,
+            }))
+            : null,
+          h(VTabs, {
+            modelValue: customerDetailTab.value,
+            'onUpdate:modelValue': (v: 'sale' | 'payment') => { customerDetailTab.value = v },
+            density: 'compact',
+            class: 'customer-workspace-tabs',
+          }, () => [
+            h(VTab, { value: 'sale' }, () => `${props.t('customerSaleDetail')} (${total.value})`),
+            h(VTab, { value: 'payment' }, () => `${props.t('customerPaymentDetail')} (${customerPaymentTotal.value})`),
+          ]),
+          customerDetailTab.value === 'sale'
+            ? renderLedgerTableCard({
+              title: '',
+              tableRows: rows.value,
+              columnKeys: [...customerSaleColumnKeys, 'attachments'],
+              totalCount: total.value,
+              page: currentPage.value,
+              pageSize: config.value.pageSize,
+              onPageChange: (v: number) => { currentPage.value = v },
+              withSelect: true,
+              emptyAction: () => h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
+            })
+            : renderLedgerTableCard({
+              title: '',
+              subtitle: props.t('customerPaymentDetailSub'),
+              tableRows: customerPaymentRows.value,
+              columnKeys: customerPaymentColumnKeys,
+              totalCount: customerPaymentTotal.value,
+              page: customerPaymentPage.value,
+              pageSize: customerPaymentPageSize,
+              onPageChange: (v: number) => { customerPaymentPage.value = v },
+              emptyAction: () => h(VBtn, { size: 'small', color: 'primary', onClick: () => openAdd('payment') }, () => props.t('addCustomerPayment')),
+            }),
+        ]),
+        h('div', { class: 'customer-workspace-dialog__footer' }, [
+          h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
+          h(VBtn, { size: 'small', color: 'primary', onClick: () => openAdd('payment') }, () => props.t('addCustomerPayment')),
+        ]),
+      ])),
       RecordDialogShell({
         show: dialog.value,
         maxWidth: ledgerDialogWidths[props.page] || 720,
-        title: editing.value ? props.t('edit') : (props.page === 'cash' ? props.t('addRecord') : props.t('add')),
-        subtitle: editing.value ? props.t('formEditHint') : props.t('formAddHint'),
+        zIndex: customerDetailDialog.value ? 2800 : 2400,
+        title: editing.value
+          ? props.t('edit')
+          : props.page === 'customer'
+            ? props.t(customerEntryMode.value === 'payment' ? 'addCustomerPayment' : 'addCustomerSale')
+            : (props.page === 'cash' ? props.t('addRecord') : props.t('add')),
+        subtitle: editing.value
+          ? props.t('formEditHint')
+          : (props.page === 'customer' && customerEntryMode.value === 'payment'
+            ? props.t('customerPaymentFormHint')
+            : props.t('formAddHint')),
         cancelLabel: props.t('cancel'),
         saveLabel: props.t('save'),
         onClose: () => { dialog.value = false },
         onSave: save,
         default: () => [
-          ...getFormSections(props.page, config.value.fields).map(section => h('div', { class: 'record-dialog__section', key: section.titleKey }, [
+          ...getFormSections(props.page, config.value.fields, customerEntryMode.value).map(section => h('div', { class: 'record-dialog__section', key: section.titleKey }, [
             h('div', { class: 'record-dialog__section-title' }, props.t(section.titleKey)),
             h('div', { class: 'record-dialog__grid' }, section.fields.map(field => renderRecordFormField(field, {
               form,
@@ -1901,6 +2558,7 @@ const LedgerPage = defineComponent({
               filterOptions: filterOptions.value,
               inventoryOptions: inventoryOptions.value,
               productOptions: productOptions.value,
+              lockedCustomerName: customerDetailName.value || filterValue.value,
               t: props.t,
             }))),
           ])),
@@ -1946,6 +2604,40 @@ const LedgerPage = defineComponent({
                 h('span', item.fileName),
               ])))
               : h('div', { class: 'empty-image-state' }, props.t('noImages')),
+        ],
+      }),
+      RecordDialogShell({
+        show: customerProfileDialog.value,
+        maxWidth: 520,
+        title: `${props.t('customerProfile')} · ${activeCustomerName() || ''}`,
+        subtitle: props.t('customerProfileSub'),
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { customerProfileDialog.value = false },
+        onSave: saveCustomerProfile,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerProfileForm.opening_balance,
+                  'onUpdate:modelValue': (v: any) => { customerProfileForm.opening_balance = Number(v || 0) },
+                  label: props.t('openingBalance'),
+                  type: 'number',
+                  step: 'any',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerProfileForm.note,
+                  'onUpdate:modelValue': (v: string) => { customerProfileForm.note = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
         ],
       }),
       h(VDialog, { modelValue: Boolean(imagePreview.value), 'onUpdate:modelValue': (v: boolean) => { if (!v) closeImagePreview() }, maxWidth: 1180 }, () => h(VCard, { class: 'image-zoom-dialog' }, [
@@ -2081,15 +2773,69 @@ const LedgerPage = defineComponent({
   },
 })
 
-function renderLedgerStats(pageKey: string, summary: any, tFn: any) {
+function renderLedgerStats(pageKey: string, summary: any, tFn: any, hooks: { onOpeningBalanceClick?: () => void } = {}) {
   if (pageKey === 'cash') return [h(StatCard, { title: tFn('totalIncome'), value: summary.totalIncome || 0, color: 'success' }), h(StatCard, { title: tFn('totalExpense'), value: summary.totalExpense || 0, color: 'error' }), h(StatCard, { title: tFn('currentSurplus'), value: summary.lastBalance || 0, color: 'primary' })]
-  if (pageKey === 'customer') return []
+  if (pageKey === 'customer') {
+    if (!summary?.customer_name) return []
+    return [
+      h(StatCard, {
+        title: tFn('openingBalance'),
+        value: summary.openingBalance || 0,
+        color: 'secondary',
+        compact: true,
+        clickable: Boolean(hooks.onOpeningBalanceClick),
+        onClick: hooks.onOpeningBalanceClick,
+      }),
+      h(StatCard, { title: tFn('customerReceivable'), value: Math.abs(Number(summary.totalIn || 0)), color: 'error', compact: true }),
+      h(StatCard, { title: tFn('customerReceived'), value: summary.totalOut || 0, color: 'success', compact: true }),
+      h(StatCard, {
+        title: tFn(formatCustomerBalanceDisplay(summary.currentBalance || 0).labelKey),
+        value: formatCustomerBalanceDisplay(summary.currentBalance || 0).text,
+        color: formatCustomerBalanceDisplay(summary.currentBalance || 0).color,
+        compact: true,
+      }),
+    ]
+  }
   if (pageKey === 'stockIn' || pageKey === 'stockOut') return [
     h(StatCard, { title: tFn('totalRecords'), value: summary.totalRecords || 0, color: 'primary' }),
     h(StatCard, { title: tFn('totalQuantity'), value: summary.totalQuantity || 0, color: 'success' }),
     h(StatCard, { title: tFn('totalAmount'), value: summary.totalAmount || 0, color: 'warning' }),
   ]
   return [h(StatCard, { title: tFn('totalIn'), value: summary.totalIn || 0, color: 'success' }), h(StatCard, { title: tFn('totalOut'), value: summary.totalOut || 0, color: 'error' }), h(StatCard, { title: tFn('netAmount'), value: (summary.totalIn || 0) - (summary.totalOut || 0), color: 'primary' })]
+}
+
+function renderCustomerWorkspaceSummary(
+  summary: any,
+  tFn: (key: string, params?: any) => string,
+  hooks: { onOpeningBalanceClick?: () => void } = {},
+) {
+  if (!summary?.customer_name) return null
+  const balanceInfo = formatCustomerBalanceDisplay(summary.currentBalance || 0)
+  const items = [
+    { labelKey: 'openingBalance', text: formatCell('amount_in', summary.openingBalance || 0), color: 'secondary', clickable: Boolean(hooks.onOpeningBalanceClick), onClick: hooks.onOpeningBalanceClick },
+    { labelKey: 'customerReceivable', text: formatCustomerReceivableDisplay(summary.totalIn || 0), color: 'error' },
+    { labelKey: 'customerReceived', text: formatCustomerReceivedDisplay(summary.totalOut || 0), color: 'success' },
+    { labelKey: balanceInfo.labelKey, text: balanceInfo.text, color: balanceInfo.color },
+  ]
+  const summaryEl = h('div', { class: 'customer-workspace-summary' }, items.map(item => {
+    const inner = [
+      h('span', { class: 'customer-workspace-summary__label' }, tFn(item.labelKey)),
+      h('span', { class: `customer-workspace-summary__value text-${item.color}` }, item.text),
+    ]
+    if (item.clickable && item.onClick) {
+      return h('button', {
+        type: 'button',
+        class: 'customer-workspace-summary__item customer-workspace-summary__item--clickable',
+        key: item.labelKey,
+        onClick: item.onClick,
+      }, inner)
+    }
+    return h('div', { class: 'customer-workspace-summary__item', key: item.labelKey }, inner)
+  }))
+  return h('div', { class: 'customer-workspace-summary-wrap' }, [
+    summaryEl,
+    h('div', { class: 'customer-workspace-summary-hint muted tiny' }, tFn('customerWorkspaceSummaryHint')),
+  ])
 }
 
 function columnLabel(col: string) {
@@ -2101,6 +2847,15 @@ function columnLabel(col: string) {
     default_price: 'defaultPrice', available_qty: 'availableQty',
     month_label: 'date', attachments: 'images',
   } as any)[col] || col
+}
+
+function ledgerColumnLabel(col: string, table?: string) {
+  if (table === 'customer') {
+    if (col === 'amount_in') return 'customerReceivable'
+    if (col === 'amount_out') return 'customerReceived'
+    if (col === 'balance') return 'customerBalance'
+  }
+  return columnLabel(col)
 }
 function inventoryOptionTitle(item: any) {
   if (!item || typeof item !== 'object') return String(item || '')
@@ -2148,6 +2903,60 @@ function numericField(field: string) { return ['income', 'expense', 'amount_in',
 function amountClass(col: string) { return numericField(col) ? 'amount-cell' : '' }
 function formatCell(col: string, value: any) { return numericField(col) ? (Number(value || 0) ? money(value) : '—') : (value || '') }
 
+function formatCustomerReceivableDisplay(value: any) {
+  const amount = Number(value || 0)
+  if (!amount) return '—'
+  return money(Math.abs(amount))
+}
+
+function formatCustomerReceivedDisplay(value: any) {
+  const amount = Number(value || 0)
+  if (!amount) return '—'
+  return money(Math.abs(amount))
+}
+
+function formatCustomerBalanceDisplay(value: any) {
+  const balance = Number(value || 0)
+  if (Math.abs(balance) < 0.005) {
+    return { labelKey: 'customerBalance', text: money(0), color: 'secondary' }
+  }
+  if (balance > 0) {
+    return { labelKey: 'customerBalance', text: money(balance), color: 'error' }
+  }
+  return { labelKey: 'customerOverpaid', text: money(Math.abs(balance)), color: 'success' }
+}
+
+function renderCustomerBalanceCell(balance: any, t: (key: string) => string) {
+  const amount = Number(balance || 0)
+  if (Math.abs(amount) < 0.005) {
+    return h('span', { class: 'customer-balance-cell customer-balance-cell--zero' }, money(0))
+  }
+  const isDebt = amount > 0
+  const info = formatCustomerBalanceDisplay(balance)
+  return h('span', { class: 'customer-balance-cell' }, [
+    h('span', {
+      class: isDebt ? 'customer-balance-tag customer-balance-tag--debt' : 'customer-balance-tag customer-balance-tag--credit',
+    }, t(isDebt ? 'customerDebtTag' : 'customerOverpaidTag')),
+    h('span', {
+      class: isDebt ? 'customer-balance-amount customer-balance-amount--debt' : 'customer-balance-amount customer-balance-amount--credit',
+    }, info.text),
+  ])
+}
+
+function customerOverviewAmountClass(kind: 'opening' | 'in' | 'out' | 'balance', value: any) {
+  const amount = Number(value || 0)
+  const base = 'amount-cell customer-overview-amount'
+  if (kind === 'balance') {
+    if (amount > 0) return `${base} customer-overview-amount--debt`
+    if (amount < 0) return `${base} customer-overview-amount--credit`
+    return `${base} customer-overview-amount--zero`
+  }
+  if (!amount) return `${base} customer-overview-amount--empty`
+  if (kind === 'opening') return `${base} customer-overview-amount--opening`
+  if (kind === 'in') return `${base} customer-overview-amount--receivable-signed`
+  return `${base} customer-overview-amount--received-signed`
+}
+
 function commonFormFieldProps() {
   return { variant: 'outlined' as const, density: 'comfortable' as const, hideDetails: 'auto' as const, color: 'primary' as const }
 }
@@ -2156,19 +2965,31 @@ function normalizeFormField(field: FormFieldSpec) {
   return typeof field === 'string' ? { key: field, span: (field === 'note' || field === 'description') ? 'full' as const : 'half' as const } : { key: field.key, span: field.span || ((field.key === 'note' || field.key === 'description') ? 'full' as const : 'half' as const) }
 }
 
-function getFormSections(pageKey: string, fields: string[]): FormSectionSpec[] {
+function getFormSections(pageKey: string, fields: string[], customerEntryMode: 'sale' | 'payment' = 'sale'): FormSectionSpec[] {
+  if (pageKey === 'customer') return formSections[customerEntryMode === 'payment' ? 'customerPayment' : 'customer'] || formSections.customer
   if (formSections[pageKey]) return formSections[pageKey]
   return [{ titleKey: 'formSectionBasic', fields: fields.map(key => ({ key, span: (key === 'note' || key === 'description') ? 'full' : 'half' })) }]
 }
 
 function renderRecordFormField(
   field: FormFieldSpec,
-  ctx: { form: any; config: any; filterOptions: string[]; inventoryOptions?: any[]; productOptions?: any[]; t: (key: string, params?: any) => string },
+  ctx: { form: any; config: any; filterOptions: string[]; inventoryOptions?: any[]; productOptions?: any[]; lockedCustomerName?: string; t: (key: string, params?: any) => string },
 ) {
   const { key, span } = normalizeFormField(field)
-  const { form, config, filterOptions, inventoryOptions = [], productOptions = [], t } = ctx
+  const { form, config, filterOptions, inventoryOptions = [], productOptions = [], lockedCustomerName = '', t } = ctx
   const wrapClass = `record-dialog__field record-dialog__field--${span === 'full' ? 'full' : 'half'}`
   const base = commonFormFieldProps()
+
+  if (config.filterKey && key === config.filterKey && lockedCustomerName) {
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: lockedCustomerName,
+        label: t(ledgerColumnLabel(key, config.table)),
+        readonly: true,
+      }),
+    ])
+  }
 
   if (config.filterKey && key === config.filterKey) {
     return h('div', { class: wrapClass, key }, [
@@ -2177,7 +2998,7 @@ function renderRecordFormField(
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
         items: filterOptions,
-        label: t(columnLabel(key)),
+        label: t(ledgerColumnLabel(key, config.table)),
         placeholder: t(key === 'supplier_name' ? 'typeSupplierName' : 'typeCustomerName'),
         clearable: true,
         hideNoData: true,
@@ -2211,7 +3032,7 @@ function renderRecordFormField(
         },
         items: productOptions,
         itemTitle: productOptionTitle,
-        label: t(columnLabel(key)),
+        label: t(ledgerColumnLabel(key, config.table)),
         placeholder: t('typeProductName'),
         returnObject: true,
         clearable: true,
@@ -2241,7 +3062,7 @@ function renderRecordFormField(
         },
         items: inventoryOptions,
         itemTitle: inventoryOptionTitle,
-        label: t(columnLabel(key)),
+        label: t(ledgerColumnLabel(key, config.table)),
         placeholder: t('selectInventoryProduct'),
         returnObject: true,
         clearable: true,
@@ -2256,7 +3077,7 @@ function renderRecordFormField(
         ...base,
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
-        label: t(columnLabel(key)),
+        label: t(ledgerColumnLabel(key, config.table)),
         rows: key === 'note' ? 3 : 2,
         autoGrow: true,
       }),
@@ -2270,10 +3091,26 @@ function renderRecordFormField(
         modelValue: normalizeDateValue(form[key]),
         'onUpdate:modelValue': (v: any) => {
           form[key] = normalizeDateValue(v)
-          if ('month_label' in form) form.month_label = monthFromDate(v)
         },
-        label: t(columnLabel(key)),
+        label: t(ledgerColumnLabel(key, config.table)),
         type: 'date',
+      }),
+    ])
+  }
+
+  const isAutoCalcAmount = (key === 'amount_in' && config.table === 'customer')
+    || (key === 'amount' && (config.table === 'stockIn' || config.table === 'stockOut'))
+  if (isAutoCalcAmount) {
+    const calcValue = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: calcValue,
+        label: t(ledgerColumnLabel(key, config.table)),
+        type: 'number',
+        readonly: true,
+        hint: t('amountAutoCalc'),
+        persistentHint: true,
       }),
     ])
   }
@@ -2286,7 +3123,7 @@ function renderRecordFormField(
         form[key] = numericField(key) ? Number(v || 0) : v
         autoFillAmountFields(form, key)
       },
-      label: t(columnLabel(key)),
+      label: t(ledgerColumnLabel(key, config.table)),
       type: numericField(key) ? 'number' : 'text',
       readonly: key === 'month_label',
       ...(numericField(key) ? { step: 'any' } : {}),
@@ -2297,6 +3134,7 @@ function renderRecordFormField(
 function RecordDialogShell(props: {
   show: boolean
   maxWidth?: number
+  zIndex?: number
   title: string
   subtitle?: string
   onClose: () => void
@@ -2311,6 +3149,8 @@ function RecordDialogShell(props: {
     'onUpdate:modelValue': (v: boolean) => { if (!v) props.onClose() },
     maxWidth: props.maxWidth || 720,
     scrollable: true,
+    zIndex: props.zIndex || 2400,
+    class: props.zIndex && props.zIndex > 2500 ? 'record-dialog-overlay--elevated' : undefined,
   }, () => h(VCard, { class: 'record-dialog' }, [
     h('div', { class: 'record-dialog__header' }, [
       h('div', [

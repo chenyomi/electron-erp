@@ -1,7 +1,10 @@
 import { ipcMain, dialog } from 'electron'
 import { getDb } from '../db'
 import { buildCustomerDescription } from '../../common/customer-ledger'
+import { isCustomerSummaryRowCells, isLikelyAmountNotDate, parsePlainAmount } from '../../common/customer-anomaly'
 import { parseLedgerDate } from '../../common/ledger-date'
+import { parseOpeningBalanceFromRows, recalculateCustomerBalances, setCustomerProfile } from './customer-profile'
+import { repairCustomerAnomalies } from './customer-anomaly'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as XLSX from 'xlsx'
@@ -259,6 +262,39 @@ function dateKey(date: string, monthLabel = ''): number {
   return year * 10000 + month * 100 + day
 }
 
+function resolveImportedPayment(
+  row: any[],
+  payDateCol: number,
+  payAmountCol: number,
+  payNoteCol: number,
+): { date: string; amountOut: number; note: string } | null {
+  if (payAmountCol < 0 && payDateCol < 0) return null
+
+  const dateRaw = payDateCol >= 0 ? row[payDateCol] : ''
+  const noteRaw = payNoteCol >= 0 ? row[payNoteCol] : ''
+  let payDate = payDateCol >= 0 ? dateVal(dateRaw) : ''
+  let payAmount = payAmountCol >= 0 ? numVal(row[payAmountCol]) : 0
+  let payNote = payNoteCol >= 0 ? strVal(noteRaw) : ''
+
+  const dateText = strVal(dateRaw)
+  const noteText = strVal(noteRaw)
+
+  const dateLooksLikeAmount = isLikelyAmountNotDate(payDate) || isLikelyAmountNotDate(dateText)
+  const noteLooksLikeAmount = isLikelyAmountNotDate(noteText)
+  if (dateLooksLikeAmount || noteLooksLikeAmount) {
+    const inferred = Math.max(parsePlainAmount(dateText), parsePlainAmount(noteText), 0)
+    if (inferred >= 100 && (inferred > payAmount || payAmount < 100)) payAmount = inferred
+    payDate = ''
+    if (!noteText || noteText === dateText || noteLooksLikeAmount) payNote = ''
+  } else if (payAmount > 0 && noteLooksLikeAmount && parsePlainAmount(noteText) > payAmount) {
+    payAmount = parsePlainAmount(noteText)
+    payNote = ''
+  }
+
+  if (payAmount <= 0) return null
+  return { date: payDate, amountOut: payAmount, note: payNote }
+}
+
 function importMainSheet(db: any, rows: any[][], imported: any, imagesBySheetRow: Map<string, StoredExcelImage[]>): void {
   // 帐本: A=日期 B=收入 C=摘要 D=支出 E=经办人 F=余额 G=备注
   //       H=日期(公账) I=摘要 J=进出金额 K=付出 L=余额 M=备注
@@ -414,6 +450,11 @@ function importCustomerSheet(
   const headerIndex = rows.findIndex(row => row.some(cell => strVal(cell).includes('发货日期')))
   if (headerIndex === -1) return
 
+  const openingBalance = parseOpeningBalanceFromRows(rows, strVal, numVal)
+  if (openingBalance) {
+    setCustomerProfile(db, { customer_name: sheetName, opening_balance: openingBalance, note: '' })
+  }
+
   const header = rows[headerIndex].map(strVal)
   const col = (label: string): number => header.findIndex(cell => cell.includes(label))
   const dateCol = col('发货日期')
@@ -445,11 +486,11 @@ function importCustomerSheet(
   }> = []
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i]
+    if (isCustomerSummaryRowCells(row)) continue
     const excelRow = i + 1
     const date = dateVal(row[dateCol])
     const amount = numVal(row[amountCol])
-    const payDate = payDateCol >= 0 ? dateVal(row[payDateCol]) : ''
-    const payAmount = payAmountCol >= 0 ? numVal(row[payAmountCol]) : 0
+    const payment = resolveImportedPayment(row, payDateCol, payAmountCol, payNoteCol)
 
     if (date && amount > 0) {
       const contract_no = strVal(row[contractCol])
@@ -462,9 +503,9 @@ function importCustomerSheet(
       events.push({ date, contract_no, product_name, spec, unit, quantity, unit_price, description, amountIn: amount, amountOut: 0, note: noteCol >= 0 ? strVal(row[noteCol]) : '', excelRow })
     }
 
-    if (payDate && payAmount > 0) {
+    if (payment) {
       events.push({
-        date: payDate,
+        date: payment.date,
         contract_no: '',
         product_name: '付款',
         spec: '',
@@ -473,15 +514,15 @@ function importCustomerSheet(
         unit_price: 0,
         description: '付款',
         amountIn: 0,
-        amountOut: payAmount,
-        note: payNoteCol >= 0 ? strVal(row[payNoteCol]) : '',
+        amountOut: payment.amountOut,
+        note: payment.note,
         excelRow,
       })
     }
   }
 
   const batch: any[] = []
-  let balance = 0
+  let balance = openingBalance
   events.sort((a, b) => dateKey(a.date) - dateKey(b.date))
   for (const event of events) {
     balance += event.amountIn - event.amountOut
@@ -506,4 +547,6 @@ function importCustomerSheet(
     })
   }
   insertMany(batch)
+  repairCustomerAnomalies(db, sheetName)
+  recalculateCustomerBalances(db, sheetName)
 }

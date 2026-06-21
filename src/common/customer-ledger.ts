@@ -21,6 +21,37 @@ export function isCustomerPaymentDescription(description: string): boolean {
   return String(description || '').trim() === '付款'
 }
 
+export function isCustomerPaymentRecord(row: Record<string, any>): boolean {
+  if (isCustomerPaymentDescription(String(row.description || ''))) return true
+  if (String(row.product_name || '').trim() === '付款') return true
+  if (
+    Number(row.amount_out || 0) > 0
+    && !Number(row.amount_in || 0)
+    && !String(row.contract_no || '').trim()
+    && !Number(row.quantity || 0)
+    && !String(row.product_name || '').trim()
+  ) {
+    return true
+  }
+  return false
+}
+
+/** SQL fragment: 客户收款/付款行（与 Excel「付款」行一致） */
+export function sqlCustomerPaymentWhere(alias = ''): string {
+  const p = alias ? `${alias}.` : ''
+  return `(
+    TRIM(COALESCE(${p}description, '')) = '付款'
+    OR TRIM(COALESCE(${p}product_name, '')) = '付款'
+    OR (
+      COALESCE(${p}amount_out, 0) > 0
+      AND COALESCE(${p}amount_in, 0) = 0
+      AND TRIM(COALESCE(${p}contract_no, '')) = ''
+      AND COALESCE(${p}quantity, 0) = 0
+      AND TRIM(COALESCE(${p}product_name, '')) = ''
+    )
+  )`
+}
+
 export function parseCustomerDescription(description: string): Required<Pick<CustomerLedgerFields, 'description' | 'contract_no' | 'product_name' | 'spec' | 'unit' | 'quantity' | 'unit_price'>> {
   const raw = String(description || '').trim()
   if (!raw || isCustomerPaymentDescription(raw)) {

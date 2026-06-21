@@ -1,6 +1,15 @@
 import { dialog, ipcMain } from 'electron'
 import { getDataDir, getDb } from '../db'
-import { buildCustomerDescription, enrichCustomerRow } from '../../common/customer-ledger'
+import { buildCustomerDescription, enrichCustomerRow, sqlCustomerPaymentWhere } from '../../common/customer-ledger'
+import {
+  customerNameExists,
+  getCustomerProfile,
+  listAllCustomerNames,
+  recalculateCustomerBalances,
+  setCustomerProfile,
+} from './customer-profile'
+import { issueLabel as getCustomerIssueLabel } from '../../common/customer-anomaly'
+import { repairCustomerAnomalies, scanCustomerAnomalies } from './customer-anomaly'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -9,17 +18,38 @@ import sharp from 'sharp'
 export function registerCustomerHandlers(): void {
   // 所有客户名
   ipcMain.handle('customer:names', () => {
+    return listAllCustomerNames(getDb()).map(customer_name => ({ customer_name }))
+  })
+
+  ipcMain.handle('customer:create', (_e, profile: { customer_name: string; opening_balance?: number; note?: string }) => {
+    const name = String(profile?.customer_name || '').trim()
+    if (!name) throw new Error('请填写客户名称')
     const db = getDb()
-    return db.prepare(`SELECT DISTINCT customer_name FROM customer_ledger WHERE deleted_at IS NULL ORDER BY customer_name`).all()
+    if (customerNameExists(db, name)) {
+      throw new Error(`客户「${name}」已存在，请直接打开台账`)
+    }
+    const saved = setCustomerProfile(db, {
+      customer_name: name,
+      opening_balance: Number(profile.opening_balance || 0),
+      note: String(profile.note || ''),
+    })
+    logOperation('customer_profiles', 0, 'INSERT', null, saved as object)
+    return saved
   })
 
   ipcMain.handle('customer:list', (_e, params = {}) => {
-    const { customerName, page = 1, pageSize = 100, keyword = '' } = params as any
+    const { customerName, page = 1, pageSize = 100, keyword = '', entryType = 'all' } = params as any
     const db = getDb()
     const offset = (page - 1) * pageSize
     const like = `%${keyword}%`
     const filters = normalizeLedgerFilters(params, 'customerName')
     const dateWhere = buildDateFilterClause(filters)
+    const paymentWhere = sqlCustomerPaymentWhere('customer_ledger')
+    const entryWhere = entryType === 'payment'
+      ? `AND ${paymentWhere}`
+      : entryType === 'sale'
+        ? `AND NOT ${paymentWhere}`
+        : ''
     const rows = db.prepare(`
       SELECT customer_ledger.*,
         (SELECT COUNT(*) FROM attachments
@@ -35,6 +65,7 @@ export function registerCustomerHandlers(): void {
         AND (description LIKE ? OR note LIKE ? OR date LIKE ?
           OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
         ${dateWhere.sql}
+        ${entryWhere}
       ORDER BY customer_name ASC, ${buildDateOrderBy('customer_ledger.date')}
       LIMIT ? OFFSET ?
     `).all(customerName || '', customerName || '', like, like, like, like, like, like, ...dateWhere.params, pageSize, offset) as any[]
@@ -45,8 +76,35 @@ export function registerCustomerHandlers(): void {
         AND (description LIKE ? OR note LIKE ? OR date LIKE ?
           OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
         ${dateWhere.sql}
+        ${entryWhere}
     `).get(customerName || '', customerName || '', like, like, like, like, like, like, ...dateWhere.params) as { total: number }
     return { rows: rows.map(row => ({ ...enrichCustomerRow(row), attachment_thumb: imageDataUrl(row.attachment_thumb_path) })), total }
+  })
+
+  ipcMain.handle('customer:payment-audit', (_e, customerName = '') => {
+    const db = getDb()
+    const paymentWhere = sqlCustomerPaymentWhere()
+    const nameFilter = customerName ? 'AND customer_name = ?' : ''
+    const params = customerName ? [customerName] : []
+    const row = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN TRIM(COALESCE(date, '')) = '' THEN 1 ELSE 0 END) AS missingDate,
+        SUM(CASE WHEN COALESCE(amount_out, 0) <= 0 THEN 1 ELSE 0 END) AS missingAmount
+      FROM customer_ledger
+      WHERE deleted_at IS NULL ${nameFilter} AND ${paymentWhere}
+    `).get(...params) as { total: number; missingDate: number; missingAmount: number }
+
+    const anomalies = scanCustomerAnomalies(db, customerName || '')
+      .filter(item => item.issue.startsWith('payment_') || item.issue === 'balance_mismatch')
+
+    return {
+      total: Number(row?.total || 0),
+      missingDate: Number(row?.missingDate || 0),
+      missingAmount: Number(row?.missingAmount || 0),
+      anomalyCount: anomalies.length,
+      autoFixableCount: anomalies.filter(item => item.autoFixable).length,
+    }
   })
 
   ipcMain.handle('customer:summary', (_e, params: any = {}) => {
@@ -54,28 +112,107 @@ export function registerCustomerHandlers(): void {
     const customerName = filters.customerName || ''
     const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
-    if (customerName) {
-      return db.prepare(`
-        SELECT customer_name,
-          SUM(amount_in) as totalIn, SUM(amount_out) as totalOut
-        FROM customer_ledger
-        WHERE deleted_at IS NULL AND customer_name = ? ${dateWhere.sql}
-        GROUP BY customer_name
-      `).get(customerName, ...dateWhere.params)
+
+    if (!customerName) {
+      const rows = db.prepare(`
+        WITH names AS (
+          SELECT customer_name FROM customer_profiles
+          UNION
+          SELECT DISTINCT customer_name FROM customer_ledger WHERE deleted_at IS NULL
+        ),
+        totals AS (
+          SELECT customer_name,
+            COALESCE(SUM(amount_in), 0) AS totalIn,
+            COALESCE(SUM(amount_out), 0) AS totalOut
+          FROM customer_ledger
+          WHERE deleted_at IS NULL ${dateWhere.sql}
+          GROUP BY customer_name
+        )
+        SELECT n.customer_name,
+          COALESCE(t.totalIn, 0) AS totalIn,
+          COALESCE(t.totalOut, 0) AS totalOut
+        FROM names n
+        LEFT JOIN totals t ON t.customer_name = n.customer_name
+        ORDER BY n.customer_name
+      `).all(...dateWhere.params) as Array<{ customer_name: string; totalIn: number; totalOut: number }>
+
+      return rows.map((row) => {
+        const openingBalance = Number(getCustomerProfile(db, row.customer_name).opening_balance || 0)
+        const currentBalance = Math.round((openingBalance + Number(row.totalIn || 0) - Number(row.totalOut || 0)) * 100) / 100
+        return {
+          customer_name: row.customer_name,
+          openingBalance,
+          totalIn: Number(row.totalIn || 0),
+          totalOut: Number(row.totalOut || 0),
+          currentBalance,
+        }
+      })
     }
-    return db.prepare(`
-      SELECT customer_name,
-        SUM(amount_in) as totalIn, SUM(amount_out) as totalOut
+
+    const allTime = db.prepare(`
+      SELECT
+        COALESCE(SUM(amount_in), 0) AS totalIn,
+        COALESCE(SUM(amount_out), 0) AS totalOut
       FROM customer_ledger
-      WHERE deleted_at IS NULL ${dateWhere.sql}
-      GROUP BY customer_name
-      ORDER BY customer_name
-    `).all(...dateWhere.params)
+      WHERE deleted_at IS NULL AND customer_name = ?
+    `).get(customerName) as { totalIn: number; totalOut: number }
+
+    const openingBalance = Number(getCustomerProfile(db, customerName).opening_balance || 0)
+    const totalIn = Number(allTime.totalIn || 0)
+    const totalOut = Number(allTime.totalOut || 0)
+    const currentBalance = Math.round((openingBalance + totalIn - totalOut) * 100) / 100
+
+    return {
+      customer_name: customerName,
+      openingBalance,
+      totalIn,
+      totalOut,
+      currentBalance,
+    }
+  })
+
+  ipcMain.handle('customer:profile', (_e, customerName: string) => {
+    return getCustomerProfile(getDb(), customerName || '')
+  })
+
+  ipcMain.handle('customer:set-profile', (_e, profile: { customer_name: string; opening_balance?: number; note?: string }) => {
+    const db = getDb()
+    const saved = setCustomerProfile(db, {
+      customer_name: profile.customer_name,
+      opening_balance: Number(profile.opening_balance || 0),
+      note: String(profile.note || ''),
+    })
+    const currentBalance = recalculateCustomerBalances(db, profile.customer_name)
+    return { ...saved, currentBalance }
+  })
+
+  ipcMain.handle('customer:anomalies', (_e, customerName = '') => {
+    const items = scanCustomerAnomalies(getDb(), customerName || '')
+    return items.map(item => ({ ...item, issueLabel: getCustomerIssueLabel(item.issue) }))
+  })
+
+  ipcMain.handle('customer:repair', (_e, customerName = '') => {
+    return repairCustomerAnomalies(getDb(), customerName || '')
   })
 
   ipcMain.handle('customer:add', (_e, row) => {
     const db = getDb()
-    const payload = { ...row, description: buildCustomerDescription(row) }
+    const payload = {
+      customer_name: String(row.customer_name || ''),
+      date: String(row.date || ''),
+      description: buildCustomerDescription(row),
+      contract_no: String(row.contract_no || ''),
+      product_name: String(row.product_name || ''),
+      spec: String(row.spec || ''),
+      unit: String(row.unit || ''),
+      quantity: Number(row.quantity || 0),
+      unit_price: Number(row.unit_price || 0),
+      amount_in: Number(row.amount_in || 0),
+      amount_out: Number(row.amount_out || 0),
+      balance: Number(row.balance || 0),
+      note: String(row.note || ''),
+      month_label: String(row.month_label || ''),
+    }
     const r = db.prepare(`
       INSERT INTO customer_ledger (
         customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
@@ -86,6 +223,7 @@ export function registerCustomerHandlers(): void {
         @amount_in, @amount_out, @balance, @note, @month_label
       )
     `).run(payload)
+    recalculateCustomerBalances(db, payload.customer_name)
     const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(r.lastInsertRowid)
     logOperation('customer_ledger', r.lastInsertRowid as number, 'INSERT', null, newRow as object)
     return newRow
@@ -103,12 +241,19 @@ export function registerCustomerHandlers(): void {
         balance=@balance, note=@note, month_label=@month_label,
         updated_at=datetime('now','localtime') WHERE id=@id
     `).run(payload)
+    recalculateCustomerBalances(db, payload.customer_name)
     const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id)
     logOperation('customer_ledger', id, 'UPDATE', old as object, newRow as object)
     return newRow
   })
 
-  ipcMain.handle('customer:delete', (_e, id) => { softDelete('customer_ledger', id); return { ok: true } })
+  ipcMain.handle('customer:delete', (_e, id) => {
+    const db = getDb()
+    const row = db.prepare('SELECT customer_name FROM customer_ledger WHERE id = ?').get(id) as { customer_name?: string } | undefined
+    softDelete('customer_ledger', id)
+    if (row?.customer_name) recalculateCustomerBalances(db, row.customer_name)
+    return { ok: true }
+  })
   ipcMain.handle('customer:trash', () => {
     return getDb().prepare(`SELECT * FROM customer_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
   })

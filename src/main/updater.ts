@@ -110,9 +110,13 @@ export function initAutoUpdater(): void {
   })
 
   autoUpdater.on('error', (error) => {
+    let message = error?.message || '检查更新失败'
+    if (/404|Not Found/i.test(message)) {
+      message = '更新包下载失败（404）：GitHub Release 上的安装包文件名与更新清单不一致，请安装新版本或联系管理员重新发布。'
+    }
     setState({
       status: 'error',
-      error: error?.message || '检查更新失败',
+      error: message,
     })
   })
 

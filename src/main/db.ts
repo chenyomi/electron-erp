@@ -2,8 +2,11 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
+import { buildCustomerRowRepair, isLikelyAmountNotDate } from '../common/customer-anomaly'
 import { parseCustomerDescription } from '../common/customer-ledger'
 import { parseLedgerDate } from '../common/ledger-date'
+import { ensureCustomerProfilesTable, recalculateCustomerBalances } from './ipc/customer-profile'
+import { repairCustomerAnomalies } from './ipc/customer-anomaly'
 
 let db: Database.Database | undefined
 
@@ -53,6 +56,79 @@ function migrateSchema(): void {
   addColumnIfMissing('stock_out_ledger', "doc_no TEXT DEFAULT ''")
   migrateCustomerLedgerFields()
   migrateLedgerDates()
+  migrateCustomerPaymentMisalignment()
+  repairCustomerAnomalies(db!)
+  recalculateAllCustomerBalances()
+  ensureCustomerProfilesTable(db!)
+}
+
+function recalculateAllCustomerBalances(): void {
+  const names = db!.prepare(`
+    SELECT customer_name FROM customer_profiles
+    UNION
+    SELECT DISTINCT customer_name FROM customer_ledger WHERE deleted_at IS NULL
+  `).all() as Array<{ customer_name: string }>
+  for (const { customer_name } of names) {
+    if (customer_name) recalculateCustomerBalances(db!, customer_name)
+  }
+}
+
+/** 付款行把金额填进日期/备注列（如 40455），启动时自动纠正收款金额并重算余额 */
+function migrateCustomerPaymentMisalignment(): void {
+  const rows = db!.prepare(`
+    SELECT *
+    FROM customer_ledger
+    WHERE deleted_at IS NULL
+      AND (TRIM(COALESCE(product_name, '')) = '付款' OR TRIM(COALESCE(description, '')) = '付款')
+      AND (
+        date GLOB '[0-9]*'
+        OR note GLOB '[0-9]*'
+      )
+  `).all() as Array<Record<string, any>>
+
+  const update = db!.prepare(`
+    UPDATE customer_ledger SET
+      date = @date,
+      description = @description,
+      contract_no = @contract_no,
+      product_name = @product_name,
+      spec = @spec,
+      unit = @unit,
+      quantity = @quantity,
+      unit_price = @unit_price,
+      amount_in = @amount_in,
+      amount_out = @amount_out,
+      note = @note,
+      updated_at = datetime('now','localtime')
+    WHERE id = @id
+  `)
+
+  const customers = new Set<string>()
+  for (const row of rows) {
+    if (!isLikelyAmountNotDate(row.date) && !isLikelyAmountNotDate(row.note)) continue
+    const patch = buildCustomerRowRepair(row)
+    if (!patch) continue
+    const next = { ...row, ...patch }
+    update.run({
+      id: row.id,
+      date: next.date ?? row.date ?? '',
+      description: next.description ?? row.description,
+      contract_no: next.contract_no ?? row.contract_no ?? '',
+      product_name: next.product_name ?? row.product_name ?? '',
+      spec: next.spec ?? row.spec ?? '',
+      unit: next.unit ?? row.unit ?? '',
+      quantity: next.quantity ?? row.quantity ?? 0,
+      unit_price: next.unit_price ?? row.unit_price ?? 0,
+      amount_in: next.amount_in ?? row.amount_in ?? 0,
+      amount_out: next.amount_out ?? row.amount_out ?? 0,
+      note: next.note ?? row.note ?? '',
+    })
+    customers.add(row.customer_name)
+  }
+
+  for (const name of customers) {
+    recalculateCustomerBalances(db!, name)
+  }
 }
 
 function migrateLedgerDates(): void {
@@ -302,6 +378,14 @@ function createTables(): void {
       deleted_at    TEXT    DEFAULT NULL,
       created_at    TEXT    DEFAULT (datetime('now','localtime')),
       updated_at    TEXT    DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 客户期初/汇总设置
+    CREATE TABLE IF NOT EXISTS customer_profiles (
+      customer_name   TEXT PRIMARY KEY,
+      opening_balance REAL DEFAULT 0,
+      note            TEXT DEFAULT '',
+      updated_at      TEXT DEFAULT (datetime('now','localtime'))
     );
 
     -- 登录用户

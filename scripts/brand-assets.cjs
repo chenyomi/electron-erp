@@ -159,15 +159,20 @@ function nsisHeaderSvg() {
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
-  ${sharedDefs('head')}
-  <rect width="${w}" height="${h}" fill="url(#headbgGrad)"/>
-  <rect width="${w}" height="${h}" fill="url(#headglowA)"/>
-  ${logoMarkSvg(30, 28, 40, 12, 'head')}
+  <defs>
+    <linearGradient id="headLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6f8cff"/>
+      <stop offset="100%" stop-color="#58c4dc"/>
+    </linearGradient>
+  </defs>
+  <rect width="${w}" height="${h}" fill="#ffffff"/>
+  <rect x="6" y="6" width="${w - 12}" height="${h - 12}" rx="10" fill="#f7faff" stroke="#dbe7ff" stroke-width="1"/>
+  <rect x="16" y="14" width="32" height="32" rx="10" fill="url(#headLogoGrad)"/>
+  <path d="${centerTextPath('东', 32, 30, 15)}" fill="#ffffff"/>
   <text x="58" y="26"
-    font-family="sans-serif" font-size="13" font-weight="700" fill="${BRAND.text}">东昊账务</text>
+    font-family="sans-serif" font-size="13" font-weight="700" fill="#1f2937">东昊账务</text>
   <text x="58" y="42"
-    font-family="sans-serif" font-size="9" fill="${BRAND.muted}">安装向导</text>
-  <rect x="0" y="${h - 2}" width="${w}" height="2" fill="url(#headlogoGrad)" opacity="0.7"/>
+    font-family="sans-serif" font-size="9" fill="#7b8794">安装向导</text>
 </svg>`
 }
 

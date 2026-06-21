@@ -217,6 +217,21 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="confirmDialog.show" max-width="480" persistent>
+      <v-card class="record-dialog confirm-dialog">
+        <div class="record-dialog__header">
+          <div>
+            <h2 class="record-dialog__title">{{ confirmDialog.title }}</h2>
+            <p class="record-dialog__subtitle confirm-dialog__message">{{ confirmDialog.message }}</p>
+          </div>
+        </div>
+        <div class="record-dialog__footer">
+          <v-btn variant="text" @click="resolveConfirm(false)">{{ confirmDialog.cancelLabel }}</v-btn>
+          <v-btn :color="confirmDialog.confirmColor" @click="resolveConfirm(true)">{{ confirmDialog.confirmLabel }}</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" timeout="2600">{{ snackbar.text }}</v-snackbar>
   </v-app>
 </template>
@@ -278,6 +293,20 @@ const messages = {
     confirmNewPassword: '确认新密码',
     save: '保存',
     cancel: '取消',
+    confirm: '确定',
+    confirmTitle: '请确认',
+    confirmDeleteTitle: '移入回收站',
+    confirmDeleteMessage: '确定要将这条记录移入回收站吗？可在回收站中恢复。',
+    confirmRestoreTitle: '恢复记录',
+    confirmRestoreMessage: '确定要恢复这条记录吗？',
+    confirmBackupRestoreTitle: '恢复备份',
+    confirmBackupRestoreMessage: '将用备份覆盖当前全部账本数据，此操作不可撤销。建议先备份当前数据，是否继续？',
+    confirmBackupRestoreByName: '确定要用备份「{name}」覆盖当前全部账本数据吗？此操作不可撤销。',
+    confirmImportLedger: '导入历史账本会写入大量数据，重复导入可能产生重复记录。是否继续？',
+    confirmImportStockIn: '确定要导入入库 Excel 吗？重复记录会自动跳过。',
+    confirmClearAiSession: '确定清空当前 AI 会话内容吗？',
+    confirmDeleteAiSession: '确定删除这条 AI 会话记录吗？',
+    confirmLogout: '确定要退出登录吗？',
     close: '关闭',
     navFinance: '账务管理',
     navTools: '工具',
@@ -522,6 +551,20 @@ const messages = {
     confirmNewPassword: 'Confirm Password',
     save: 'Save',
     cancel: 'Cancel',
+    confirm: 'Confirm',
+    confirmTitle: 'Please Confirm',
+    confirmDeleteTitle: 'Move to Trash',
+    confirmDeleteMessage: 'Move this record to trash? You can restore it later from Trash.',
+    confirmRestoreTitle: 'Restore Record',
+    confirmRestoreMessage: 'Restore this record from trash?',
+    confirmBackupRestoreTitle: 'Restore Backup',
+    confirmBackupRestoreMessage: 'This will overwrite all current ledger data and cannot be undone. Back up first if needed. Continue?',
+    confirmBackupRestoreByName: 'Restore backup "{name}" and overwrite all current ledger data? This cannot be undone.',
+    confirmImportLedger: 'Importing the legacy ledger writes a large amount of data. Duplicate imports may create duplicates. Continue?',
+    confirmImportStockIn: 'Import stock-in records from Excel? Duplicate rows will be skipped.',
+    confirmClearAiSession: 'Clear the current AI conversation?',
+    confirmDeleteAiSession: 'Delete this AI conversation?',
+    confirmLogout: 'Log out now?',
     close: 'Close',
     navFinance: 'Finance',
     navTools: 'Tools',
@@ -771,6 +814,15 @@ const passwordLoading = ref(false)
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const aiFloatingOpen = ref(false)
 const snackbar = reactive({ show: false, text: '', color: 'success' })
+const confirmDialog = reactive({
+  show: false,
+  title: '',
+  message: '',
+  confirmLabel: '确定',
+  cancelLabel: '取消',
+  confirmColor: 'primary',
+})
+let confirmResolver: ((value: boolean) => void) | null = null
 const appVersion = ref('')
 let echartsModule: EChartsModule | null = null
 
@@ -823,6 +875,32 @@ function notify(text: string, color = 'success') {
   snackbar.show = true
 }
 
+type ConfirmOptions = {
+  title?: string
+  message: string
+  confirmLabel?: string
+  cancelLabel?: string
+  confirmColor?: string
+}
+
+function askConfirm(options: ConfirmOptions): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirmResolver = resolve
+    confirmDialog.title = options.title || t('confirmTitle')
+    confirmDialog.message = options.message
+    confirmDialog.confirmLabel = options.confirmLabel || t('confirm')
+    confirmDialog.cancelLabel = options.cancelLabel || t('cancel')
+    confirmDialog.confirmColor = options.confirmColor || 'primary'
+    confirmDialog.show = true
+  })
+}
+
+function resolveConfirm(confirmed: boolean) {
+  confirmDialog.show = false
+  confirmResolver?.(confirmed)
+  confirmResolver = null
+}
+
 function toggleTheme() {
   themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark'
 }
@@ -850,6 +928,12 @@ async function handleLogin() {
 }
 
 async function handleLogout() {
+  const ok = await askConfirm({
+    message: t('confirmLogout'),
+    confirmColor: 'error',
+    confirmLabel: t('logout'),
+  })
+  if (!ok) return
   await authAPI.logout()
   currentUser.value = null
   page.value = 'dashboard'
@@ -1416,7 +1500,18 @@ const LedgerPage = defineComponent({
         emit('notify', error?.message || '保存失败', 'error')
       }
     }
-    const remove = async (id: number) => { await config.value.api.delete(id); emit('notify', '已移入回收站'); load() }
+    const remove = async (id: number) => {
+      const ok = await askConfirm({
+        title: t('confirmDeleteTitle'),
+        message: t('confirmDeleteMessage'),
+        confirmColor: 'error',
+        confirmLabel: t('delete'),
+      })
+      if (!ok) return
+      await config.value.api.delete(id)
+      emit('notify', '已移入回收站')
+      load()
+    }
     const loadAttachments = async (row: any) => {
       if (!row?.id) return
       attachmentLoading.value = true
@@ -2135,9 +2230,50 @@ const ImportPage = defineComponent({
     const stockError = ref('')
     const backups = ref<any[]>([])
     const loadInfo = async () => { backups.value = await systemAPI.backupsList() }
-    const importExcel = async () => { const file = await importAPI.pickFile(); if (!file) return; loading.value = true; error.value = ''; result.value = null; const r = await importAPI.excel(file); loading.value = false; if (r.ok) { result.value = r.imported; emit('notify', props.t('importDone')) } else { error.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
-    const importStockIn = async () => { const file = await importAPI.pickFile(); if (!file) return; stockLoading.value = true; stockError.value = ''; stockResult.value = null; const r = await importAPI.stockIn(file); stockLoading.value = false; if (r.ok) { stockResult.value = r.imported; emit('notify', props.t('importStockInDone')) } else { stockError.value = r.error || props.t('importFailed'); emit('notify', props.t('importFailed'), 'error') } }
+    const importExcel = async () => {
+      const ok = await askConfirm({ message: t('confirmImportLedger'), confirmColor: 'warning' })
+      if (!ok) return
+      const file = await importAPI.pickFile()
+      if (!file) return
+      loading.value = true
+      error.value = ''
+      result.value = null
+      const r = await importAPI.excel(file)
+      loading.value = false
+      if (r.ok) {
+        result.value = r.imported
+        emit('notify', props.t('importDone'))
+      } else {
+        error.value = r.error || props.t('importFailed')
+        emit('notify', props.t('importFailed'), 'error')
+      }
+    }
+    const importStockIn = async () => {
+      const ok = await askConfirm({ message: t('confirmImportStockIn'), confirmColor: 'warning' })
+      if (!ok) return
+      const file = await importAPI.pickFile()
+      if (!file) return
+      stockLoading.value = true
+      stockError.value = ''
+      stockResult.value = null
+      const r = await importAPI.stockIn(file)
+      stockLoading.value = false
+      if (r.ok) {
+        stockResult.value = r.imported
+        emit('notify', props.t('importStockInDone'))
+      } else {
+        stockError.value = r.error || props.t('importFailed')
+        emit('notify', props.t('importFailed'), 'error')
+      }
+    }
     const restoreFromPackage = async () => {
+      const ok = await askConfirm({
+        title: t('confirmBackupRestoreTitle'),
+        message: t('confirmBackupRestoreMessage'),
+        confirmColor: 'error',
+        confirmLabel: t('restoreThisBackup'),
+      })
+      if (!ok) return
       const file = await systemAPI.pickBackupPackage()
       if (!file) return
       restoring.value = true
@@ -2150,6 +2286,13 @@ const ImportPage = defineComponent({
       }
     }
     const restoreFromFolder = async () => {
+      const ok = await askConfirm({
+        title: t('confirmBackupRestoreTitle'),
+        message: t('confirmBackupRestoreMessage'),
+        confirmColor: 'error',
+        confirmLabel: t('restoreThisBackup'),
+      })
+      if (!ok) return
       const folder = await systemAPI.pickBackup()
       if (!folder) return
       restoring.value = true
@@ -2162,6 +2305,13 @@ const ImportPage = defineComponent({
       }
     }
     const restoreByName = async (name: string) => {
+      const ok = await askConfirm({
+        title: t('confirmBackupRestoreTitle'),
+        message: t('confirmBackupRestoreByName', { name }),
+        confirmColor: 'error',
+        confirmLabel: t('restoreThisBackup'),
+      })
+      if (!ok) return
       restoring.value = true
       try {
         const r = await systemAPI.restoreBackupByName(name)
@@ -2350,7 +2500,18 @@ const TrashPage = defineComponent({
       deletedEndDate.value = ''
       load()
     }
-    const restore = async (table: string, id: number) => { const apis: any = { cash_ledger: cashAPI, bank_ledger: bankAPI, acceptance_bills: billsAPI, customer_ledger: customerAPI, stock_in_ledger: stockInAPI, stock_out_ledger: stockOutAPI }; await apis[table]?.restore(id); emit('notify', props.t('restored')); load() }
+    const restore = async (table: string, id: number) => {
+      const ok = await askConfirm({
+        title: t('confirmRestoreTitle'),
+        message: t('confirmRestoreMessage'),
+        confirmLabel: t('restore'),
+      })
+      if (!ok) return
+      const apis: any = { cash_ledger: cashAPI, bank_ledger: bankAPI, acceptance_bills: billsAPI, customer_ledger: customerAPI, stock_in_ledger: stockInAPI, stock_out_ledger: stockOutAPI }
+      await apis[table]?.restore(id)
+      emit('notify', props.t('restored'))
+      load()
+    }
     watch([keyword, startDate, endDate, deletedStartDate, deletedEndDate], load)
     onMounted(load)
     const tabs = [{ key: 'cash_ledger', label: 'cash' }, { key: 'bank_ledger', label: 'bank' }, { key: 'acceptance_bills', label: 'bills' }, { key: 'customer_ledger', label: 'customer' }, { key: 'stock_in_ledger', label: 'stockIn' }, { key: 'stock_out_ledger', label: 'stockOut' }]
@@ -2659,16 +2820,24 @@ const AiAssistant = defineComponent({
       scrollChatToBottom()
     }
 
-    const clearCurrentSession = () => {
+    const clearCurrentSession = async () => {
       if (aiBusy.value) return
+      const ok = await askConfirm({ message: t('confirmClearAiSession'), confirmColor: 'warning' })
+      if (!ok) return
       messages.value = [{ ...welcomeMessage }]
       saveActiveSession()
       emit('notify', '当前 AI 会话已清空')
       scrollChatToBottom()
     }
 
-    const deleteSession = (id: string) => {
+    const deleteSession = async (id: string) => {
       if (aiBusy.value) return
+      const ok = await askConfirm({
+        message: t('confirmDeleteAiSession'),
+        confirmColor: 'error',
+        confirmLabel: t('delete'),
+      })
+      if (!ok) return
       sessions.value = sessions.value.filter((session) => session.id !== id)
       if (activeSessionId.value === id) {
         if (sessions.value[0]) {

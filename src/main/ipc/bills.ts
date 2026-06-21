@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
+import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 
 export function registerBillsHandlers(): void {
@@ -16,7 +16,7 @@ export function registerBillsHandlers(): void {
       FROM acceptance_bills
       WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
       ${dateWhere.sql}
-      ORDER BY date ASC, id ASC LIMIT ? OFFSET ?
+      ORDER BY ${buildDateOrderBy('acceptance_bills.date')} LIMIT ? OFFSET ?
     `).all(like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM acceptance_bills

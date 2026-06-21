@@ -148,22 +148,20 @@ body {
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
-  margin-right: 3px;
-  padding: 0 5px 74px 0;
+  padding: 0 2px 0 0;
   -webkit-app-region: no-drag;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 .nav-scroll::-webkit-scrollbar {
-  width: 4px;
+  display: none;
 }
 
-.nav-scroll::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: transparent;
-}
-
-.nav-scroll:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--app-muted) 24%, transparent);
+.nav-drawer-footer {
+  flex: 0 0 68px;
+  min-height: 68px;
+  -webkit-app-region: no-drag;
 }
 
 .nav-drawer button,
@@ -248,7 +246,7 @@ body {
 
 .nav-section-label {
   flex: 0 0 auto;
-  padding: 14px 12px 6px;
+  padding: 10px 12px 4px;
   color: var(--app-muted-soft);
   font-size: 11px;
   font-weight: 800;
@@ -263,8 +261,8 @@ body {
 }
 
 .nav-item-v {
-  margin: 5px 0;
-  min-height: 62px !important;
+  margin: 3px 0;
+  min-height: 52px !important;
   padding-inline: 10px !important;
   border-radius: 18px !important;
   color: var(--app-muted) !important;
@@ -380,7 +378,12 @@ body {
   min-width: 28px !important;
   width: 28px !important;
   padding-inline: 0 !important;
-  font-size: 14px !important;
+}
+
+.logout-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .top-user-card .user-row {

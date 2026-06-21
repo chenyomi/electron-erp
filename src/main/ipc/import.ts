@@ -1,5 +1,7 @@
 import { ipcMain, dialog } from 'electron'
 import { getDb } from '../db'
+import { buildCustomerDescription } from '../../common/customer-ledger'
+import { parseLedgerDate } from '../../common/ledger-date'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as XLSX from 'xlsx'
@@ -232,27 +234,29 @@ function strVal(v: any): string {
   return String(v ?? '').trim()
 }
 
-function dateVal(v: any): string {
-  const value = strVal(v)
-  if (!value) return ''
-  if (value.includes('合计') || value.includes('总')) return ''
-
-  const normalized = value.replace(/\//g, '.').replace(/-/g, '.')
-  const parts = normalized.split('.').map(p => p.trim()).filter(Boolean)
-  if (parts.length === 3) {
-    let [year, month, day] = parts
-    if (year.length !== 4 && day.length >= 2) {
-      ;[year, month, day] = [day, year, month]
-    }
-    if (year.length === 2) year = `20${year}`
-    return `${year}.${month}.${day}`
+function dateVal(v: any, monthLabel = ''): string {
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    const y = v.getFullYear()
+    const m = String(v.getMonth() + 1).padStart(2, '0')
+    const d = String(v.getDate()).padStart(2, '0')
+    return parseLedgerDate(`${y}-${m}-${d}`, { monthLabel })
   }
-  return value
+
+  if (typeof v === 'number' && v > 30000 && v < 60000) {
+    const parsed = XLSX.SSF.parse_date_code(v)
+    if (parsed) {
+      return parseLedgerDate(`${parsed.y}.${parsed.m}.${parsed.d}`, { monthLabel })
+    }
+  }
+
+  return parseLedgerDate(v, { monthLabel })
 }
 
-function dateKey(date: string): number {
-  const [year = '0', month = '0', day = '0'] = date.split('.')
-  return Number(year) * 10000 + Number(month) * 100 + Number(day)
+function dateKey(date: string, monthLabel = ''): number {
+  const iso = parseLedgerDate(date, { monthLabel })
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return 0
+  const [year, month, day] = iso.split('-').map(Number)
+  return year * 10000 + month * 100 + day
 }
 
 function importMainSheet(db: any, rows: any[][], imported: any, imagesBySheetRow: Map<string, StoredExcelImage[]>): void {
@@ -367,8 +371,11 @@ function importCustomerSheet(
   imagesBySheetRow: Map<string, StoredExcelImage[]>
 ): void {
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO customer_ledger (customer_name, date, description, amount_in, amount_out, balance, note, month_label)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO customer_ledger (
+      customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+      amount_in, amount_out, balance, note, month_label
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const findExisting = db.prepare(`
     SELECT id FROM customer_ledger
@@ -422,7 +429,20 @@ function importCustomerSheet(
   const payAmountCol = col('付款金额')
   const payNoteCol = payAmountCol >= 0 ? payAmountCol + 1 : -1
 
-  const events: Array<{ date: string; description: string; amountIn: number; amountOut: number; note: string; excelRow?: number }> = []
+  const events: Array<{
+    date: string
+    contract_no: string
+    product_name: string
+    spec: string
+    unit: string
+    quantity: number
+    unit_price: number
+    description: string
+    amountIn: number
+    amountOut: number
+    note: string
+    excelRow?: number
+  }> = []
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i]
     const excelRow = i + 1
@@ -432,19 +452,31 @@ function importCustomerSheet(
     const payAmount = payAmountCol >= 0 ? numVal(row[payAmountCol]) : 0
 
     if (date && amount > 0) {
-      const details = [
-        strVal(row[contractCol]),
-        strVal(row[productCol]),
-        strVal(row[specCol]),
-        strVal(row[unitCol]),
-        strVal(row[qtyCol]) ? `数量${strVal(row[qtyCol])}` : '',
-        strVal(row[priceCol]) ? `单价${strVal(row[priceCol])}` : ''
-      ].filter(Boolean)
-      events.push({ date, description: details.join(' '), amountIn: amount, amountOut: 0, note: noteCol >= 0 ? strVal(row[noteCol]) : '', excelRow })
+      const contract_no = strVal(row[contractCol])
+      const product_name = strVal(row[productCol])
+      const spec = strVal(row[specCol])
+      const unit = strVal(row[unitCol])
+      const quantity = numVal(row[qtyCol])
+      const unit_price = numVal(row[priceCol])
+      const description = buildCustomerDescription({ contract_no, product_name, spec, unit, quantity, unit_price })
+      events.push({ date, contract_no, product_name, spec, unit, quantity, unit_price, description, amountIn: amount, amountOut: 0, note: noteCol >= 0 ? strVal(row[noteCol]) : '', excelRow })
     }
 
     if (payDate && payAmount > 0) {
-      events.push({ date: payDate, description: '付款', amountIn: 0, amountOut: payAmount, note: payNoteCol >= 0 ? strVal(row[payNoteCol]) : '' })
+      events.push({
+        date: payDate,
+        contract_no: '',
+        product_name: '付款',
+        spec: '',
+        unit: '',
+        quantity: 0,
+        unit_price: 0,
+        description: '付款',
+        amountIn: 0,
+        amountOut: payAmount,
+        note: payNoteCol >= 0 ? strVal(row[payNoteCol]) : '',
+        excelRow,
+      })
     }
   }
 
@@ -453,7 +485,25 @@ function importCustomerSheet(
   events.sort((a, b) => dateKey(a.date) - dateKey(b.date))
   for (const event of events) {
     balance += event.amountIn - event.amountOut
-    batch.push({ values: [sheetName, event.date, event.description, event.amountIn, event.amountOut, balance, event.note, ''], excelRow: event.excelRow })
+    batch.push({
+      values: [
+        sheetName,
+        event.date,
+        event.description,
+        event.contract_no,
+        event.product_name,
+        event.spec,
+        event.unit,
+        event.quantity,
+        event.unit_price,
+        event.amountIn,
+        event.amountOut,
+        balance,
+        event.note,
+        '',
+      ],
+      excelRow: event.excelRow,
+    })
   }
   insertMany(batch)
 }

@@ -87,6 +87,7 @@
             </v-list-item>
           </v-list>
         </div>
+        <div class="nav-drawer-footer" aria-hidden="true" />
       </aside>
 
       <main class="content-shell">
@@ -113,7 +114,11 @@
           <v-btn icon size="small" variant="tonal" :title="t('helpTitle')" @click="helpDialog = true">?</v-btn>
           <v-btn icon size="small" variant="tonal" :title="t('changePassword')" @click="passwordDialog = true">🔒</v-btn>
         </div>
-        <v-btn class="logout-compact" color="error" variant="tonal" size="small" :title="t('logout')" @click="handleLogout">⏻</v-btn>
+        <v-btn class="logout-compact" color="error" variant="tonal" size="small" :title="t('logout')" @click="handleLogout">
+          <svg class="logout-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.59L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+          </svg>
+        </v-btn>
       </v-card>
       <div class="ai-float" :class="{ open: aiFloatingOpen }">
         <v-btn class="ai-float-button" color="primary" :aria-expanded="aiFloatingOpen" @click="aiFloatingOpen = !aiFloatingOpen">
@@ -272,6 +277,8 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { buildCustomerDescription, isCustomerPaymentDescription, parseCustomerDescription } from '../../common/customer-ledger'
+import { parseLedgerDate } from '../../common/ledger-date'
 import {
   VAlert,
   VBtn,
@@ -1088,10 +1095,8 @@ function money(value: any) {
 }
 
 function normalizeDateValue(value: any) {
-  const text = String(value || '').trim().replace(/[/.]/g, '-')
-  const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
-  if (!match) return text
-  return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
+  const parsed = parseLedgerDate(value)
+  return /^\d{4}-\d{2}-\d{2}$/.test(parsed) ? parsed : String(value || '').trim()
 }
 
 function monthFromDate(value: any) {
@@ -1406,7 +1411,7 @@ const ledgerConfigs: any = {
   cash: { title: 'cash', api: cashAPI, pageSize: 20, search: 'searchCash', columns: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], fields: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], summary: ['totalIncome', 'totalExpense', 'currentSurplus'], table: 'cash', relatedTable: 'cash_ledger' },
   bank: { title: 'bank', api: bankAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'netAmount'], table: 'bank', relatedTable: 'bank_ledger' },
   bills: { title: 'bills', api: billsAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'netAmount'], table: 'bills', relatedTable: 'acceptance_bills' },
-  customer: { title: 'customer', api: customerAPI, pageSize: 20, search: 'search', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['customer_name', 'date', 'description', 'amount_in', 'amount_out', 'balance', 'note', 'month_label'], summary: [], table: 'customer', relatedTable: 'customer_ledger' },
+  customer: { title: 'customer', api: customerAPI, pageSize: 20, search: 'search', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note', 'month_label'], summary: [], table: 'customer', relatedTable: 'customer_ledger' },
   stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['doc_no', 'supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
   stockOut: { title: 'stockOut', api: stockOutAPI, pageSize: 20, search: 'searchStock', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['doc_no', 'customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockOut', relatedTable: 'stock_out_ledger' },
 }
@@ -1431,9 +1436,9 @@ const formSections: Record<string, FormSectionSpec[]> = {
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   customer: [
-    { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'month_label', span: 'half' }] },
-    { titleKey: 'formSectionBasic', fields: [{ key: 'description', span: 'full' }] },
-    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }, { key: 'balance', span: 'half' }] },
+    { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'month_label', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }, { key: 'balance', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   stockIn: [
@@ -1455,7 +1460,7 @@ const ledgerDialogWidths: Record<string, number> = {
   cash: 680,
   bank: 680,
   bills: 680,
-  customer: 760,
+  customer: 880,
   stockIn: 880,
   stockOut: 880,
 }
@@ -1592,6 +1597,11 @@ const LedgerPage = defineComponent({
       editing.value = row
       Object.assign(form, row)
       form.date = normalizeDateValue(form.date)
+      if (props.page === 'customer' && isCustomerPaymentDescription(form.description)) {
+        form.product_name = '付款'
+      } else if (props.page === 'customer' && !form.product_name && form.description) {
+        Object.assign(form, parseCustomerDescription(form.description))
+      }
       pendingAttachments.value = []
       await loadRecordOptions()
       dialog.value = true
@@ -1602,6 +1612,19 @@ const LedgerPage = defineComponent({
         const payload = { ...form }
         if (payload.date) payload.date = normalizeDateValue(payload.date)
         if ('month_label' in payload && payload.date) payload.month_label = monthFromDate(payload.date)
+        if (props.page === 'customer') {
+          if (form.product_name === '付款' || (Number(payload.amount_out) > 0 && !payload.product_name && !payload.contract_no && !Number(payload.quantity))) {
+            payload.description = '付款'
+            payload.product_name = '付款'
+            payload.contract_no = ''
+            payload.spec = ''
+            payload.unit = ''
+            payload.quantity = 0
+            payload.unit_price = 0
+          } else {
+            payload.description = buildCustomerDescription(payload)
+          }
+        }
         const saved = editing.value ? await config.value.api.update({ ...payload, id: editing.value.id }) : await config.value.api.add(payload)
         if (pendingAttachments.value.length && saved?.id) {
           await attachmentAPI.add(config.value.relatedTable, saved.id, pendingAttachments.value.map((item: any) => item.filePath))
@@ -2097,7 +2120,10 @@ function roundMoneyValue(value: number) {
 }
 function autoFillAmountFields(form: any, changedKey: string) {
   if (['quantity', 'unit_price'].includes(changedKey)) {
-    form.amount = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    if ('amount' in form) form.amount = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    if ('amount_in' in form && !('amount' in form)) {
+      form.amount_in = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    }
   }
   if (changedKey === 'amount' && Number(form.quantity || 0) > 0 && Number(form.unit_price || 0) === 0) {
     form.unit_price = roundMoneyValue(Number(form.amount || 0) / Number(form.quantity || 1))
@@ -3059,7 +3085,7 @@ const AiAssistant = defineComponent({
 
     return () => h('div', { class: props.compact ? 'ai-panel compact' : 'page-wrap ai-panel' }, [
       !props.compact ? h(PageHeader, { title: 'AI 助手', subtitle: 'SiliconFlow 账务问答和经营分析' }) : null,
-      configured.value === false ? h(VAlert, { type: 'warning', class: 'mb-3' }, () => '还没有配置 SiliconFlow Key，请在 .env.local 中设置 SILICONFLOW_API_KEY') : null,
+      configured.value === false ? h(VAlert, { type: 'warning', class: 'mb-3' }, () => '还没有配置 SiliconFlow Key，请在 src/main/config/siliconflow.ts 中设置') : null,
       h('div', { class: 'ai-workspace' }, [
         h('aside', { class: 'ai-sidebar' }, [
           h('div', { class: 'ai-session-toolbar' }, [

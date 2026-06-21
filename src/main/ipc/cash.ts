@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
+import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 
 export function registerCashHandlers(): void {
@@ -18,7 +18,7 @@ export function registerCashHandlers(): void {
       WHERE deleted_at IS NULL
         AND (description LIKE ? OR operator LIKE ? OR note LIKE ? OR date LIKE ?)
         ${dateWhere.sql}
-      ORDER BY date ASC, id ASC
+      ORDER BY ${buildDateOrderBy('cash_ledger.date')}
       LIMIT ? OFFSET ?
     `).all(like, like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`

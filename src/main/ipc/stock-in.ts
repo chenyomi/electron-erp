@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
+import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 import { ensureProductCatalog, generateDocNo, recalcInventoryForRows } from './stock-business'
 
@@ -54,7 +54,7 @@ export function registerStockInHandlers(): void {
         AND (? = '' OR supplier_name = ?)
         AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
         ${dateWhere.sql}
-      ORDER BY date DESC, id DESC
+      ORDER BY ${buildDateOrderBy('stock_in_ledger.date')}
       LIMIT ? OFFSET ?
     `).all(supplierName || '', supplierName || '', like, like, like, like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`

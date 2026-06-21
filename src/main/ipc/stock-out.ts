@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
+import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 import { ensureProductCatalog, generateDocNo, recalcInventoryForRows } from './stock-business'
 
@@ -87,7 +87,7 @@ export function registerStockOutHandlers(): void {
         AND (? = '' OR customer_name = ?)
         AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
         ${dateFilter.sql}
-      ORDER BY date DESC, id DESC
+      ORDER BY ${buildDateOrderBy('stock_out_ledger.date')}
       LIMIT ? OFFSET ?
     `).all(customerName || '', customerName || '', like, like, like, like, like, like, ...dateFilter.params, pageSize, offset)
     const { total } = db.prepare(`

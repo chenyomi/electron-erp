@@ -2,6 +2,7 @@ import { ipcMain, app } from 'electron'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getDb } from '../db'
+import { SILICONFLOW_CONFIG } from '../config/siliconflow'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -47,11 +48,11 @@ function loadLocalEnv() {
 loadLocalEnv()
 
 function getDefaultModel() {
-  return process.env.SILICONFLOW_MODEL || DEFAULT_SILICONFLOW_MODEL
+  return process.env.SILICONFLOW_MODEL || SILICONFLOW_CONFIG.model || DEFAULT_SILICONFLOW_MODEL
 }
 
 function getApiKey() {
-  return process.env.SILICONFLOW_API_KEY || ''
+  return process.env.SILICONFLOW_API_KEY || SILICONFLOW_CONFIG.apiKey || ''
 }
 
 function getKeyTail(apiKey: string) {
@@ -200,7 +201,7 @@ export function registerAiHandlers(): void {
     if (!apiKey) {
       return {
         ok: false,
-        error: '未配置 SILICONFLOW_API_KEY，请先在启动环境里设置你的 SiliconFlow Key。',
+        error: '未配置 SiliconFlow API Key，请在 src/main/config/siliconflow.ts 中设置。',
       }
     }
 

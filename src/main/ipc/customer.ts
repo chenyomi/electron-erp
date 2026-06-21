@@ -1,6 +1,7 @@
 import { dialog, ipcMain } from 'electron'
 import { getDataDir, getDb } from '../db'
-import { buildDateFilterClause, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
+import { buildCustomerDescription, enrichCustomerRow } from '../../common/customer-ledger'
+import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import * as fs from 'fs'
 import * as path from 'path'
 import sharp from 'sharp'
@@ -31,19 +32,21 @@ export function registerCustomerHandlers(): void {
       FROM customer_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR customer_name = ?)
-        AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
+        AND (description LIKE ? OR note LIKE ? OR date LIKE ?
+          OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
         ${dateWhere.sql}
-      ORDER BY customer_name ASC, date ASC, id ASC
+      ORDER BY customer_name ASC, ${buildDateOrderBy('customer_ledger.date')}
       LIMIT ? OFFSET ?
-    `).all(customerName || '', customerName || '', like, like, like, ...dateWhere.params, pageSize, offset) as any[]
+    `).all(customerName || '', customerName || '', like, like, like, like, like, like, ...dateWhere.params, pageSize, offset) as any[]
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM customer_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR customer_name = ?)
-        AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
+        AND (description LIKE ? OR note LIKE ? OR date LIKE ?
+          OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
         ${dateWhere.sql}
-    `).get(customerName || '', customerName || '', like, like, like, ...dateWhere.params) as { total: number }
-    return { rows: rows.map(row => ({ ...row, attachment_thumb: imageDataUrl(row.attachment_thumb_path) })), total }
+    `).get(customerName || '', customerName || '', like, like, like, like, like, like, ...dateWhere.params) as { total: number }
+    return { rows: rows.map(row => ({ ...enrichCustomerRow(row), attachment_thumb: imageDataUrl(row.attachment_thumb_path) })), total }
   })
 
   ipcMain.handle('customer:summary', (_e, params: any = {}) => {
@@ -72,10 +75,17 @@ export function registerCustomerHandlers(): void {
 
   ipcMain.handle('customer:add', (_e, row) => {
     const db = getDb()
+    const payload = { ...row, description: buildCustomerDescription(row) }
     const r = db.prepare(`
-      INSERT INTO customer_ledger (customer_name, date, description, amount_in, amount_out, balance, note, month_label)
-      VALUES (@customer_name, @date, @description, @amount_in, @amount_out, @balance, @note, @month_label)
-    `).run(row)
+      INSERT INTO customer_ledger (
+        customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+        amount_in, amount_out, balance, note, month_label
+      )
+      VALUES (
+        @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+        @amount_in, @amount_out, @balance, @note, @month_label
+      )
+    `).run(payload)
     const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(r.lastInsertRowid)
     logOperation('customer_ledger', r.lastInsertRowid as number, 'INSERT', null, newRow as object)
     return newRow
@@ -84,12 +94,15 @@ export function registerCustomerHandlers(): void {
   ipcMain.handle('customer:update', (_e, { id, ...row }) => {
     const db = getDb()
     const old = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id)
+    const payload = { ...row, id, description: buildCustomerDescription(row) }
     db.prepare(`
       UPDATE customer_ledger SET customer_name=@customer_name, date=@date,
-        description=@description, amount_in=@amount_in, amount_out=@amount_out,
+        description=@description, contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
+        quantity=@quantity, unit_price=@unit_price,
+        amount_in=@amount_in, amount_out=@amount_out,
         balance=@balance, note=@note, month_label=@month_label,
         updated_at=datetime('now','localtime') WHERE id=@id
-    `).run({ ...row, id })
+    `).run(payload)
     const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id)
     logOperation('customer_ledger', id, 'UPDATE', old as object, newRow as object)
     return newRow

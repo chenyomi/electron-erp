@@ -2,6 +2,8 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
+import { parseCustomerDescription } from '../common/customer-ledger'
+import { parseLedgerDate } from '../common/ledger-date'
 
 let db: Database.Database | undefined
 
@@ -49,6 +51,70 @@ function addColumnIfMissing(tableName: string, columnSql: string) {
 function migrateSchema(): void {
   addColumnIfMissing('stock_in_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('stock_out_ledger', "doc_no TEXT DEFAULT ''")
+  migrateCustomerLedgerFields()
+  migrateLedgerDates()
+}
+
+function migrateLedgerDates(): void {
+  const tables = [
+    { name: 'cash_ledger', monthColumn: null as string | null },
+    { name: 'bank_ledger', monthColumn: null },
+    { name: 'acceptance_bills', monthColumn: null },
+    { name: 'customer_ledger', monthColumn: 'month_label' },
+    { name: 'stock_in_ledger', monthColumn: null },
+    { name: 'stock_out_ledger', monthColumn: null },
+  ]
+
+  for (const table of tables) {
+    const monthSelect = table.monthColumn ? `, ${table.monthColumn}` : ''
+    const rows = db!.prepare(`
+      SELECT id, date${monthSelect}
+      FROM ${table.name}
+      WHERE date IS NOT NULL AND TRIM(date) != '' AND date NOT GLOB '____-__-__'
+    `).all() as Array<{ id: number; date: string; month_label?: string }>
+    if (!rows.length) continue
+
+    const update = db!.prepare(`UPDATE ${table.name} SET date = ? WHERE id = ?`)
+    for (const row of rows) {
+      const normalized = parseLedgerDate(row.date, { monthLabel: row.month_label })
+      if (/^\d{4}-\d{2}-\d{2}$/.test(normalized) && normalized !== row.date) {
+        update.run(normalized, row.id)
+      }
+    }
+  }
+}
+
+function migrateCustomerLedgerFields(): void {
+  addColumnIfMissing('customer_ledger', "contract_no TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', "product_name TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', "spec TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', "unit TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', 'quantity REAL DEFAULT 0')
+  addColumnIfMissing('customer_ledger', 'unit_price REAL DEFAULT 0')
+
+  const rows = db!.prepare(`
+    SELECT id, description
+    FROM customer_ledger
+    WHERE COALESCE(product_name, '') = ''
+      AND COALESCE(contract_no, '') = ''
+      AND COALESCE(quantity, 0) = 0
+      AND COALESCE(unit_price, 0) = 0
+      AND TRIM(COALESCE(description, '')) NOT IN ('', '付款')
+  `).all() as Array<{ id: number; description: string }>
+
+  if (!rows.length) return
+
+  const update = db!.prepare(`
+    UPDATE customer_ledger
+    SET contract_no = ?, product_name = ?, spec = ?, unit = ?, quantity = ?, unit_price = ?
+    WHERE id = ?
+  `)
+
+  for (const row of rows) {
+    const parsed = parseCustomerDescription(row.description)
+    if (!parsed.product_name && !parsed.contract_no && !parsed.quantity) continue
+    update.run(parsed.contract_no, parsed.product_name, parsed.spec, parsed.unit, parsed.quantity, parsed.unit_price, row.id)
+  }
 }
 
 function rebuildInventoryBusinessTables(): void {
@@ -222,6 +288,12 @@ function createTables(): void {
       customer_name TEXT    NOT NULL,
       date          TEXT    NOT NULL,
       description   TEXT    NOT NULL DEFAULT '',
+      contract_no   TEXT    DEFAULT '',
+      product_name  TEXT    DEFAULT '',
+      spec          TEXT    DEFAULT '',
+      unit          TEXT    DEFAULT '',
+      quantity      REAL    DEFAULT 0,
+      unit_price    REAL    DEFAULT 0,
       amount_in     REAL    DEFAULT 0,
       amount_out    REAL    DEFAULT 0,
       balance       REAL    DEFAULT 0,

@@ -1,6 +1,7 @@
 import { getDb } from '../db'
 import Database from 'better-sqlite3'
 import { getCurrentUser } from './auth'
+import { buildDateOrderBy, ledgerDateSortSql, normalizeLedgerDateText } from '../../common/ledger-date'
 
 export type TableName = 'cash_ledger' | 'bank_ledger' | 'acceptance_bills' | 'customer_ledger' | 'other_ledger' | 'stock_in_ledger' | 'stock_out_ledger'
 
@@ -62,25 +63,14 @@ export function normalizeLedgerFilters(value: any = {}, legacyNameField?: 'custo
 }
 
 export function normalizeDateText(value: any) {
-  const text = String(value || '').trim().replace(/[/.]/g, '-')
-  const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
-  if (!match) return text
-  return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
+  return normalizeLedgerDateText(value)
 }
 
 export function normalizedSqlDate(column = 'date') {
-  const clean = `replace(replace(${column}, '/', '.'), '-', '.')`
-  const rest = `substr(${clean}, instr(${clean}, '.') + 1)`
-  return `CASE
-    WHEN instr(${clean}, '.') > 0 THEN printf(
-      '%04d-%02d-%02d',
-      CAST(substr(${clean}, 1, instr(${clean}, '.') - 1) AS INTEGER),
-      CAST(substr(${rest}, 1, instr(${rest}, '.') - 1) AS INTEGER),
-      CAST(substr(${rest}, instr(${rest}, '.') + 1) AS INTEGER)
-    )
-    ELSE ${column}
-  END`
+  return ledgerDateSortSql(column)
 }
+
+export { buildDateOrderBy, ledgerDateSortSql }
 
 export function buildDateFilterClause(filters: LedgerFilterParams, column = 'date') {
   const clauses: string[] = []

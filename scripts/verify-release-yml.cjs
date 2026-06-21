@@ -25,7 +25,7 @@ function listFiles(dir) {
 function parseYamlRefs(content) {
   const refs = []
   for (const line of content.split('\n')) {
-    const match = line.match(/^\s*(?:path|url):\s*(.+?)\s*$/)
+    const match = line.match(/^\s*(?:-\s*)?(?:path|url):\s*(.+?)\s*$/)
     if (match) refs.push(match[1])
   }
   return refs

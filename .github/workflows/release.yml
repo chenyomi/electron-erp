@@ -111,6 +111,7 @@ jobs:
 
       - name: Verify update manifests match release files
         run: |
+          find release-artifacts -maxdepth 3 -type f \( -name '*.zip' -o -name '*.exe' -o -name '*.yml' \) | sort
           node scripts/align-release-assets.cjs release-artifacts
           node scripts/verify-release-yml.cjs release-artifacts
 

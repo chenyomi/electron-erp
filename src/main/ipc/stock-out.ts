@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
+import { listAllCustomerNames } from './customer-profile'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
 import { ensureProductCatalog, generateDocNo, recalcInventoryForRows } from './stock-business'
@@ -66,11 +67,7 @@ function validateStockOut(row: any, excludeId?: number) {
 
 export function registerStockOutHandlers(): void {
   ipcMain.handle('stockOut:names', () => {
-    const db = getDb()
-    return db.prepare(`
-      SELECT DISTINCT customer_name FROM stock_out_ledger
-      WHERE deleted_at IS NULL ORDER BY customer_name
-    `).all()
+    return listAllCustomerNames(getDb()).map(customer_name => ({ customer_name }))
   })
 
   ipcMain.handle('stockOut:list', (_e, params = {}) => {

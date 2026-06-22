@@ -373,8 +373,8 @@ const messages = {
     billsSub: '票据管理',
     customer: '客户往来',
     customerSub: '应收应付',
-    stockIn: '材料入库',
-    stockInSub: '材料/外协入库',
+    stockIn: '产品入库',
+    stockInSub: '产品入库记录',
     stockOut: '产品出库',
     stockOutSub: '产品出库记录',
     products: '产品档案',
@@ -524,7 +524,7 @@ const messages = {
     importLedgerTitle: '导入账本',
     importLedgerDesc: '从以前的 Excel 账本首次迁入历史数据。',
     importStockTitle: '导入入库单',
-    importStockDesc: '从材料入库 Excel 按供应商导入记录。',
+    importStockDesc: '从产品入库 Excel 按供应商导入记录。',
     importTitle: '导入数据',
     importPageSub: '从 Excel 账本导入历史数据',
     pickExcel: '选择账本文件',
@@ -624,13 +624,13 @@ const messages = {
     helpTitle: 'Hello，使用帮助',
     helpSubtitle: '项目介绍、业务说明、操作教程和作者联系方式',
     helpProjectTitle: '项目介绍',
-    helpProjectDesc: '东昊账务是面向汽配业务的本地账务和库存管理系统，用于记录现金、公账、承兑票、客户往来、材料入库、产品出库、库存结存、图片附件、导入导出和备份恢复。',
+    helpProjectDesc: '东昊账务是面向汽配业务的本地账务和库存管理系统，用于记录现金、公账、承兑票、客户往来、产品入库、产品出库、库存结存、图片附件、导入导出和备份恢复。',
     helpBusinessTitle: '业务范围',
     helpBusinessFinance: '财务账本：现金账、公账、承兑票、客户往来，支持新增、编辑、删除、筛选、导出和审计追踪。',
-    helpBusinessStock: '库存业务：产品档案、材料/外协入库、产品出库、库存汇总，出库会校验当前库存。',
+    helpBusinessStock: '库存业务：产品档案、产品入库、产品出库、库存汇总，出库会校验当前库存。',
     helpBusinessData: '数据管理：Excel 导入、总表导出、本机备份、备份包迁移和回收站恢复。',
     helpTutorialTitle: '快速教程',
-    helpTutorialStep1: '先在左侧选择业务模块，例如现金账、材料入库或产品出库。',
+    helpTutorialStep1: '先在左侧选择业务模块，例如现金账、产品入库或产品出库。',
     helpTutorialStep2: '点击“新增”录入数据；日期使用日期选择器，金额和数量按实际业务填写。',
     helpTutorialStep3: '用顶部筛选栏按客户、供应商、日期、关键词等条件查找数据；导出会按当前筛选结果导出。',
     helpTutorialStep4: '换电脑或重要操作前，进入“数据管理”先备份，也可以导出备份包带走。',
@@ -697,8 +697,8 @@ const messages = {
     billsSub: 'Acceptance bills',
     customer: 'Customers',
     customerSub: 'Receivable/payable',
-    stockIn: 'Stock In',
-    stockInSub: 'Material inbound',
+    stockIn: 'Product Inbound',
+    stockInSub: 'Product inbound records',
     stockOut: 'Stock Out',
     stockOutSub: 'Product outbound',
     products: 'Products',
@@ -947,13 +947,13 @@ const messages = {
     helpTitle: 'Hello, Help',
     helpSubtitle: 'Project intro, business details, tutorial, and author contact',
     helpProjectTitle: 'Project',
-    helpProjectDesc: 'Donghao Ledger is a local finance and inventory system for auto parts operations, covering cash, bank, acceptance bills, customers, inbound materials, outbound products, inventory, attachments, import/export, backup, and restore.',
+    helpProjectDesc: 'Donghao Ledger is a local finance and inventory system for auto parts operations, covering cash, bank, acceptance bills, customers, product inbound, product outbound, inventory, attachments, import/export, backup, and restore.',
     helpBusinessTitle: 'Business Scope',
     helpBusinessFinance: 'Finance: cash, bank, acceptance bills, and customer ledgers with create, edit, delete, filters, export, and audit logs.',
-    helpBusinessStock: 'Inventory: product catalog, material inbound, product outbound, and stock summary with outbound stock validation.',
+    helpBusinessStock: 'Inventory: product catalog, product inbound, product outbound, and stock summary with outbound stock validation.',
     helpBusinessData: 'Data: Excel import, workbook export, local backup, backup package migration, and trash restore.',
     helpTutorialTitle: 'Quick Tutorial',
-    helpTutorialStep1: 'Choose a module from the left navigation, such as Cash, Stock In, or Stock Out.',
+    helpTutorialStep1: 'Choose a module from the left navigation, such as Cash, Product Inbound, or Stock Out.',
     helpTutorialStep2: 'Click Add to enter records. Use the date picker and fill amounts or quantities according to the business record.',
     helpTutorialStep3: 'Use the filter bar to search by customer, supplier, date, keyword, and more. Export follows the current filters.',
     helpTutorialStep4: 'Before moving computers or important operations, open Data Management and create a backup or backup package.',
@@ -3011,6 +3011,28 @@ function productOptionTitle(item: any) {
   const price = Number(item.default_price || 0) ? ` · 默认单价 ${money(item.default_price)}` : ''
   return `${item.product_name}${spec}${unit}${price}`
 }
+function productComboboxFilter(titleFn: (item: any) => string) {
+  return (_value: string, query: string, item: any) => {
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    const raw = item?.raw ?? item
+    if (typeof raw === 'string') return raw.toLowerCase().includes(q)
+    return titleFn(raw).toLowerCase().includes(q)
+  }
+}
+function productComboboxSlots(form: any, titleFn: (item: any) => string) {
+  return {
+    selection: ({ item }: any) => {
+      const raw = item?.raw ?? item
+      if (raw && typeof raw === 'object') return String(raw.product_name || '')
+      return String(form.product_name || raw || '')
+    },
+    item: ({ props: listItemProps, item }: any) => h(VListItem, {
+      ...listItemProps,
+      title: titleFn(item?.raw ?? item),
+    }),
+  }
+}
 function roundMoneyValue(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100
 }
@@ -3172,13 +3194,14 @@ function renderRecordFormField(
           }
         },
         items: productOptions,
-        itemTitle: productOptionTitle,
+        itemTitle: 'product_name',
+        customFilter: productComboboxFilter(productOptionTitle),
         label: t(ledgerColumnLabel(key, config.table)),
         placeholder: t('typeProductName'),
         returnObject: true,
         clearable: true,
         hideNoData: false,
-      }),
+      }, productComboboxSlots(form, productOptionTitle)),
     ])
   }
 
@@ -3202,13 +3225,14 @@ function renderRecordFormField(
           }
         },
         items: inventoryOptions,
-        itemTitle: inventoryOptionTitle,
+        itemTitle: 'product_name',
+        customFilter: productComboboxFilter(inventoryOptionTitle),
         label: t(ledgerColumnLabel(key, config.table)),
         placeholder: t('selectInventoryProduct'),
         returnObject: true,
         clearable: true,
         hideNoData: false,
-      }),
+      }, productComboboxSlots(form, inventoryOptionTitle)),
     ])
   }
 

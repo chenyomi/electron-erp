@@ -1140,6 +1140,7 @@ body {
   width: 100%;
   min-width: max-content;
   border-collapse: collapse;
+  border-left: 1px solid var(--app-border);
 }
 
 .ledger-table thead th {
@@ -1155,6 +1156,7 @@ body {
   text-align: center;
   vertical-align: middle;
   background: var(--app-surface);
+  border-right: 1px solid var(--app-border);
   box-shadow: inset 0 -1px 0 var(--app-border);
   white-space: nowrap;
 }
@@ -1190,6 +1192,7 @@ body {
   height: 42px;
   padding: 0 10px;
   border-top: 1px solid var(--app-border);
+  border-right: 1px solid var(--app-border);
   color: var(--app-text);
   font-size: 13px;
   text-align: center;

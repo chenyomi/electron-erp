@@ -175,7 +175,7 @@ function buildAiDataContext() {
       '以下是东昊账务系统本地 SQLite 的只读数据摘要。请基于这些真实数据回答；如数据不足，请说明需要用户提供筛选条件。不要编造明细，不要声称已修改数据库。',
       `数据生成时间：${now.toLocaleString('zh-CN')}`,
       `总账摘要：现金收入 ${money(cash.income)}，现金支出 ${money(cash.expense)}，现金余额 ${money(cash.balance)}，现金记录 ${cash.count} 条；公账进账 ${money(bank.income)}，公账付出 ${money(bank.expense)}；承兑收票 ${money(bills.income)}，承兑付出 ${money(bills.expense)}。`,
-      `往来与库存：客户往来收款 ${money(customer.income)}，付款 ${money(customer.expense)}，客户数 ${customer.customers}；材料入库数量 ${qty(stockIn.quantity)}，金额 ${money(stockIn.amount)}，供应商数 ${stockIn.suppliers}；产品出库数量 ${qty(stockOut.quantity)}，金额 ${money(stockOut.amount)}，客户数 ${stockOut.customers}。`,
+      `往来与库存：客户往来收款 ${money(customer.income)}，付款 ${money(customer.expense)}，客户数 ${customer.customers}；产品入库数量 ${qty(stockIn.quantity)}，金额 ${money(stockIn.amount)}，供应商数 ${stockIn.suppliers}；产品出库数量 ${qty(stockOut.quantity)}，金额 ${money(stockOut.amount)}，客户数 ${stockOut.customers}。`,
       `${month} 月摘要：现金收入 ${money(monthStats.cash_income)}，现金支出 ${money(monthStats.cash_expense)}，公账进账 ${money(monthStats.bank_income)}，公账付出 ${money(monthStats.bank_expense)}，出库金额 ${money(monthStats.stock_out_amount)}，入库金额 ${money(monthStats.stock_in_amount)}。`,
       `客户余额较大项：\n${formatRows(topCustomers, (row, index) => `${index + 1}. ${row.customer_name}，余额 ${money(row.balance)}，最近日期 ${row.date}`)}`,
       `库存预警(<=0)：\n${formatRows(inventoryWarnings, (row, index) => `${index + 1}. ${row.product_name} ${row.spec || ''} ${row.unit || ''}，库存 ${qty(row.stock_qty)}`)}`,

@@ -491,9 +491,9 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     },
   },
   stockIn: {
-    sheetName: '材料入库',
-    defaultFileName: '材料入库导出',
-    title: '材料入库明细',
+    sheetName: '产品入库',
+    defaultFileName: '产品入库导出',
+    title: '产品入库明细',
     columns: [
       { key: 'index', header: '序号', width: 6, sum: 'count' },
       { key: 'supplier_name', header: '供应商', width: 16 },
@@ -639,7 +639,7 @@ function buildOverviewSheet(db: any) {
       extra: `客户数 ${(db.prepare(`SELECT COUNT(DISTINCT customer_name) as n FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).n}`,
     },
     {
-      name: '材料入库',
+      name: '产品入库',
       count: (db.prepare(`SELECT COUNT(*) as n FROM stock_in_ledger WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总数量', inValue: num((db.prepare(`SELECT SUM(quantity) as v FROM stock_in_ledger WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总金额', outValue: num((db.prepare(`SELECT SUM(amount) as v FROM stock_in_ledger WHERE deleted_at IS NULL`).get() as any).v),
@@ -657,7 +657,7 @@ function buildOverviewSheet(db: any) {
   const aoa = [
     ['账务总览', '', '', '', '', '', ''],
     [COMPANY_NAME, '', '', `导出时间：${exportedAt}`, '', '', ''],
-    ['包含现金账、公账、承兑票、客户往来、材料入库、产品出库全部未删除记录', '', '', `账册数：${stats.length}`, '', '', ''],
+    ['包含现金账、公账、承兑票、客户往来、产品入库、产品出库全部未删除记录', '', '', `账册数：${stats.length}`, '', '', ''],
     [],
     ['账册', '记录数', '进/收入项', '金额', '出/支出项', '金额', '备注'],
     ...stats.map((item) => [item.name, item.count, item.inLabel, item.inValue, item.outLabel, item.outValue, item.extra]),

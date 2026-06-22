@@ -718,9 +718,9 @@ body {
 }
 
 .customer-overview-table .customer-overview-action-col {
-  width: 88px;
-  min-width: 88px;
-  max-width: 88px;
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
   text-align: center;
 }
 
@@ -752,6 +752,18 @@ body {
 .customer-overview-actions .overview-action-link {
   color: rgb(var(--v-theme-primary));
   font-weight: 700;
+}
+
+.overview-action-link--danger {
+  color: rgb(var(--v-theme-error));
+}
+
+.overview-action-link--danger:hover {
+  color: rgb(var(--v-theme-error));
+}
+
+.confirm-dialog__message {
+  white-space: pre-line;
 }
 
 .customer-workspace-dialog-wrap .v-overlay__content {

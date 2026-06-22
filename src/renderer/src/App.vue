@@ -568,6 +568,12 @@ const messages = {
     addCustomer: '新增客户',
     addCustomerSub: '新建客户档案（可设期初欠款），保存后自动打开该客户台账。',
     customerCreated: '客户已添加',
+    deleteCustomer: '删除',
+    confirmDeleteCustomerTitle: '删除客户',
+    confirmDeleteCustomerMessage: '确定删除客户「{name}」吗？\n\n· 往来记录 {ledgerCount} 条将移入回收站\n· 客户档案（期初欠款）将一并删除\n\n可在「回收站」恢复往来记录。',
+    confirmDeleteCustomerProfileOnly: '确定删除客户「{name}」吗？该客户暂无往来记录，将只删除客户档案。',
+    customerRemoved: '客户已删除',
+    customerRemoveBlockedStockOut: '该客户在产品出库中还有 {count} 条记录，无法删除。请先在「产品出库」中处理。',
     selectCustomerToAdd: '请选择客户',
     customerPickTitle: '登记客户往来',
     customerPickSub: '选择客户后将打开台账并进入登记表单。',
@@ -886,6 +892,12 @@ const messages = {
     addCustomer: 'Add Customer',
     addCustomerSub: 'Create a customer profile with optional opening balance.',
     customerCreated: 'Customer added',
+    deleteCustomer: 'Delete',
+    confirmDeleteCustomerTitle: 'Delete Customer',
+    confirmDeleteCustomerMessage: 'Delete customer "{name}"?\n\n· {ledgerCount} ledger row(s) will move to Trash\n· Customer profile (opening balance) will be removed\n\nYou can restore ledger rows from Trash.',
+    confirmDeleteCustomerProfileOnly: 'Delete customer "{name}"? This customer has no ledger rows; only the profile will be removed.',
+    customerRemoved: 'Customer deleted',
+    customerRemoveBlockedStockOut: 'This customer has {count} stock-out row(s). Handle them in Stock Out before deleting.',
     selectCustomerToAdd: 'Select a customer',
     customerPickTitle: 'Add Customer Entry',
     customerPickSub: 'Opens the ledger and the entry form for this customer.',
@@ -1689,6 +1701,7 @@ const LedgerPage = defineComponent({
       return [...config.value.columns, 'attachments']
     })
     const displayAttachments = computed(() => attachments.value.filter((item: any) => !pendingAttachmentDeletes.value.includes(item.id)))
+    const years = yearOptions()
     const months = monthOptions()
 
     const buildLedgerFilters = (customerName = '') => {
@@ -1871,9 +1884,37 @@ const LedgerPage = defineComponent({
         emit('notify', error?.message || '添加失败', 'error')
       }
     }
-    const renderOverviewActionLink = (label: string, onClick: () => void) => h('button', {
+    const removeCustomer = async (customerName: string) => {
+      const name = String(customerName || '').trim()
+      if (!name) return
+      try {
+        const preview = await customerAPI.removePreview(name)
+        if (preview.stockOutCount > 0) {
+          emit('notify', t('customerRemoveBlockedStockOut', { count: preview.stockOutCount }), 'error')
+          return
+        }
+        const message = preview.ledgerCount > 0
+          ? t('confirmDeleteCustomerMessage', { name, ledgerCount: preview.ledgerCount })
+          : t('confirmDeleteCustomerProfileOnly', { name })
+        const ok = await askConfirm({
+          title: t('confirmDeleteCustomerTitle'),
+          message,
+          confirmColor: 'error',
+          confirmLabel: t('deleteCustomer'),
+        })
+        if (!ok) return
+        await customerAPI.remove(name)
+        if (customerDetailName.value === name) closeCustomerWorkspace()
+        if (filterValue.value === name) filterValue.value = ''
+        emit('notify', props.t('customerRemoved'))
+        load()
+      } catch (error: any) {
+        emit('notify', error?.message || '删除失败', 'error')
+      }
+    }
+    const renderOverviewActionLink = (label: string, onClick: () => void, options: { danger?: boolean } = {}) => h('button', {
       type: 'button',
-      class: 'overview-action-link',
+      class: ['overview-action-link', options.danger ? 'overview-action-link--danger' : ''],
       onClick: (event: MouseEvent) => {
         event.stopPropagation()
         onClick()
@@ -2438,6 +2479,7 @@ const LedgerPage = defineComponent({
                     onClick: (event: MouseEvent) => event.stopPropagation(),
                   }, [
                     renderOverviewActionLink('台账', () => openCustomerWorkspace(row.customer_name)),
+                    renderOverviewActionLink(props.t('deleteCustomer'), () => removeCustomer(row.customer_name), { danger: true }),
                   ]),
                 ]))),
               ]),
@@ -2556,6 +2598,7 @@ const LedgerPage = defineComponent({
         h('div', { class: 'customer-workspace-dialog__head' }, [
           h('div', { class: 'drawer-title' }, `${props.t('customerWorkspaceTitle')} · ${customerDetailName.value}`),
           h('div', { class: 'customer-workspace-dialog__actions' }, [
+            h(VBtn, { size: 'small', variant: 'tonal', color: 'error', onClick: () => removeCustomer(customerDetailName.value) }, () => props.t('deleteCustomer')),
             h(VBtn, { size: 'small', variant: 'text', onClick: closeCustomerWorkspace }, () => props.t('cancel')),
           ]),
         ]),

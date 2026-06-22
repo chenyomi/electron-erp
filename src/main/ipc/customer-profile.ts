@@ -63,6 +63,27 @@ export function listAllCustomerNames(db: Database.Database): string[] {
   return rows.map(row => row.customer_name).filter(Boolean)
 }
 
+export type CustomerRemovePreview = {
+  customer_name: string
+  ledgerCount: number
+  stockOutCount: number
+  hasProfile: boolean
+}
+
+export function getCustomerRemovePreview(db: Database.Database, customerName: string): CustomerRemovePreview {
+  const name = String(customerName || '').trim()
+  const ledgerCount = Number((db.prepare(`
+    SELECT COUNT(*) AS n FROM customer_ledger
+    WHERE deleted_at IS NULL AND customer_name = ?
+  `).get(name) as { n: number } | undefined)?.n || 0)
+  const stockOutCount = Number((db.prepare(`
+    SELECT COUNT(*) AS n FROM stock_out_ledger
+    WHERE deleted_at IS NULL AND customer_name = ?
+  `).get(name) as { n: number } | undefined)?.n || 0)
+  const hasProfile = Boolean(db.prepare(`SELECT 1 FROM customer_profiles WHERE customer_name = ? LIMIT 1`).get(name))
+  return { customer_name: name, ledgerCount, stockOutCount, hasProfile }
+}
+
 export function recalculateCustomerBalances(db: Database.Database, customerName: string): number {
   const opening = Number(getCustomerProfile(db, customerName).opening_balance || 0)
   const rows = db.prepare(`

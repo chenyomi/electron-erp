@@ -4,6 +4,7 @@ import { buildCustomerDescription, enrichCustomerRow, sqlCustomerPaymentWhere } 
 import {
   customerNameExists,
   getCustomerProfile,
+  getCustomerRemovePreview,
   listAllCustomerNames,
   recalculateCustomerBalances,
   setCustomerProfile,
@@ -184,6 +185,40 @@ export function registerCustomerHandlers(): void {
     })
     const currentBalance = recalculateCustomerBalances(db, profile.customer_name)
     return { ...saved, currentBalance }
+  })
+
+  ipcMain.handle('customer:remove-preview', (_e, customerName: string) => {
+    return getCustomerRemovePreview(getDb(), customerName || '')
+  })
+
+  ipcMain.handle('customer:remove', (_e, customerName: string) => {
+    const db = getDb()
+    const name = String(customerName || '').trim()
+    if (!name) throw new Error('请指定客户名称')
+    const preview = getCustomerRemovePreview(db, name)
+    if (!preview.hasProfile && preview.ledgerCount === 0) {
+      throw new Error(`客户「${name}」不存在或已删除`)
+    }
+    if (preview.stockOutCount > 0) {
+      throw new Error(`该客户在产品出库中还有 ${preview.stockOutCount} 条记录，无法删除。请先在「产品出库」中处理相关记录。`)
+    }
+
+    const ledgerRows = db.prepare(`
+      SELECT id FROM customer_ledger
+      WHERE deleted_at IS NULL AND customer_name = ?
+    `).all(name) as Array<{ id: number }>
+
+    for (const row of ledgerRows) {
+      softDelete('customer_ledger', row.id)
+    }
+
+    if (preview.hasProfile) {
+      const profile = getCustomerProfile(db, name)
+      db.prepare(`DELETE FROM customer_profiles WHERE customer_name = ?`).run(name)
+      logOperation('customer_profiles', 0, 'DELETE', profile as object, null)
+    }
+
+    return { ok: true, ledgerCount: ledgerRows.length }
   })
 
   ipcMain.handle('customer:anomalies', (_e, customerName = '') => {

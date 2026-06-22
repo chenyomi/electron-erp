@@ -1,9 +1,23 @@
 import { join, dirname } from 'path'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
+import * as crypto from 'crypto'
 import * as fs from 'fs'
 import JSZip from 'jszip'
 import { closeDatabase, getDataDir, getDb, initDatabase } from './db'
+
+export interface SyncFileEntry {
+  hash: string
+  size: number
+  updatedAt: string
+}
+
+export interface SyncManifest {
+  version: 2
+  type: 'incremental'
+  updatedAt: string
+  files: Record<string, SyncFileEntry>
+}
 
 const BACKUP_PREFIX = 'ledger_'
 const AUTO_BACKUP_NAME = 'ledger_auto'
@@ -52,13 +66,17 @@ function copyDirIfExists(src: string, dest: string): number {
   return countFiles(dest)
 }
 
-function writeBackupDirectory(backupDir: string): void {
+export async function backupDatabaseToPath(destPath: string): Promise<void> {
+  fs.mkdirSync(dirname(destPath), { recursive: true })
+  await getDb().backup(destPath)
+}
+
+async function writeBackupDirectory(backupDir: string): Promise<void> {
   fs.mkdirSync(backupDir, { recursive: true })
 
   const dataDir = getDataDir()
-  const db = getDb()
   const dbPath = join(backupDir, 'ledger.db')
-  db.backup(dbPath)
+  await backupDatabaseToPath(dbPath)
 
   let imageCount = 0
   for (const dirName of DATA_DIRS) {
@@ -81,7 +99,7 @@ function shouldSkipAutomaticBackup(backupDir: string): boolean {
   return Date.now() - lastBackupTime < AUTO_BACKUP_MIN_INTERVAL_MS
 }
 
-export function autoBackup(options: { automatic?: boolean; force?: boolean } = {}): { ok: boolean; path?: string; error?: string } {
+export async function autoBackup(options: { automatic?: boolean; force?: boolean } = {}): Promise<{ ok: boolean; path?: string; error?: string }> {
   try {
     const dataDir = getDataDir()
     const backupRoot = join(dataDir, 'backups')
@@ -97,11 +115,11 @@ export function autoBackup(options: { automatic?: boolean; force?: boolean } = {
 
       const tempBackupDir = join(backupRoot, `${AUTO_BACKUP_NAME}_tmp_${backupTimestamp()}`)
       removeIfExists(tempBackupDir)
-      writeBackupDirectory(tempBackupDir)
+      await writeBackupDirectory(tempBackupDir)
       removeIfExists(backupDir)
       fs.renameSync(tempBackupDir, backupDir)
     } else {
-      writeBackupDirectory(backupDir)
+      await writeBackupDirectory(backupDir)
       pruneOldBackups(backupRoot)
     }
     return { ok: true, path: backupDir }
@@ -284,7 +302,7 @@ export async function restoreFromBackupPackage(zipPath: string): Promise<{ ok: b
     if (!backupRoot) {
       return { ok: false, error: '备份包无效，请使用本软件导出的备份包' }
     }
-    return restoreFromBackup(backupRoot)
+    return await restoreFromBackup(backupRoot)
   } catch (e: any) {
     console.error('Restore backup package failed:', e)
     return { ok: false, error: e?.message || '恢复备份包失败' }
@@ -297,14 +315,14 @@ export function getBackupPackageDefaultName(name: string): string {
   return backupPackageName(name)
 }
 
-export function restoreFromBackup(sourcePath: string): { ok: boolean; error?: string } {
+export async function restoreFromBackup(sourcePath: string): Promise<{ ok: boolean; error?: string }> {
   const source = resolveBackupSource(sourcePath)
   if (!source) {
     return { ok: false, error: '未找到有效备份，请选择包含 ledger.db 的备份文件夹' }
   }
 
   try {
-    autoBackup({ automatic: true, force: true })
+    await autoBackup({ automatic: true, force: true })
 
     const dataDir = getDataDir()
     const targetDbPath = join(dataDir, 'ledger.db')
@@ -337,6 +355,157 @@ export function getBackupPathByName(name: string): string | null {
   const path = join(backupRoot, name)
   if (!fs.existsSync(path)) return null
   return resolveBackupSource(path) ? path : null
+}
+
+function hashFileSync(filePath: string): string {
+  return crypto.createHash('md5').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+export async function hashLiveLedgerDbEntry(): Promise<SyncFileEntry> {
+  const dataDir = getDataDir()
+  const tempDb = join(dataDir, '.cloud-sync-ledger.tmp.db')
+  try {
+    await backupDatabaseToPath(tempDb)
+    const stat = fs.statSync(tempDb)
+    return {
+      hash: hashFileSync(tempDb),
+      size: stat.size,
+      updatedAt: stat.mtime.toISOString(),
+    }
+  } finally {
+    fs.rmSync(tempDb, { force: true })
+  }
+}
+
+export function localFileMatchesRemoteEntry(relativePath: string, remote: SyncFileEntry, localLedger?: SyncFileEntry): boolean {
+  if (relativePath === 'ledger.db') {
+    return Boolean(localLedger && localLedger.hash === remote.hash)
+  }
+  const localPath = join(getDataDir(), ...relativePath.split('/'))
+  if (!fs.existsSync(localPath)) return false
+  const stat = fs.statSync(localPath)
+  if (stat.size !== remote.size) return false
+  return hashFileSync(localPath) === remote.hash
+}
+
+export async function autoBackupDbOnly(): Promise<{ ok: boolean; path?: string; error?: string }> {
+  try {
+    const dataDir = getDataDir()
+    const backupRoot = join(dataDir, 'backups')
+    if (!fs.existsSync(backupRoot)) fs.mkdirSync(backupRoot, { recursive: true })
+    const backupDir = join(backupRoot, `${BACKUP_PREFIX}pre_cloud_${backupTimestamp()}`)
+    fs.mkdirSync(backupDir, { recursive: true })
+    await backupDatabaseToPath(join(backupDir, 'ledger.db'))
+    fs.writeFileSync(join(backupDir, 'manifest.json'), JSON.stringify({
+      version: 1,
+      type: 'db-only',
+      createdAt: new Date().toISOString(),
+      includes: ['ledger.db'],
+    }, null, 2))
+    return { ok: true, path: backupDir }
+  } catch (e: any) {
+    console.error('DB-only backup failed:', e)
+    return { ok: false, error: e?.message || 'backup failed' }
+  }
+}
+
+function walkSyncFiles(baseDir: string, relativePrefix: string, files: Record<string, SyncFileEntry>): void {
+  if (!fs.existsSync(baseDir)) return
+  for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+    const fullPath = join(baseDir, entry.name)
+    if (entry.isDirectory()) {
+      walkSyncFiles(fullPath, `${relativePrefix}/${entry.name}`, files)
+      continue
+    }
+    if (!entry.isFile()) continue
+    const rel = `${relativePrefix}/${entry.name}`.replace(/^\/+/, '')
+    const stat = fs.statSync(fullPath)
+    files[rel] = {
+      hash: hashFileSync(fullPath),
+      size: stat.size,
+      updatedAt: stat.mtime.toISOString(),
+    }
+  }
+}
+
+export async function buildLiveDataManifest(): Promise<SyncManifest> {
+  const dataDir = getDataDir()
+  const files: Record<string, SyncFileEntry> = {}
+  const tempDb = join(dataDir, '.cloud-sync-ledger.tmp.db')
+  try {
+    await backupDatabaseToPath(tempDb)
+    const stat = fs.statSync(tempDb)
+    files['ledger.db'] = {
+      hash: hashFileSync(tempDb),
+      size: stat.size,
+      updatedAt: stat.mtime.toISOString(),
+    }
+  } finally {
+    fs.rmSync(tempDb, { force: true })
+  }
+  for (const dirName of DATA_DIRS) {
+    walkSyncFiles(join(dataDir, dirName), dirName, files)
+  }
+  return {
+    version: 2,
+    type: 'incremental',
+    updatedAt: new Date().toISOString(),
+    files,
+  }
+}
+
+export async function exportLiveSyncFile(relativePath: string, destPath: string): Promise<void> {
+  const dataDir = getDataDir()
+  fs.mkdirSync(dirname(destPath), { recursive: true })
+  if (relativePath === 'ledger.db') {
+    await backupDatabaseToPath(destPath)
+    return
+  }
+  fs.copyFileSync(join(dataDir, ...relativePath.split('/')), destPath)
+}
+
+export async function applyIncrementalSync(
+  relativePaths: string[],
+  sourceRoot: string,
+  options: { preBackup?: 'full' | 'db-only' | 'none' } = {},
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const preBackup = options.preBackup ?? 'full'
+    if (preBackup === 'full') {
+      await autoBackup({ automatic: true, force: true })
+    } else if (preBackup === 'db-only') {
+      await autoBackupDbOnly()
+    }
+    const dataDir = getDataDir()
+    const needsDb = relativePaths.includes('ledger.db')
+    if (needsDb) closeDatabase()
+
+    for (const rel of relativePaths) {
+      const src = join(sourceRoot, rel)
+      if (!fs.existsSync(src)) continue
+      if (rel === 'ledger.db') {
+        replaceDbFile(src, join(dataDir, 'ledger.db'))
+      } else {
+        const dest = join(dataDir, ...rel.split('/'))
+        fs.mkdirSync(dirname(dest), { recursive: true })
+        fs.copyFileSync(src, dest)
+      }
+    }
+
+    if (needsDb) {
+      initDatabase()
+      normalizeRestoredAttachmentPaths()
+    }
+    return { ok: true }
+  } catch (e: any) {
+    try {
+      initDatabase()
+    } catch {
+      // ignore re-init failure
+    }
+    console.error('Incremental sync apply failed:', e)
+    return { ok: false, error: e?.message || '应用云端差异失败' }
+  }
 }
 
 export function listBackups(): BackupInfo[] {

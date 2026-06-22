@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-const allowedChannels = new Set(['update:state', 'update:open-dialog'])
+const allowedChannels = new Set(['update:state', 'update:open-dialog', 'cloud:sync-progress'])
 
 const api = {
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),

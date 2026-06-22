@@ -95,7 +95,11 @@
         <ProductCatalogPage v-else-if="page === 'products'" :t="t" />
         <InventoryPage v-else-if="page === 'inventory'" :t="t" />
         <LedgerPage v-else-if="isLedgerPage" :page="page" :t="t" @notify="notify" />
-        <ImportPage v-else-if="page === 'import'" :t="t" @notify="notify" />
+        <template v-else-if="page === 'import'">
+          <KeepAlive>
+            <ImportPage :t="t" @notify="notify" />
+          </KeepAlive>
+        </template>
         <TrashPage v-else-if="page === 'trash'" :t="t" @notify="notify" />
         <LogsPage v-else-if="page === 'logs'" :t="t" />
       </main>
@@ -276,7 +280,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { buildCustomerDescription, isCustomerPaymentDescription, parseCustomerDescription } from '../../common/customer-ledger'
 import { parseLedgerDate } from '../../common/ledger-date'
 import {
@@ -302,7 +306,7 @@ import {
   VTextarea,
   VTextField,
 } from 'vuetify/components'
-import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI, updateAPI } from './api'
+import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI, updateAPI, cloudAPI } from './api'
 import { runLodopScript, checkLodopAvailable } from './lodop-print'
 
 type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'products' | 'inventory' | 'trash' | 'logs' | 'import'
@@ -543,6 +547,28 @@ const messages = {
     exportDesc: '把所有账本导出为一个 Excel 文件，方便查看或发给会计。',
     recentBackups: '最近备份',
     noBackupsYet: '还没有备份，建议先点「立即备份」',
+    cloudSection: '七牛云同步',
+    cloudTitle: '差异化云端备份',
+    cloudDesc: '只上传/下载有变化的账本和图片，不全量传 zip。适合多电脑同步。',
+    cloudAccessKey: 'AccessKey',
+    cloudSecretKey: 'SecretKey',
+    cloudBucket: '空间名称',
+    cloudDomain: '外链域名',
+    cloudPrefix: '目录前缀',
+    cloudSaveConfig: '保存云配置',
+    cloudTest: '测试连接',
+    cloudSyncUpload: '上传到云端',
+    cloudSyncDownload: '从云端恢复',
+    cloudConfigSaved: '七牛云配置已保存',
+    cloudTestOk: '七牛云连接正常',
+    cloudSyncUploadDone: '已上传 {uploaded} 个文件，跳过 {skipped} 个未变化文件',
+    cloudSyncDownloadDone: '已下载 {downloaded} 个文件，跳过 {skipped} 个未变化文件',
+    cloudSyncNoChange: '云端与本地一致，无需同步',
+    cloudSyncProgressTitleUpload: '正在上传到云端',
+    cloudSyncProgressTitleDownload: '正在从云端恢复',
+    cloudStatusLine: '本地 {local} 个文件 · 云端 {remote} 个文件 · 云端更新 {time}',
+    cloudStatusEmpty: '云端尚无同步数据',
+    confirmCloudRestore: '确定从云端拉取差异并合并到本机吗？会先自动备份当前数据。',
     total: '共 {count} 条',
     totalIncome: '总收入',
     totalExpense: '总支出',
@@ -867,6 +893,28 @@ const messages = {
     exportDesc: 'Export all ledgers into one Excel file for review or sharing.',
     recentBackups: 'Recent Backups',
     noBackupsYet: 'No backups yet. Tap "Backup Now" to create one.',
+    cloudSection: 'Qiniu Cloud Sync',
+    cloudTitle: 'Incremental Cloud Backup',
+    cloudDesc: 'Upload/download only changed ledger and image files — not full zip packages.',
+    cloudAccessKey: 'AccessKey',
+    cloudSecretKey: 'SecretKey',
+    cloudBucket: 'Bucket',
+    cloudDomain: 'CDN Domain',
+    cloudPrefix: 'Path Prefix',
+    cloudSaveConfig: 'Save Cloud Settings',
+    cloudTest: 'Test Connection',
+    cloudSyncUpload: 'Upload to Cloud',
+    cloudSyncDownload: 'Restore from Cloud',
+    cloudConfigSaved: 'Cloud settings saved',
+    cloudTestOk: 'Cloud connection OK',
+    cloudSyncUploadDone: 'Uploaded {uploaded} file(s), skipped {skipped} unchanged',
+    cloudSyncDownloadDone: 'Downloaded {downloaded} file(s), skipped {skipped} unchanged',
+    cloudSyncNoChange: 'Local and cloud are already in sync',
+    cloudSyncProgressTitleUpload: 'Uploading to cloud',
+    cloudSyncProgressTitleDownload: 'Restoring from cloud',
+    cloudStatusLine: 'Local {local} files · Cloud {remote} files · Cloud updated {time}',
+    cloudStatusEmpty: 'No cloud sync data yet',
+    confirmCloudRestore: 'Pull cloud differences and merge into this computer? A local backup runs first.',
     total: '{count} items',
     totalIncome: 'Income',
     totalExpense: 'Expense',
@@ -3359,6 +3407,7 @@ function formatBackupTime(name: string, time?: string) {
 }
 
 const ImportPage = defineComponent({
+  name: 'ImportPage',
   props: { t: { type: Function, required: true } },
   emits: ['notify'],
   setup(props, { emit }) {
@@ -3373,7 +3422,178 @@ const ImportPage = defineComponent({
     const error = ref('')
     const stockError = ref('')
     const backups = ref<any[]>([])
-    const loadInfo = async () => { backups.value = await systemAPI.backupsList() }
+    const cloudConfig = reactive({ accessKey: '', secretKey: '', bucket: '', domain: '', prefix: '' })
+    const cloudStatus = ref<any>(null)
+    const cloudSectionReady = ref(false)
+    const cloudSaving = ref(false)
+    const cloudTesting = ref(false)
+    const cloudUploading = ref(false)
+    const cloudDownloading = ref(false)
+    const cloudProgressDialog = ref(false)
+    const cloudProgress = reactive({
+      mode: 'upload' as 'upload' | 'download',
+      phase: 'preparing' as 'preparing' | 'transferring' | 'applying' | 'done',
+      current: 0,
+      total: 0,
+      file: '',
+      message: '',
+    })
+    let cloudProgressTimer: ReturnType<typeof setTimeout> | null = null
+    let offCloudProgress: (() => void) | null = null
+    const cloudProgressPercent = computed(() => {
+      if (cloudProgress.phase === 'done') return 100
+      if (!cloudProgress.total) return 0
+      return Math.min(100, Math.round((cloudProgress.current / cloudProgress.total) * 100))
+    })
+    const beginCloudProgress = (mode: 'upload' | 'download') => {
+      if (cloudProgressTimer) {
+        clearTimeout(cloudProgressTimer)
+        cloudProgressTimer = null
+      }
+      cloudProgress.mode = mode
+      cloudProgress.phase = 'preparing'
+      cloudProgress.current = 0
+      cloudProgress.total = 0
+      cloudProgress.file = ''
+      cloudProgress.message = mode === 'upload' ? '正在准备上传…' : '正在准备恢复…'
+      cloudProgressDialog.value = true
+    }
+    const handleCloudProgress = (progress: any) => {
+      cloudProgress.mode = progress?.mode === 'download' ? 'download' : 'upload'
+      cloudProgress.phase = progress?.phase || 'preparing'
+      cloudProgress.current = Number(progress?.current || 0)
+      cloudProgress.total = Number(progress?.total || 0)
+      cloudProgress.file = String(progress?.file || '')
+      cloudProgress.message = String(progress?.message || '')
+      cloudProgressDialog.value = true
+    }
+    const finishCloudProgress = () => {
+      if (cloudProgressTimer) clearTimeout(cloudProgressTimer)
+      cloudProgressTimer = setTimeout(() => {
+        cloudProgressDialog.value = false
+        cloudProgressTimer = null
+      }, 700)
+    }
+    const loadCloudConfig = async () => {
+      try {
+        const config = await cloudAPI.getConfig()
+        cloudConfig.accessKey = config?.accessKey || ''
+        cloudConfig.bucket = config?.bucket || ''
+        cloudConfig.domain = config?.domain || ''
+        cloudConfig.prefix = config?.prefix || ''
+        cloudConfig.secretKey = ''
+      } catch {
+        cloudConfig.accessKey = ''
+        cloudConfig.bucket = ''
+        cloudConfig.domain = ''
+        cloudConfig.prefix = ''
+        cloudConfig.secretKey = ''
+      } finally {
+        cloudSectionReady.value = true
+      }
+    }
+    const refreshCloudStatus = async () => {
+      try {
+        cloudStatus.value = await cloudAPI.status()
+      } catch {
+        cloudStatus.value = null
+      }
+    }
+    const loadInfo = async () => {
+      backups.value = await systemAPI.backupsList()
+      await loadCloudConfig()
+      void refreshCloudStatus()
+    }
+    const saveCloudConfig = async () => {
+      cloudSaving.value = true
+      try {
+        const payload: any = {
+          accessKey: cloudConfig.accessKey,
+          bucket: cloudConfig.bucket,
+          domain: cloudConfig.domain,
+          prefix: cloudConfig.prefix,
+        }
+        if (cloudConfig.secretKey) payload.secretKey = cloudConfig.secretKey
+        const result = await cloudAPI.saveConfig(payload)
+        if (!result?.ok) {
+          emit('notify', result?.error || props.t('cloudSaveConfig'), 'error')
+          return
+        }
+        cloudConfig.secretKey = ''
+        cloudStatus.value = await cloudAPI.status()
+        emit('notify', props.t('cloudConfigSaved'))
+      } finally {
+        cloudSaving.value = false
+      }
+    }
+    const testCloud = async () => {
+      cloudTesting.value = true
+      try {
+        const result = await cloudAPI.test()
+        if (result?.ok) {
+          cloudStatus.value = await cloudAPI.status()
+          emit('notify', props.t('cloudTestOk'))
+        } else {
+          emit('notify', result?.error || props.t('cloudTest'), 'error')
+        }
+      } finally {
+        cloudTesting.value = false
+      }
+    }
+    const notifyCloudSyncResult = (result: any, mode: 'upload' | 'download') => {
+      if (!result?.ok) {
+        if (!result?.canceled) emit('notify', result?.error || props.t('backupFailed'), 'error')
+        return
+      }
+      const transferred = mode === 'upload' ? Number(result.uploaded || 0) : Number(result.downloaded || 0)
+      const skipped = Number(result.skipped || 0)
+      if (!transferred) {
+        emit('notify', props.t('cloudSyncNoChange'))
+      } else if (mode === 'upload') {
+        emit('notify', props.t('cloudSyncUploadDone', { uploaded: transferred, skipped }))
+      } else {
+        emit('notify', props.t('cloudSyncDownloadDone', { downloaded: transferred, skipped }))
+      }
+    }
+    const cloudSyncUpload = async () => {
+      beginCloudProgress('upload')
+      cloudUploading.value = true
+      try {
+        const result = await cloudAPI.syncUpload()
+        notifyCloudSyncResult(result, 'upload')
+        cloudStatus.value = await cloudAPI.status()
+      } finally {
+        cloudUploading.value = false
+        finishCloudProgress()
+      }
+    }
+    const cloudSyncDownload = async () => {
+      cloudDownloading.value = true
+      try {
+        const result = await cloudAPI.syncDownload()
+        if (result?.canceled) return
+        notifyCloudSyncResult(result, 'download')
+        if (result?.ok && (result.downloaded || 0) > 0) {
+          await loadInfo()
+        } else {
+          cloudStatus.value = await cloudAPI.status()
+        }
+      } finally {
+        cloudDownloading.value = false
+        finishCloudProgress()
+      }
+    }
+    const cloudStatusText = computed(() => {
+      const status = cloudStatus.value
+      if (!status?.configured) return props.t('cloudDesc')
+      if (!status.remoteFileCount) return props.t('cloudStatusEmpty')
+      const time = status.remoteUpdatedAt ? formatBackupTime('cloud', status.remoteUpdatedAt) : '—'
+      return props.t('cloudStatusLine', {
+        local: status.localFileCount || 0,
+        remote: status.remoteFileCount || 0,
+        time,
+      })
+    })
     const importExcel = async () => {
       const ok = await askConfirm({ message: t('confirmImportLedger'), confirmColor: 'warning' })
       if (!ok) return
@@ -3496,7 +3716,19 @@ const ImportPage = defineComponent({
       event.preventDefault()
       systemAPI.openBackupDir()
     }
-    onMounted(loadInfo)
+    onMounted(() => {
+      void loadInfo()
+      offCloudProgress = cloudAPI.onSyncProgress(handleCloudProgress)
+    })
+    onActivated(() => {
+      if (!cloudSectionReady.value) return
+      void systemAPI.backupsList().then(list => { backups.value = list })
+      void refreshCloudStatus()
+    })
+    onBeforeUnmount(() => {
+      offCloudProgress?.()
+      if (cloudProgressTimer) clearTimeout(cloudProgressTimer)
+    })
     return () => h('div', { class: 'page-wrap narrow data-mgmt-page' }, [
       h(PageHeader, { title: props.t('dataMgmtTitle'), subtitle: props.t('dataMgmtSub') }),
 
@@ -3564,6 +3796,44 @@ const ImportPage = defineComponent({
       ]),
 
       h('section', { class: 'data-section' }, [
+        h('h3', { class: 'data-section-title' }, props.t('cloudSection')),
+        h(VCard, { class: 'content-card data-action-card data-action-card-wide' }, () => [
+          h('div', { class: 'data-action-row data-action-row-stack' }, [
+            h('div', { class: 'data-action-main' }, [
+              h('div', { class: 'data-action-icon' }, '☁️'),
+              h('div', [
+                h('h4', { class: 'data-action-title' }, props.t('cloudTitle')),
+                h('p', { class: 'data-action-copy' }, cloudStatusText.value),
+              ]),
+            ]),
+            cloudSectionReady.value
+              ? h('div', { class: 'cloud-config-grid' }, [
+                h(VTextField, { modelValue: cloudConfig.accessKey, 'onUpdate:modelValue': (v: string) => { cloudConfig.accessKey = v }, label: props.t('cloudAccessKey'), density: 'compact', hideDetails: true }),
+                h(VTextField, {
+                  modelValue: cloudConfig.secretKey,
+                  'onUpdate:modelValue': (v: string) => { cloudConfig.secretKey = v },
+                  label: props.t('cloudSecretKey'),
+                  type: 'password',
+                  density: 'compact',
+                  hideDetails: true,
+                  placeholder: cloudStatus.value?.configured ? '已保存，留空则不修改' : '请填写 SecretKey',
+                }),
+                h(VTextField, { modelValue: cloudConfig.bucket, 'onUpdate:modelValue': (v: string) => { cloudConfig.bucket = v }, label: props.t('cloudBucket'), density: 'compact', hideDetails: true }),
+                h(VTextField, { modelValue: cloudConfig.domain, 'onUpdate:modelValue': (v: string) => { cloudConfig.domain = v }, label: props.t('cloudDomain'), density: 'compact', hideDetails: true }),
+                h(VTextField, { modelValue: cloudConfig.prefix, 'onUpdate:modelValue': (v: string) => { cloudConfig.prefix = v }, label: props.t('cloudPrefix'), density: 'compact', hideDetails: true }),
+              ])
+              : h('div', { class: 'cloud-config-loading muted tiny' }, '正在读取云配置…'),
+            cloudSectionReady.value ? h('div', { class: 'data-action-buttons' }, [
+              h(VBtn, { variant: 'outlined', loading: cloudSaving.value, onClick: saveCloudConfig }, () => props.t('cloudSaveConfig')),
+              h(VBtn, { variant: 'tonal', loading: cloudTesting.value, onClick: testCloud }, () => props.t('cloudTest')),
+              h(VBtn, { color: 'primary', loading: cloudUploading.value, onClick: cloudSyncUpload }, () => props.t('cloudSyncUpload')),
+              h(VBtn, { color: 'error', variant: 'tonal', loading: cloudDownloading.value, onClick: cloudSyncDownload }, () => props.t('cloudSyncDownload')),
+            ]) : null,
+          ]),
+        ]),
+      ]),
+
+      h('section', { class: 'data-section' }, [
         h('h3', { class: 'data-section-title' }, props.t('exportSection')),
         h(VCard, { class: 'content-card data-action-card data-action-card-wide' }, () => [
           h('div', { class: 'data-action-row' }, [
@@ -3614,6 +3884,40 @@ const ImportPage = defineComponent({
           ]) : null,
         ]) : null,
       ]),
+
+      h(VDialog, {
+        modelValue: cloudProgressDialog.value,
+        persistent: true,
+        maxWidth: 480,
+      }, () => h(VCard, { class: 'record-dialog' }, [
+        h('div', { class: 'record-dialog__header' }, [
+          h('div', [
+            h('h2', { class: 'record-dialog__title' }, props.t(cloudProgress.mode === 'upload' ? 'cloudSyncProgressTitleUpload' : 'cloudSyncProgressTitleDownload')),
+            h('p', { class: 'record-dialog__subtitle' }, cloudProgress.message || '…'),
+          ]),
+        ]),
+        h(VCardText, { class: 'record-dialog__body' }, [
+          cloudProgress.total > 0 && cloudProgress.phase !== 'preparing'
+            ? h(VProgressLinear, {
+              modelValue: cloudProgressPercent.value,
+              color: 'primary',
+              height: 8,
+              rounded: true,
+            })
+            : h(VProgressLinear, {
+              indeterminate: true,
+              color: 'primary',
+              height: 8,
+              rounded: true,
+            }),
+          cloudProgress.file
+            ? h('p', { class: 'muted tiny mt-2 cloud-progress-file' }, cloudProgress.file)
+            : null,
+          cloudProgress.total > 0
+            ? h('p', { class: 'muted tiny mt-1' }, `${cloudProgress.current}/${cloudProgress.total}`)
+            : null,
+        ]),
+      ])),
     ])
   },
 })

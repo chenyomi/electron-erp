@@ -178,3 +178,14 @@ export const updateAPI = {
   onState: (listener: (state: any) => void) => window.electronAPI.on('update:state', listener),
   onOpenDialog: (listener: () => void) => window.electronAPI.on('update:open-dialog', listener),
 }
+
+export const cloudAPI = {
+  getConfig: () => api.invoke('cloud:get-config'),
+  saveConfig: (config: any) => api.invoke('cloud:save-config', config),
+  test: () => api.invoke('cloud:test'),
+  status: () => api.invoke('cloud:status'),
+  syncUpload: () => api.invoke('cloud:sync-upload'),
+  syncDownload: () => api.invoke('cloud:sync-download'),
+  onSyncProgress: (listener: (progress: any) => void) => window.electronAPI.on('cloud:sync-progress', listener),
+  list: () => api.invoke('cloud:list'),
+}

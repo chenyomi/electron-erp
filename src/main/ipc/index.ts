@@ -14,6 +14,7 @@ import { registerAiHandlers } from './ai'
 import { registerAttachmentHandlers } from './attachments'
 import { registerPrintHandlers } from './print'
 import { registerUpdateHandlers } from './update'
+import { registerCloudHandlers } from './cloud'
 
 export function registerIpcHandlers(): void {
   registerAuthHandlers()
@@ -31,4 +32,5 @@ export function registerIpcHandlers(): void {
   registerImportHandlers()
   registerAiHandlers()
   registerUpdateHandlers()
+  registerCloudHandlers()
 }

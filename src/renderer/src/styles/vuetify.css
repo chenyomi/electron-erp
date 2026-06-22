@@ -1364,6 +1364,35 @@ body {
   gap: 20px;
 }
 
+.data-action-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.cloud-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  width: 100%;
+}
+
+.cloud-config-loading {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+}
+
+.cloud-progress-file {
+  word-break: break-all;
+}
+
+.data-action-row-stack .data-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
 .data-action-main {
   display: flex;
   align-items: flex-start;

@@ -70,12 +70,14 @@ function createApplicationMenu(): void {
           label: '立即备份',
           accelerator: 'CmdOrCtrl+B',
           click: () => {
-            const result = autoBackup()
-            if (result.ok) {
-              showInfo('备份完成', '已创建新的账务备份。', result.path)
-            } else {
-              dialog.showErrorBox('备份失败', result.error || '请稍后重试。')
-            }
+            void (async () => {
+              const result = await autoBackup()
+              if (result.ok) {
+                showInfo('备份完成', '已创建新的账务备份。', result.path)
+              } else {
+                dialog.showErrorBox('备份失败', result.error || '请稍后重试。')
+              }
+            })()
           },
         },
         { type: 'separator' },
@@ -207,7 +209,7 @@ function createWindow(): void {
   }
 
   mainWindow.on('close', () => {
-    autoBackup({ automatic: true })
+    void autoBackup({ automatic: true })
   })
 }
 

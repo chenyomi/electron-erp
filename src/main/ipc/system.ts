@@ -29,7 +29,7 @@ async function runRestore(sourcePath: string, parent: BrowserWindow | null) {
 
   const result = sourcePath.toLowerCase().endsWith('.zip')
     ? await restoreFromBackupPackage(sourcePath)
-    : restoreFromBackup(sourcePath)
+    : await restoreFromBackup(sourcePath)
 
   if (result.ok) {
     BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())

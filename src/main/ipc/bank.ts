@@ -2,6 +2,18 @@ import { ipcMain } from 'electron'
 import { getDb } from '../db'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
+import { recalculateBankBalances, getLastLedgerBalance } from './ledger-balance'
+
+function normalizeBankRow(row: any) {
+  return {
+    date: String(row.date || ''),
+    description: String(row.description || ''),
+    amount_in: Number(row.amount_in || 0),
+    amount_out: Number(row.amount_out || 0),
+    balance: 0,
+    note: String(row.note || ''),
+  }
+}
 
 export function registerBankHandlers(): void {
   ipcMain.handle('bank:list', (_e, params = {}) => {
@@ -30,10 +42,15 @@ export function registerBankHandlers(): void {
     const filters = normalizeLedgerFilters(params)
     const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
-    return db.prepare(`
+    const totals = db.prepare(`
       SELECT SUM(amount_in) as totalIn, SUM(amount_out) as totalOut
       FROM bank_ledger WHERE deleted_at IS NULL ${dateWhere.sql}
-    `).get(...dateWhere.params)
+    `).get(...dateWhere.params) as { totalIn?: number; totalOut?: number }
+    return {
+      totalIn: totals?.totalIn || 0,
+      totalOut: totals?.totalOut || 0,
+      lastBalance: getLastLedgerBalance(db, 'bank_ledger', dateWhere.sql, dateWhere.params),
+    }
   })
 
   ipcMain.handle('bank:monthly', () => {
@@ -47,10 +64,12 @@ export function registerBankHandlers(): void {
 
   ipcMain.handle('bank:add', (_e, row) => {
     const db = getDb()
+    const payload = normalizeBankRow(row)
     const r = db.prepare(`
       INSERT INTO bank_ledger (date, description, amount_in, amount_out, balance, note)
       VALUES (@date, @description, @amount_in, @amount_out, @balance, @note)
-    `).run(row)
+    `).run(payload)
+    recalculateBankBalances(db)
     const newRow = db.prepare('SELECT * FROM bank_ledger WHERE id = ?').get(r.lastInsertRowid)
     logOperation('bank_ledger', r.lastInsertRowid as number, 'INSERT', null, newRow as object)
     return newRow
@@ -59,19 +78,29 @@ export function registerBankHandlers(): void {
   ipcMain.handle('bank:update', (_e, { id, ...row }) => {
     const db = getDb()
     const old = db.prepare('SELECT * FROM bank_ledger WHERE id = ?').get(id)
+    const payload = { ...normalizeBankRow(row), id }
     db.prepare(`
       UPDATE bank_ledger SET date=@date, description=@description,
         amount_in=@amount_in, amount_out=@amount_out, balance=@balance,
         note=@note, updated_at=datetime('now','localtime') WHERE id=@id
-    `).run({ ...row, id })
+    `).run(payload)
+    recalculateBankBalances(db)
     const newRow = db.prepare('SELECT * FROM bank_ledger WHERE id = ?').get(id)
     logOperation('bank_ledger', id, 'UPDATE', old as object, newRow as object)
     return newRow
   })
 
-  ipcMain.handle('bank:delete', (_e, id) => { softDelete('bank_ledger', id); return { ok: true } })
+  ipcMain.handle('bank:delete', (_e, id) => {
+    softDelete('bank_ledger', id)
+    recalculateBankBalances(getDb())
+    return { ok: true }
+  })
   ipcMain.handle('bank:trash', () => {
     return getDb().prepare(`SELECT * FROM bank_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
   })
-  ipcMain.handle('bank:restore', (_e, id) => { restore('bank_ledger', id); return { ok: true } })
+  ipcMain.handle('bank:restore', (_e, id) => {
+    restore('bank_ledger', id)
+    recalculateBankBalances(getDb())
+    return { ok: true }
+  })
 }

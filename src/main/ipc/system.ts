@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as XLSX from 'xlsx-js-style'
 import { buildExportWorkbook, timestampForFile, type ExportParams, type ExportTable } from '../export/ledger-export'
 import { buildDateFilterClause } from './helpers'
+import { getLastLedgerBalance } from './ledger-balance'
 
 async function confirmRestore(parent: BrowserWindow | null): Promise<boolean> {
   const options = {
@@ -64,22 +65,25 @@ export function registerSystemHandlers(): void {
     const cash = db.prepare(`SELECT SUM(income) as totalIncome, SUM(expense) as totalExpense FROM cash_ledger WHERE deleted_at IS NULL`).get() as any
     const bank = db.prepare(`SELECT SUM(amount_in) as totalIn, SUM(amount_out) as totalOut FROM bank_ledger WHERE deleted_at IS NULL`).get() as any
     const bills = db.prepare(`SELECT SUM(amount_in) as totalIn, SUM(amount_out) as totalOut FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any
-    const cashBalance = db.prepare(`SELECT balance FROM cash_ledger WHERE deleted_at IS NULL ORDER BY date ASC, id ASC LIMIT 1`).get() as any
-    const cashLastBalance = db.prepare(`SELECT balance FROM cash_ledger WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 1`).get() as any
+    const cashLastBalance = getLastLedgerBalance(db, 'cash_ledger')
+    const bankLastBalance = getLastLedgerBalance(db, 'bank_ledger')
+    const billsLastBalance = getLastLedgerBalance(db, 'acceptance_bills')
     return {
       cash: {
         totalIncome: cash?.totalIncome || 0,
         totalExpense: cash?.totalExpense || 0,
-        balance: cashLastBalance?.balance || 0
+        balance: cashLastBalance,
       },
       bank: {
         totalIn: bank?.totalIn || 0,
-        totalOut: bank?.totalOut || 0
+        totalOut: bank?.totalOut || 0,
+        balance: bankLastBalance,
       },
       bills: {
         totalIn: bills?.totalIn || 0,
-        totalOut: bills?.totalOut || 0
-      }
+        totalOut: bills?.totalOut || 0,
+        balance: billsLastBalance,
+      },
     }
   })
 

@@ -69,6 +69,7 @@ export const attachmentAPI = {
   pick: () => api.invoke('attachment:pick'),
   pickChat: () => api.invoke('attachment:pick-chat'),
   add: (relatedTable: string, relatedId: number, filePaths?: string[]) => api.invoke('attachment:add', relatedTable, relatedId, filePaths),
+  delete: (id: number) => api.invoke('attachment:delete', id),
 }
 
 export const stockInAPI = {

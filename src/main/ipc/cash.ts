@@ -2,6 +2,19 @@ import { ipcMain } from 'electron'
 import { getDb } from '../db'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
+import { recalculateCashBalances, getLastLedgerBalance } from './ledger-balance'
+
+function normalizeCashRow(row: any) {
+  return {
+    date: String(row.date || ''),
+    income: Number(row.income || 0),
+    description: String(row.description || ''),
+    expense: Number(row.expense || 0),
+    operator: String(row.operator || ''),
+    balance: 0,
+    note: String(row.note || ''),
+  }
+}
 
 export function registerCashHandlers(): void {
   // 获取列表
@@ -35,13 +48,17 @@ export function registerCashHandlers(): void {
     const filters = normalizeLedgerFilters(params)
     const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
-    return db.prepare(`
+    const totals = db.prepare(`
       SELECT
         SUM(income)  as totalIncome,
-        SUM(expense) as totalExpense,
-        MAX(balance) as lastBalance
+        SUM(expense) as totalExpense
       FROM cash_ledger WHERE deleted_at IS NULL ${dateWhere.sql}
-    `).get(...dateWhere.params)
+    `).get(...dateWhere.params) as { totalIncome?: number; totalExpense?: number }
+    return {
+      totalIncome: totals?.totalIncome || 0,
+      totalExpense: totals?.totalExpense || 0,
+      lastBalance: getLastLedgerBalance(db, 'cash_ledger', dateWhere.sql, dateWhere.params),
+    }
   })
 
   // 月度汇总（图表用）
@@ -61,11 +78,13 @@ export function registerCashHandlers(): void {
   // 新增
   ipcMain.handle('cash:add', (_e, row) => {
     const db = getDb()
+    const payload = normalizeCashRow(row)
     const stmt = db.prepare(`
       INSERT INTO cash_ledger (date, income, description, expense, operator, balance, note)
       VALUES (@date, @income, @description, @expense, @operator, @balance, @note)
     `)
-    const result = stmt.run(row)
+    const result = stmt.run(payload)
+    recalculateCashBalances(db)
     const newRow = db.prepare('SELECT * FROM cash_ledger WHERE id = ?').get(result.lastInsertRowid)
     logOperation('cash_ledger', result.lastInsertRowid as number, 'INSERT', null, newRow as object)
     return newRow
@@ -75,13 +94,15 @@ export function registerCashHandlers(): void {
   ipcMain.handle('cash:update', (_e, { id, ...row }) => {
     const db = getDb()
     const oldRow = db.prepare('SELECT * FROM cash_ledger WHERE id = ?').get(id)
+    const payload = { ...normalizeCashRow(row), id }
     db.prepare(`
       UPDATE cash_ledger
       SET date=@date, income=@income, description=@description,
           expense=@expense, operator=@operator, balance=@balance,
           note=@note, updated_at=datetime('now','localtime')
       WHERE id=@id
-    `).run({ ...row, id })
+    `).run(payload)
+    recalculateCashBalances(db)
     const newRow = db.prepare('SELECT * FROM cash_ledger WHERE id = ?').get(id)
     logOperation('cash_ledger', id, 'UPDATE', oldRow as object, newRow as object)
     return newRow
@@ -90,6 +111,7 @@ export function registerCashHandlers(): void {
   // 软删除
   ipcMain.handle('cash:delete', (_e, id) => {
     softDelete('cash_ledger', id)
+    recalculateCashBalances(getDb())
     return { ok: true }
   })
 
@@ -102,6 +124,7 @@ export function registerCashHandlers(): void {
   // 恢复
   ipcMain.handle('cash:restore', (_e, id) => {
     restore('cash_ledger', id)
+    recalculateCashBalances(getDb())
     return { ok: true }
   })
 }

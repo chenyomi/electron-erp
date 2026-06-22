@@ -43,6 +43,8 @@ export function registerAttachmentHandlers(): void {
     if (!paths.length) return { ok: false, canceled: true }
     return { ok: true, count: await saveAttachments(relatedTable, relatedId, paths) }
   })
+
+  ipcMain.handle('attachment:delete', (_e, id: number) => deleteAttachment(id))
 }
 
 export function attachmentPreviewSql(tableName: string): string {
@@ -132,6 +134,18 @@ function listAttachments(relatedTable: string, relatedId: number): any[] {
       fileName: row.file_name,
       dataUrl: imageDataUrl(row.file_path)
     }))
+}
+
+function deleteAttachment(id: number): { ok: boolean; error?: string } {
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as any
+  if (!row) return { ok: false, error: 'not found' }
+  if (!allowedTables.has(row.related_table)) return { ok: false, error: 'invalid table' }
+  if (fs.existsSync(row.file_path)) {
+    try { fs.unlinkSync(row.file_path) } catch { /* ignore */ }
+  }
+  db.prepare('DELETE FROM attachments WHERE id = ?').run(id)
+  return { ok: true }
 }
 
 function imageDataUrl(filePath?: string): string {

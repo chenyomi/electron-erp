@@ -254,7 +254,7 @@
           </v-alert>
           <div v-else-if="updateState.status === 'available' || updateState.status === 'downloaded'">
             <p>{{ t('updateFound', { current: updateState.currentVersion || appVersion, latest: updateState.version }) }}</p>
-            <pre v-if="updateState.releaseNotes" class="update-release-notes">{{ updateState.releaseNotes }}</pre>
+            <div v-if="updateState.releaseNotes" class="update-release-notes" v-html="updateState.releaseNotes" />
           </div>
           <div v-else-if="updateState.status === 'downloading'">
             <v-progress-linear :model-value="updateState.percent || 0" color="primary" height="8" rounded />
@@ -451,6 +451,7 @@ const messages = {
     viewImages: '查看图片',
     addImage: '添加图片',
     chooseImage: '选择图片',
+    removeImage: '移除图片',
     noImages: '暂无图片',
     search: '搜索…',
     searchCash: '搜索摘要/经办人/日期…',
@@ -768,6 +769,7 @@ const messages = {
     viewImages: 'Preview',
     addImage: 'Add Image',
     chooseImage: 'Choose Image',
+    removeImage: 'Remove Image',
     noImages: 'No images',
     search: 'Search…',
     searchCash: 'Search description/operator/date…',
@@ -1331,8 +1333,8 @@ const DashboardPage = defineComponent({
         h(StatCard, { title: '现金结余', value: summary.value?.cash?.balance || 0, color: 'success' }),
         h(StatCard, { title: '现金总收入', value: summary.value?.cash?.totalIncome || 0, color: 'primary' }),
         h(StatCard, { title: '现金总支出', value: summary.value?.cash?.totalExpense || 0, color: 'error' }),
-        h(StatCard, { title: '公账净收入', value: (summary.value?.bank?.totalIn || 0) - (summary.value?.bank?.totalOut || 0), color: 'secondary' }),
-        h(StatCard, { title: '承兑票净额', value: (summary.value?.bills?.totalIn || 0) - (summary.value?.bills?.totalOut || 0), color: 'warning' }),
+        h(StatCard, { title: '公账结余', value: summary.value?.bank?.balance || 0, color: 'secondary' }),
+        h(StatCard, { title: '承兑票结余', value: summary.value?.bills?.balance || 0, color: 'warning' }),
       ]),
       h(ChartCard, { title: '月度收支趋势' }, () => h('div', { ref: chartRefs[0], class: 'chart tall' })),
       h('div', { class: 'chart-grid' }, ['资金结构环图', '月度净流动能曲线', '资金净流健康仪表盘', '账务规模雷达图'].map((title, i) => h(ChartCard, { title }, () => h('div', { ref: chartRefs[i + 1], class: 'chart' })))),
@@ -1533,8 +1535,8 @@ const ProductCatalogPage = defineComponent({
 
 const ledgerConfigs: any = {
   cash: { title: 'cash', api: cashAPI, pageSize: 20, search: 'searchCash', columns: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], fields: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], summary: ['totalIncome', 'totalExpense', 'currentSurplus'], table: 'cash', relatedTable: 'cash_ledger' },
-  bank: { title: 'bank', api: bankAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'netAmount'], table: 'bank', relatedTable: 'bank_ledger' },
-  bills: { title: 'bills', api: billsAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'netAmount'], table: 'bills', relatedTable: 'acceptance_bills' },
+  bank: { title: 'bank', api: bankAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'currentSurplus'], table: 'bank', relatedTable: 'bank_ledger' },
+  bills: { title: 'bills', api: billsAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'currentSurplus'], table: 'bills', relatedTable: 'acceptance_bills' },
   customer: { title: 'customer', api: customerAPI, pageSize: 20, search: 'search', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note', 'month_label'], summary: [], table: 'customer', relatedTable: 'customer_ledger' },
   stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['doc_no', 'supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
   stockOut: { title: 'stockOut', api: stockOutAPI, pageSize: 20, search: 'searchStock', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['doc_no', 'customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockOut', relatedTable: 'stock_out_ledger' },
@@ -1546,17 +1548,17 @@ type FormSectionSpec = { titleKey: string; fields: FormFieldSpec[] }
 const formSections: Record<string, FormSectionSpec[]> = {
   cash: [
     { titleKey: 'formSectionBasic', fields: [{ key: 'date', span: 'half' }, { key: 'operator', span: 'half' }, { key: 'description', span: 'full' }] },
-    { titleKey: 'formSectionAmount', fields: [{ key: 'income', span: 'half' }, { key: 'expense', span: 'half' }, { key: 'balance', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'income', span: 'half' }, { key: 'expense', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   bank: [
     { titleKey: 'formSectionBasic', fields: [{ key: 'date', span: 'half' }, { key: 'description', span: 'full' }] },
-    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }, { key: 'balance', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   bills: [
     { titleKey: 'formSectionBasic', fields: [{ key: 'date', span: 'half' }, { key: 'description', span: 'full' }] },
-    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }, { key: 'balance', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_in', span: 'half' }, { key: 'amount_out', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   customer: [
@@ -1622,6 +1624,7 @@ const LedgerPage = defineComponent({
     const attachmentRow = ref<any>(null)
     const attachments = ref<any[]>([])
     const pendingAttachments = ref<any[]>([])
+    const pendingAttachmentDeletes = ref<number[]>([])
     const attachmentLoading = ref(false)
     const imagePreview = ref<any>(null)
     const printDialog = ref(false)
@@ -1685,7 +1688,7 @@ const LedgerPage = defineComponent({
       }
       return [...config.value.columns, 'attachments']
     })
-    const years = yearOptions()
+    const displayAttachments = computed(() => attachments.value.filter((item: any) => !pendingAttachmentDeletes.value.includes(item.id)))
     const months = monthOptions()
 
     const buildLedgerFilters = (customerName = '') => {
@@ -1785,6 +1788,7 @@ const LedgerPage = defineComponent({
       Object.keys(form).forEach(k => delete form[k])
       attachments.value = []
       pendingAttachments.value = []
+      pendingAttachmentDeletes.value = []
       if (props.page === 'customer') customerEntryMode.value = mode
       const activeName = customerDetailName.value || filterValue.value
       if (activeName && config.value.filterKey) form[config.value.filterKey] = activeName
@@ -1889,6 +1893,7 @@ const LedgerPage = defineComponent({
         customerEntryMode.value = Number(form.amount_out) > 0 && !Number(form.amount_in) ? 'payment' : 'sale'
       }
       pendingAttachments.value = []
+      pendingAttachmentDeletes.value = []
       await loadRecordOptions()
       dialog.value = true
       await loadAttachments(row)
@@ -1935,9 +1940,13 @@ const LedgerPage = defineComponent({
           payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
         }
         const saved = editing.value ? await config.value.api.update({ ...payload, id: editing.value.id }) : await config.value.api.add(payload)
+        if (pendingAttachmentDeletes.value.length) {
+          await commitAttachmentDeletes()
+        }
         if (pendingAttachments.value.length && saved?.id) {
           await attachmentAPI.add(config.value.relatedTable, saved.id, pendingAttachments.value.map((item: any) => item.filePath))
         }
+        pendingAttachments.value = []
         dialog.value = false
         emit('notify', editing.value ? '已更新' : '已添加')
         if (customerDetailDialog.value) {
@@ -1972,6 +1981,7 @@ const LedgerPage = defineComponent({
     const openAttachments = async (row: any) => {
       attachmentRow.value = row
       attachments.value = []
+      pendingAttachmentDeletes.value = []
       attachmentDialog.value = true
       await loadAttachments(row)
     }
@@ -1996,6 +2006,71 @@ const LedgerPage = defineComponent({
       const picked = await attachmentAPI.pick()
       if (picked?.length) pendingAttachments.value = [...pendingAttachments.value, ...picked]
     }
+    const removePendingAttachment = (index: number) => {
+      pendingAttachments.value = pendingAttachments.value.filter((_, itemIndex) => itemIndex !== index)
+    }
+    const stageAttachmentRemoval = (id: number) => {
+      if (!pendingAttachmentDeletes.value.includes(id)) {
+        pendingAttachmentDeletes.value = [...pendingAttachmentDeletes.value, id]
+      }
+      if (imagePreview.value?.id === id) closeImagePreview()
+    }
+    const commitAttachmentDeletes = async () => {
+      const ids = [...pendingAttachmentDeletes.value]
+      if (!ids.length) return
+      for (const id of ids) {
+        const result = await attachmentAPI.delete(id)
+        if (!result?.ok) throw new Error('移除图片失败')
+      }
+      pendingAttachmentDeletes.value = []
+    }
+    const closeRecordDialog = () => {
+      dialog.value = false
+      pendingAttachmentDeletes.value = []
+    }
+    const closeAttachmentDialog = () => {
+      attachmentDialog.value = false
+      pendingAttachmentDeletes.value = []
+      attachmentRow.value = null
+    }
+    const saveAttachmentChanges = async () => {
+      if (!pendingAttachmentDeletes.value.length) {
+        closeAttachmentDialog()
+        return
+      }
+      attachmentLoading.value = true
+      try {
+        await commitAttachmentDeletes()
+        emit('notify', '图片已更新')
+        closeAttachmentDialog()
+        load()
+      } catch (error: any) {
+        emit('notify', error?.message || '保存图片失败', 'error')
+      } finally {
+        attachmentLoading.value = false
+      }
+    }
+    const renderAttachmentPreviewCard = (item: any, options: { key: string; pending?: boolean; onRemove?: () => void }) => h('div', { key: options.key, class: 'image-preview-card-wrap' }, [
+      h('button', {
+        type: 'button',
+        class: ['image-preview-card', options.pending ? 'pending' : ''],
+        onClick: () => openImagePreview(item),
+      }, [
+        h('img', { src: item.dataUrl, alt: item.fileName }),
+        h('span', item.fileName),
+      ]),
+      options.onRemove
+        ? h('button', {
+          type: 'button',
+          class: 'image-preview-remove',
+          title: props.t('removeImage'),
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation()
+            options.onRemove?.()
+          },
+        }, '×')
+        : null,
+    ])
     const exportRows = async () => {
       exporting.value = true
       try {
@@ -2493,14 +2568,21 @@ const LedgerPage = defineComponent({
               count: customerPaymentRows.value.filter((row: any) => !String(row.date || '').trim()).length,
             }))
             : null,
-          h(VTabs, {
-            modelValue: customerDetailTab.value,
-            'onUpdate:modelValue': (v: 'sale' | 'payment') => { customerDetailTab.value = v },
-            density: 'compact',
-            class: 'customer-workspace-tabs',
-          }, () => [
-            h(VTab, { value: 'sale' }, () => `${props.t('customerSaleDetail')} (${total.value})`),
-            h(VTab, { value: 'payment' }, () => `${props.t('customerPaymentDetail')} (${customerPaymentTotal.value})`),
+          h('div', { class: 'customer-workspace-tabs', role: 'tablist' }, [
+            h('button', {
+              type: 'button',
+              role: 'tab',
+              class: ['customer-workspace-tab', { active: customerDetailTab.value === 'sale' }],
+              'aria-selected': customerDetailTab.value === 'sale',
+              onClick: () => { customerDetailTab.value = 'sale' },
+            }, `${props.t('customerSaleDetail')} (${total.value})`),
+            h('button', {
+              type: 'button',
+              role: 'tab',
+              class: ['customer-workspace-tab', { active: customerDetailTab.value === 'payment' }],
+              'aria-selected': customerDetailTab.value === 'payment',
+              onClick: () => { customerDetailTab.value = 'payment' },
+            }, `${props.t('customerPaymentDetail')} (${customerPaymentTotal.value})`),
           ]),
           customerDetailTab.value === 'sale'
             ? renderLedgerTableCard({
@@ -2547,7 +2629,7 @@ const LedgerPage = defineComponent({
             : props.t('formAddHint')),
         cancelLabel: props.t('cancel'),
         saveLabel: props.t('save'),
-        onClose: () => { dialog.value = false },
+        onClose: closeRecordDialog,
         onSave: save,
         default: () => [
           ...getFormSections(props.page, config.value.fields, customerEntryMode.value).map(section => h('div', { class: 'record-dialog__section', key: section.titleKey }, [
@@ -2567,20 +2649,21 @@ const LedgerPage = defineComponent({
             h('div', { class: 'form-image-section' }, [
               h('div', { class: 'form-image-section__head' }, [
                 h('div', [
-                  h('div', { class: 'muted tiny' }, editing.value ? '详情图片可直接预览，也可以继续补充上传。' : '新增记录时可先选图片，保存后自动压缩关联。'),
+                  h('div', { class: 'muted tiny' }, editing.value ? '移除图片后需点击保存才会真正删除；也可继续补充上传。' : '新增记录时可先选图片，保存后自动压缩关联。'),
                 ]),
                 h(VBtn, { variant: 'tonal', size: 'small', loading: attachmentLoading.value, onClick: choosePendingAttachments }, () => props.t('chooseImage')),
               ]),
-              attachments.value.length || pendingAttachments.value.length
+              displayAttachments.value.length || pendingAttachments.value.length
                 ? h('div', { class: 'image-preview-grid compact' }, [
-                  ...attachments.value.map((item: any) => h('button', { key: `old-${item.id}`, type: 'button', class: 'image-preview-card', onClick: () => openImagePreview(item) }, [
-                    h('img', { src: item.dataUrl, alt: item.fileName }),
-                    h('span', item.fileName),
-                  ])),
-                  ...pendingAttachments.value.map((item: any, index: number) => h('button', { key: `pending-${index}`, type: 'button', class: 'image-preview-card pending', onClick: () => openImagePreview(item) }, [
-                    h('img', { src: item.dataUrl, alt: item.fileName }),
-                    h('span', item.fileName),
-                  ])),
+                  ...displayAttachments.value.map((item: any) => renderAttachmentPreviewCard(item, {
+                    key: `old-${item.id}`,
+                    onRemove: () => stageAttachmentRemoval(item.id),
+                  })),
+                  ...pendingAttachments.value.map((item: any, index: number) => renderAttachmentPreviewCard(item, {
+                    key: `pending-${index}-${item.filePath}`,
+                    pending: true,
+                    onRemove: () => removePendingAttachment(index),
+                  })),
                 ])
                 : h('div', { class: 'empty-image-state' }, props.t('noImages')),
             ]),
@@ -2593,16 +2676,18 @@ const LedgerPage = defineComponent({
         title: `${props.t('images')} · ${attachmentRow.value?.description || attachmentRow.value?.product_name || ''}`,
         subtitle: props.t('formEditHint'),
         cancelLabel: props.t('cancel'),
-        onClose: () => { attachmentDialog.value = false },
-        footerExtra: h(VBtn, { color: 'primary', loading: attachmentLoading.value, onClick: addAttachment }, () => props.t('addImage')),
+        saveLabel: props.t('save'),
+        onClose: closeAttachmentDialog,
+        onSave: saveAttachmentChanges,
+        footerExtra: h(VBtn, { color: 'primary', variant: 'tonal', loading: attachmentLoading.value, onClick: addAttachment }, () => props.t('addImage')),
         default: () => [
           attachmentLoading.value
             ? h('div', { class: 'empty-cell' }, '加载中...')
-            : attachments.value.length
-              ? h('div', { class: 'image-preview-grid' }, attachments.value.map((item: any) => h('button', { key: item.id, type: 'button', class: 'image-preview-card', onClick: () => openImagePreview(item) }, [
-                h('img', { src: item.dataUrl, alt: item.fileName }),
-                h('span', item.fileName),
-              ])))
+            : displayAttachments.value.length
+              ? h('div', { class: 'image-preview-grid' }, displayAttachments.value.map((item: any) => renderAttachmentPreviewCard(item, {
+                key: String(item.id),
+                onRemove: () => stageAttachmentRemoval(item.id),
+              })))
               : h('div', { class: 'empty-image-state' }, props.t('noImages')),
         ],
       }),
@@ -2774,7 +2859,20 @@ const LedgerPage = defineComponent({
 })
 
 function renderLedgerStats(pageKey: string, summary: any, tFn: any, hooks: { onOpeningBalanceClick?: () => void } = {}) {
-  if (pageKey === 'cash') return [h(StatCard, { title: tFn('totalIncome'), value: summary.totalIncome || 0, color: 'success' }), h(StatCard, { title: tFn('totalExpense'), value: summary.totalExpense || 0, color: 'error' }), h(StatCard, { title: tFn('currentSurplus'), value: summary.lastBalance || 0, color: 'primary' })]
+  if (pageKey === 'cash') {
+    return [
+      h(StatCard, { title: tFn('totalIncome'), value: summary.totalIncome || 0, color: 'success' }),
+      h(StatCard, { title: tFn('totalExpense'), value: summary.totalExpense || 0, color: 'error' }),
+      h(StatCard, { title: tFn('currentSurplus'), value: summary.lastBalance || 0, color: 'primary' }),
+    ]
+  }
+  if (pageKey === 'bank' || pageKey === 'bills') {
+    return [
+      h(StatCard, { title: tFn('totalIn'), value: summary.totalIn || 0, color: 'success' }),
+      h(StatCard, { title: tFn('totalOut'), value: summary.totalOut || 0, color: 'error' }),
+      h(StatCard, { title: tFn('currentSurplus'), value: summary.lastBalance || 0, color: 'primary' }),
+    ]
+  }
   if (pageKey === 'customer') {
     if (!summary?.customer_name) return []
     return [

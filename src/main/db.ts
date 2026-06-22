@@ -6,6 +6,7 @@ import { buildCustomerRowRepair, isLikelyAmountNotDate } from '../common/custome
 import { parseCustomerDescription } from '../common/customer-ledger'
 import { parseLedgerDate } from '../common/ledger-date'
 import { ensureCustomerProfilesTable, recalculateCustomerBalances } from './ipc/customer-profile'
+import { recalculateAllLedgerBalances } from './ipc/ledger-balance'
 import { repairCustomerAnomalies } from './ipc/customer-anomaly'
 
 let db: Database.Database | undefined
@@ -59,6 +60,7 @@ function migrateSchema(): void {
   migrateCustomerPaymentMisalignment()
   repairCustomerAnomalies(db!)
   recalculateAllCustomerBalances()
+  recalculateAllLedgerBalances(db!)
   ensureCustomerProfilesTable(db!)
 }
 

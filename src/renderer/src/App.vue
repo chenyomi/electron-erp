@@ -318,7 +318,7 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { buildCustomerDescription, isCustomerPaymentDescription, parseCustomerDescription } from '../../common/customer-ledger'
+import { buildCustomerDescription, isCustomerPaymentDescription, isCustomerPaymentRecord, isCustomerReturnRecord, parseCustomerDescription } from '../../common/customer-ledger'
 import { parseLedgerDate } from '../../common/ledger-date'
 import {
   VAlert,
@@ -628,7 +628,13 @@ const messages = {
     customerOverpaidTag: '多收',
     customerBalanceColumn: '欠款/多收',
     addCustomerSale: '登记应收',
+    addCustomerReturn: '登记退货',
     addCustomerPayment: '登记收款',
+    customerBizKind: '类型',
+    customerBizSale: '应收',
+    customerBizReturn: '退货',
+    customerBizPayment: '收款',
+    customerReturnFormHint: '填写退货数量与单价（填正数即可），保存后自动冲减应收。',
     customerPaymentFormHint: '客户每转来一笔钱，登记一条收款；不支持批量合并收款。',
     customerOverview: '客户欠款一览',
     customerOverviewSub: '点客户名或「台账」查看明细；在台账内登记应收与收款。',
@@ -986,7 +992,13 @@ const messages = {
     customerOverpaidTag: 'Overpaid',
     customerBalanceColumn: 'Due / Overpaid',
     addCustomerSale: 'Add Receivable',
+    addCustomerReturn: 'Add Return',
     addCustomerPayment: 'Record Payment',
+    customerBizKind: 'Type',
+    customerBizSale: 'Receivable',
+    customerBizReturn: 'Return',
+    customerBizPayment: 'Payment',
+    customerReturnFormHint: 'Enter return qty and price as positive numbers; receivable is reduced automatically.',
     customerPaymentFormHint: 'Record one payment per transfer. Batch collection is not supported.',
     customerOverview: 'Customer Balances',
     customerOverviewSub: 'Click a customer or 台账 to view details. Register receivables and payments inside the ledger.',
@@ -2001,7 +2013,7 @@ const LedgerPage = defineComponent({
     const printForm = reactive({ customerPhone: '', customerAddress: '', paymentReceived: '' })
     const customerProfileDialog = ref(false)
     const customerProfileForm = reactive({ opening_balance: 0, note: '' })
-    const customerEntryMode = ref<'sale' | 'payment'>('sale')
+    const customerEntryMode = ref<'sale' | 'return' | 'payment'>('sale')
     const customerPaymentRows = ref<any[]>([])
     const customerPaymentTotal = ref(0)
     const customerPaymentPage = ref(1)
@@ -2011,11 +2023,11 @@ const LedgerPage = defineComponent({
     const customerDetailTab = ref<'sale' | 'payment'>('sale')
     const customerDetailSummary = ref<any>({})
     const customerPickDialog = ref(false)
-    const customerPickMode = ref<'sale' | 'payment'>('sale')
+    const customerPickMode = ref<'sale' | 'return' | 'payment'>('sale')
     const customerPickName = ref('')
     const customerCreateDialog = ref(false)
     const customerCreateForm = reactive({ customer_name: '', opening_balance: 0, note: '' })
-    const customerSaleColumnKeys = ['date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'note']
+    const customerSaleColumnKeys = ['biz_kind', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'note']
     const customerPaymentColumnKeys = ['date', 'amount_out', 'note']
     const displayColumns = computed(() => {
       if (props.page === 'customer' && customerDetailDialog.value) {
@@ -2108,14 +2120,14 @@ const LedgerPage = defineComponent({
       if (props.page === 'stockOut') inventoryOptions.value = await inventoryAPI.options()
     }
     const loadProductOptions = async () => {
-      if (props.page !== 'stockIn') return
+      if (props.page !== 'stockIn' && props.page !== 'customer') return
       const res = await productAPI.list({ page: 1, pageSize: 500, keyword: '' })
       productOptions.value = res.rows || []
     }
     const loadRecordOptions = async () => {
       await Promise.all([loadInventoryOptions(), loadProductOptions()])
     }
-    const openAdd = async (mode: 'sale' | 'payment' = 'sale') => {
+    const openAdd = async (mode: 'sale' | 'return' | 'payment' = 'sale') => {
       if (props.page === 'customer' && !customerDetailName.value && !filterValue.value) {
         openCustomerPickAndAdd(mode)
         return
@@ -2133,10 +2145,11 @@ const LedgerPage = defineComponent({
         form.product_name = '付款'
         form.amount_in = 0
       }
-      if (props.page === 'customer' && mode === 'sale') {
+      if (props.page === 'customer' && (mode === 'sale' || mode === 'return')) {
         form.amount_out = 0
         form.quantity = 1
         form.unit_price = 0
+        if (mode === 'return') form.note = '退货'
         autoFillAmountFields(form, 'quantity')
       }
       await loadRecordOptions()
@@ -2159,13 +2172,13 @@ const LedgerPage = defineComponent({
       resetSelection()
       load()
     }
-    const openCustomerAddDirect = async (customerName: string, mode: 'sale' | 'payment') => {
+    const openCustomerAddDirect = async (customerName: string, mode: 'sale' | 'return' | 'payment') => {
       customerDetailName.value = customerName
       filterValue.value = customerName
       customerEntryMode.value = mode
       await openAdd(mode)
     }
-    const openCustomerPickAndAdd = (mode: 'sale' | 'payment') => {
+    const openCustomerPickAndAdd = (mode: 'sale' | 'return' | 'payment') => {
       if (filterOptions.value.length === 1) {
         openCustomerAddDirect(String(filterOptions.value[0]), mode)
         return
@@ -2247,9 +2260,12 @@ const LedgerPage = defineComponent({
       editing.value = row
       Object.assign(form, row)
       form.date = normalizeDateValue(form.date)
-      if (props.page === 'customer' && isCustomerPaymentDescription(form.description)) {
+      if (props.page === 'customer' && (isCustomerPaymentDescription(form.description) || isCustomerPaymentRecord(row))) {
         form.product_name = '付款'
         customerEntryMode.value = 'payment'
+      } else if (props.page === 'customer' && isCustomerReturnRecord(row)) {
+        customerEntryMode.value = 'return'
+        if (Number(form.quantity) < 0) form.quantity = Math.abs(Number(form.quantity))
       } else if (props.page === 'customer' && !form.product_name && form.description) {
         Object.assign(form, parseCustomerDescription(form.description))
         customerEntryMode.value = 'sale'
@@ -2285,13 +2301,30 @@ const LedgerPage = defineComponent({
               return
             }
           } else {
-            payload.description = buildCustomerDescription(payload)
-            payload.amount_out = 0
-            const amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
-            if (amount <= 0) {
+            if (!String(payload.product_name || '').trim()) {
+              emit('notify', '请选择或填写产品', 'warning')
+              return
+            }
+            let qty = Number(payload.quantity || 0)
+            const price = Number(payload.unit_price || 0)
+            if (customerEntryMode.value === 'return') {
+              if (qty <= 0 || price <= 0) {
+                emit('notify', '请填写退货数量与单价（正数）', 'warning')
+                return
+              }
+              qty = -Math.abs(qty)
+              payload.quantity = qty
+              payload.unit_price = Math.abs(price)
+              if (!String(payload.note || '').includes('退货')) {
+                payload.note = payload.note ? `${payload.note} 退货` : '退货'
+              }
+            } else if (qty <= 0 || price <= 0) {
               emit('notify', '请填写数量与单价', 'warning')
               return
             }
+            payload.description = buildCustomerDescription(payload)
+            payload.amount_out = 0
+            const amount = roundMoneyValue(qty * Math.abs(price))
             payload.amount_in = amount
           }
           normalizeCustomerLedgerPayload(payload)
@@ -2608,8 +2641,9 @@ const LedgerPage = defineComponent({
     })
     watch([currentPage, customerPaymentPage, filterValue, yearFilter, monthFilter, startDate, endDate], () => { selected.value = []; load() })
 
-    const formatLedgerCell = (col: string, value: any) => {
+    const formatLedgerCell = (col: string, value: any, row?: any) => {
       if (props.page === 'customer') {
+        if (col === 'biz_kind' && row) return renderCustomerBizKindLabel(row, props.t)
         if (col === 'amount_in') return formatCustomerReceivableDisplay(value)
         if (col === 'amount_out') return formatCustomerReceivedDisplay(value)
         if (col === 'balance') return formatCustomerBalanceDisplay(value).text
@@ -2626,7 +2660,9 @@ const LedgerPage = defineComponent({
           ])
           : h('span', { class: 'muted tiny' }, props.t('noImages'))
       ])
-      : h('td', { class: amountClass(c) }, formatLedgerCell(c, row[c])))
+      : c === 'biz_kind'
+        ? h('td', formatLedgerCell(c, row[c], row))
+        : h('td', { class: amountClass(c) }, formatLedgerCell(c, row[c], row)))
 
     const renderActionCell = (row: any) => h('td', { class: 'action-cell sticky-action-col' }, [
       h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit')),
@@ -2890,7 +2926,7 @@ const LedgerPage = defineComponent({
       RecordDialogShell({
         show: customerPickDialog.value,
         maxWidth: 420,
-        title: props.t(customerPickMode.value === 'payment' ? 'addCustomerPayment' : 'addCustomerSale'),
+        title: props.t(customerPickMode.value === 'payment' ? 'addCustomerPayment' : customerPickMode.value === 'return' ? 'addCustomerReturn' : 'addCustomerSale'),
         subtitle: props.t('customerPickSub'),
         cancelLabel: props.t('cancel'),
         saveLabel: props.t('save'),
@@ -2960,7 +2996,10 @@ const LedgerPage = defineComponent({
               pageSize: config.value.pageSize,
               onPageChange: (v: number) => { currentPage.value = v },
               withSelect: true,
-              emptyAction: () => h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
+              emptyAction: () => h('div', { class: 'customer-workspace-empty-actions' }, [
+                h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
+                h(VBtn, { size: 'small', variant: 'tonal', color: 'warning', onClick: () => openAdd('return') }, () => props.t('addCustomerReturn')),
+              ]),
             })
             : renderLedgerTableCard({
               title: '',
@@ -2976,6 +3015,7 @@ const LedgerPage = defineComponent({
         ]),
         h('div', { class: 'customer-workspace-dialog__footer' }, [
           h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
+          h(VBtn, { size: 'small', variant: 'tonal', color: 'warning', onClick: () => openAdd('return') }, () => props.t('addCustomerReturn')),
           h(VBtn, { size: 'small', color: 'primary', onClick: () => openAdd('payment') }, () => props.t('addCustomerPayment')),
         ]),
       ])),
@@ -2986,13 +3026,15 @@ const LedgerPage = defineComponent({
         title: editing.value
           ? props.t('edit')
           : props.page === 'customer'
-            ? props.t(customerEntryMode.value === 'payment' ? 'addCustomerPayment' : 'addCustomerSale')
+            ? props.t(customerEntryMode.value === 'payment' ? 'addCustomerPayment' : customerEntryMode.value === 'return' ? 'addCustomerReturn' : 'addCustomerSale')
             : (props.page === 'cash' ? props.t('addRecord') : props.t('add')),
         subtitle: editing.value
           ? props.t('formEditHint')
           : (props.page === 'customer' && customerEntryMode.value === 'payment'
             ? props.t('customerPaymentFormHint')
-            : props.t('formAddHint')),
+            : props.page === 'customer' && customerEntryMode.value === 'return'
+              ? props.t('customerReturnFormHint')
+              : props.t('formAddHint')),
         cancelLabel: props.t('cancel'),
         saveLabel: props.t('save'),
         onClose: closeRecordDialog,
@@ -3007,6 +3049,7 @@ const LedgerPage = defineComponent({
               inventoryOptions: inventoryOptions.value,
               productOptions: productOptions.value,
               lockedCustomerName: customerDetailName.value || filterValue.value,
+              customerEntryMode: customerEntryMode.value,
               t: props.t,
             }))),
           ])),
@@ -3313,8 +3356,19 @@ function columnLabel(col: string) {
   } as any)[col] || col
 }
 
+function renderCustomerBizKindLabel(row: Record<string, any>, t: (key: string) => string) {
+  if (isCustomerPaymentRecord(row) || isCustomerPaymentDescription(String(row.description || ''))) {
+    return h('span', { class: 'customer-biz-tag customer-biz-tag--payment' }, t('customerBizPayment'))
+  }
+  if (isCustomerReturnRecord(row)) {
+    return h('span', { class: 'customer-biz-tag customer-biz-tag--return' }, t('customerBizReturn'))
+  }
+  return h('span', { class: 'customer-biz-tag customer-biz-tag--sale' }, t('customerBizSale'))
+}
+
 function ledgerColumnLabel(col: string, table?: string) {
   if (table === 'customer') {
+    if (col === 'biz_kind') return 'customerBizKind'
     if (col === 'amount_in') return 'customerReceivable'
     if (col === 'amount_out') return 'customerReceived'
     if (col === 'balance') return 'customerBalance'
@@ -3392,7 +3446,8 @@ function formatCell(col: string, value: any) { return numericField(col) ? (Numbe
 function formatCustomerReceivableDisplay(value: any) {
   const amount = Number(value || 0)
   if (!amount) return '—'
-  return money(Math.abs(amount))
+  if (amount < 0) return `-${money(Math.abs(amount))}`
+  return money(amount)
 }
 
 function formatCustomerReceivedDisplay(value: any) {
@@ -3451,7 +3506,7 @@ function normalizeFormField(field: FormFieldSpec) {
   return typeof field === 'string' ? { key: field, span: (field === 'note' || field === 'description') ? 'full' as const : 'half' as const } : { key: field.key, span: field.span || ((field.key === 'note' || field.key === 'description') ? 'full' as const : 'half' as const) }
 }
 
-function getFormSections(pageKey: string, fields: string[], customerEntryMode: 'sale' | 'payment' = 'sale'): FormSectionSpec[] {
+function getFormSections(pageKey: string, fields: string[], customerEntryMode: 'sale' | 'return' | 'payment' = 'sale'): FormSectionSpec[] {
   if (pageKey === 'customer') return formSections[customerEntryMode === 'payment' ? 'customerPayment' : 'customer'] || formSections.customer
   if (formSections[pageKey]) return formSections[pageKey]
   return [{ titleKey: 'formSectionBasic', fields: fields.map(key => ({ key, span: (key === 'note' || key === 'description') ? 'full' : 'half' })) }]
@@ -3459,10 +3514,28 @@ function getFormSections(pageKey: string, fields: string[], customerEntryMode: '
 
 function renderRecordFormField(
   field: FormFieldSpec,
-  ctx: { form: any; config: any; filterOptions: string[]; inventoryOptions?: any[]; productOptions?: any[]; lockedCustomerName?: string; t: (key: string, params?: any) => string },
+  ctx: {
+    form: any
+    config: any
+    filterOptions: string[]
+    inventoryOptions?: any[]
+    productOptions?: any[]
+    lockedCustomerName?: string
+    customerEntryMode?: 'sale' | 'return' | 'payment'
+    t: (key: string, params?: any) => string
+  },
 ) {
   const { key, span } = normalizeFormField(field)
-  const { form, config, filterOptions, inventoryOptions = [], productOptions = [], lockedCustomerName = '', t } = ctx
+  const {
+    form,
+    config,
+    filterOptions,
+    inventoryOptions = [],
+    productOptions = [],
+    lockedCustomerName = '',
+    customerEntryMode = 'sale',
+    t,
+  } = ctx
   const wrapClass = `record-dialog__field record-dialog__field--${span === 'full' ? 'full' : 'half'}`
   const base = commonFormFieldProps()
 
@@ -3492,7 +3565,7 @@ function renderRecordFormField(
     ])
   }
 
-  if (config.table === 'stockIn' && key === 'product_name') {
+  if ((config.table === 'stockIn' || config.table === 'customer') && key === 'product_name') {
     const selected = productOptions.find(item =>
       item.product_name === form.product_name &&
       (item.spec || '') === (form.spec || '') &&
@@ -3507,7 +3580,7 @@ function renderRecordFormField(
             form.product_name = v.product_name
             form.spec = v.spec || ''
             form.unit = v.unit || ''
-            if (v.category) form.category = v.category
+            if (config.table === 'stockIn' && v.category) form.category = v.category
             if (Number(v.default_price || 0) > 0) {
               form.unit_price = Number(v.default_price || 0)
               autoFillAmountFields(form, 'unit_price')
@@ -3589,13 +3662,16 @@ function renderRecordFormField(
   const isAutoCalcAmount = (key === 'amount_in' && config.table === 'customer')
     || (key === 'amount' && (config.table === 'stockIn' || config.table === 'stockOut'))
   if (isAutoCalcAmount) {
-    const calcValue = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    let calcValue = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    if (config.table === 'customer' && customerEntryMode === 'return' && calcValue > 0) {
+      calcValue = -calcValue
+    }
+    const displayValue = calcValue < 0 ? `-${money(Math.abs(calcValue))}` : money(calcValue)
     return h('div', { class: wrapClass, key }, [
       h(VTextField, {
         ...base,
-        modelValue: calcValue,
+        modelValue: calcValue ? displayValue : '',
         label: t(ledgerColumnLabel(key, config.table)),
-        type: 'number',
         readonly: true,
         hint: t('amountAutoCalc'),
         persistentHint: true,

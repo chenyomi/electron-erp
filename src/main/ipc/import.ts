@@ -492,7 +492,7 @@ function importCustomerSheet(
     const amount = numVal(row[amountCol])
     const payment = resolveImportedPayment(row, payDateCol, payAmountCol, payNoteCol)
 
-    if (date && amount > 0) {
+    if (date && amount !== 0) {
       const contract_no = strVal(row[contractCol])
       const product_name = strVal(row[productCol])
       const spec = strVal(row[specCol])
@@ -500,7 +500,11 @@ function importCustomerSheet(
       const quantity = numVal(row[qtyCol])
       const unit_price = numVal(row[priceCol])
       const description = buildCustomerDescription({ contract_no, product_name, spec, unit, quantity, unit_price })
-      events.push({ date, contract_no, product_name, spec, unit, quantity, unit_price, description, amountIn: amount, amountOut: 0, note: noteCol >= 0 ? strVal(row[noteCol]) : '', excelRow })
+      let note = noteCol >= 0 ? strVal(row[noteCol]) : ''
+      if (quantity < 0 && !note.includes('退货')) {
+        note = note ? `${note} 退货` : '退货'
+      }
+      events.push({ date, contract_no, product_name, spec, unit, quantity, unit_price, description, amountIn: amount, amountOut: 0, note, excelRow })
     }
 
     if (payment) {

@@ -1,4 +1,4 @@
-import { isCustomerPaymentDescription, parseCustomerDescription } from './customer-ledger'
+import { isCustomerPaymentDescription, isCustomerReturnRecord, parseCustomerDescription } from './customer-ledger'
 
 export type CustomerAnomalyIssue =
   | 'payment_amount_in_wrong_column'
@@ -159,7 +159,18 @@ export function detectCustomerAnomaly(row: Record<string, any>, expectedBalance?
     const price = Number(row.unit_price || 0)
     const parsed = parseCustomerDescription(row.description || '')
     const inferred = qty * price || parsed.quantity * parsed.unit_price
-    if (inferred > 0 || row.product_name || row.contract_no) {
+    if (isCustomerReturnRecord(row)) {
+      if (Math.abs(amountIn) < 0.009 && inferred < -0.009) {
+        return {
+          id,
+          customer_name: row.customer_name,
+          date: row.date,
+          issue: 'sale_missing_amount',
+          message: '退货明细缺少金额',
+          autoFixable: true,
+        }
+      }
+    } else if (inferred > 0 || row.product_name || row.contract_no) {
       return {
         id,
         customer_name: row.customer_name,
@@ -279,7 +290,7 @@ export function buildCustomerRowRepair(row: Record<string, any>): Record<string,
       const parsed = parseCustomerDescription(row.description || '')
       amount = parsed.quantity * parsed.unit_price
     }
-    if (amount > 0) {
+    if (amount !== 0) {
       patch.amount_in = Math.round(amount * 100) / 100
       return patch
     }

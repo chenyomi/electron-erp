@@ -21,6 +21,15 @@ export function isCustomerPaymentDescription(description: string): boolean {
   return String(description || '').trim() === '付款'
 }
 
+/** 客户退货行：负数量/负应收，或备注含「退货」（与 Excel 对账单一致） */
+export function isCustomerReturnRecord(row: Record<string, any>): boolean {
+  if (isCustomerPaymentRecord(row)) return false
+  const qty = Number(row.quantity || 0)
+  const amountIn = Number(row.amount_in || 0)
+  if (qty < 0 || amountIn < 0) return true
+  return String(row.note || '').includes('退货')
+}
+
 export function isCustomerPaymentRecord(row: Record<string, any>): boolean {
   if (isCustomerPaymentDescription(String(row.description || ''))) return true
   if (String(row.product_name || '').trim() === '付款') return true

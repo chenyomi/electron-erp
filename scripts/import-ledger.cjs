@@ -473,7 +473,8 @@ function importCustomerSheet(db, sheetName, rows, imported, imagesBySheetRow) {
     const payDate = payDateCol >= 0 ? dateVal(row[payDateCol]) : ''
     const payAmount = payAmountCol >= 0 ? numVal(row[payAmountCol]) : 0
 
-    if (date && amount > 0) {
+    if (date && amount !== 0) {
+      const quantity = numVal(row[qtyCol])
       const details = [
         strVal(row[contractCol]),
         strVal(row[productCol]),
@@ -482,7 +483,11 @@ function importCustomerSheet(db, sheetName, rows, imported, imagesBySheetRow) {
         strVal(row[qtyCol]) ? `数量${strVal(row[qtyCol])}` : '',
         strVal(row[priceCol]) ? `单价${strVal(row[priceCol])}` : ''
       ].filter(Boolean)
-      events.push({ date, description: details.join(' '), amountIn: amount, amountOut: 0, note: noteCol >= 0 ? strVal(row[noteCol]) : '', excelRow })
+      let note = noteCol >= 0 ? strVal(row[noteCol]) : ''
+      if (quantity < 0 && !note.includes('退货')) {
+        note = note ? `${note} 退货` : '退货'
+      }
+      events.push({ date, description: details.join(' '), amountIn: amount, amountOut: 0, note, excelRow })
     }
 
     if (payDate && payAmount > 0) {

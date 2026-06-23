@@ -1435,6 +1435,35 @@ body {
   align-items: center;
 }
 
+.cloud-sync-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding-top: 4px;
+}
+
+.cloud-bootstrap-screen {
+  flex-direction: column;
+  padding: 24px;
+}
+
+.cloud-bootstrap-card {
+  width: min(420px, 100%);
+  text-align: center;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: var(--app-surface);
+  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  box-shadow: 0 18px 48px color-mix(in srgb, #000 18%, transparent);
+}
+
+.cloud-bootstrap-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
 .cloud-progress-file {
   word-break: break-all;
 }

@@ -184,6 +184,7 @@ export const cloudAPI = {
   saveConfig: (config: any) => api.invoke('cloud:save-config', config),
   test: () => api.invoke('cloud:test'),
   status: () => api.invoke('cloud:status'),
+  evaluateStartup: () => api.invoke('cloud:evaluate-startup'),
   checkPendingUpdates: () => api.invoke('cloud:check-pending-updates'),
   getSyncPrefs: () => api.invoke('cloud:get-sync-prefs'),
   saveSyncPrefs: (prefs: any) => api.invoke('cloud:save-sync-prefs', prefs),

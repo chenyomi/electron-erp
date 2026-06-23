@@ -8,6 +8,7 @@ import { tmpdir } from 'os'
 import { getDataDir } from './db'
 import {
   acknowledgeRemoteManifest,
+  getCloudSyncPrefs,
   isRemoteManifestAcknowledged,
   manifestFingerprint,
 } from './cloud-sync-prefs'
@@ -16,6 +17,7 @@ import {
   buildLiveDataManifest,
   exportLiveSyncFile,
   hashLiveLedgerDbEntry,
+  isLocalDataEmpty,
   localFileMatchesRemoteEntry,
   type SyncFileEntry,
   type SyncManifest,
@@ -830,6 +832,165 @@ export interface CloudPendingDownloadStatus {
   pendingFiles: number
   remoteUpdatedAt?: string
   remoteFingerprint?: string
+}
+
+export type CloudStartupAction =
+  | 'skip'
+  | 'auto_download'
+  | 'prompt_download'
+  | 'first_device'
+  | 'local_only'
+
+export interface CloudStartupPlan {
+  configured: boolean
+  localEmpty: boolean
+  remoteHasData: boolean
+  action: CloudStartupAction
+  pendingFiles: number
+  remoteUpdatedAt?: string
+  remoteFingerprint?: string
+  offline?: boolean
+  message?: string
+}
+
+function countPendingRemoteFiles(
+  remoteEntries: Array<[string, SyncFileEntry]>,
+  localLedger?: SyncFileEntry,
+): number {
+  let pendingFiles = 0
+  for (const [relativePath, entry] of remoteEntries) {
+    if (!localFileMatchesRemoteEntry(relativePath, entry, localLedger)) pendingFiles += 1
+  }
+  return pendingFiles
+}
+
+export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
+  const localEmpty = isLocalDataEmpty()
+  const view = getQiniuConfigView()
+  if (!view.configured) {
+    return {
+      configured: false,
+      localEmpty,
+      remoteHasData: false,
+      action: 'skip',
+      pendingFiles: 0,
+    }
+  }
+
+  try {
+    const config = requireConfig()
+    const remoteManifest = await fetchRemoteManifest(config)
+    const remoteFiles = remoteManifest.files || {}
+    const remoteEntries = Object.entries(remoteFiles)
+    const remoteHasData = remoteEntries.length > 0
+    const remoteFingerprint = remoteHasData ? manifestFingerprint(remoteFiles) : undefined
+
+    if (localEmpty && remoteHasData) {
+      return {
+        configured: true,
+        localEmpty: true,
+        remoteHasData: true,
+        action: 'auto_download',
+        pendingFiles: remoteEntries.length,
+        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteFingerprint,
+      }
+    }
+
+    if (localEmpty && !remoteHasData) {
+      return {
+        configured: true,
+        localEmpty: true,
+        remoteHasData: false,
+        action: 'first_device',
+        pendingFiles: 0,
+        message: '云端尚无数据，可在本机录入后退出时自动上传',
+      }
+    }
+
+    if (!localEmpty && !remoteHasData) {
+      return {
+        configured: true,
+        localEmpty: false,
+        remoteHasData: false,
+        action: 'local_only',
+        pendingFiles: 0,
+        message: '云端尚无同步数据，当前使用本机账本',
+      }
+    }
+
+    if (isRemoteManifestAcknowledged(remoteFiles)) {
+      return {
+        configured: true,
+        localEmpty: false,
+        remoteHasData: true,
+        action: 'skip',
+        pendingFiles: 0,
+        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteFingerprint,
+      }
+    }
+
+    const needsLedgerCompare = remoteEntries.some(([path]) => path === 'ledger.db')
+    const localLedger = needsLedgerCompare ? await hashLiveLedgerDbEntry() : undefined
+    const pendingFiles = countPendingRemoteFiles(remoteEntries, localLedger)
+    if (!pendingFiles) {
+      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteFiles)
+      return {
+        configured: true,
+        localEmpty: false,
+        remoteHasData: true,
+        action: 'skip',
+        pendingFiles: 0,
+        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteFingerprint,
+      }
+    }
+
+    const prefs = getCloudSyncPrefs()
+    if (!prefs.startupCheck) {
+      return {
+        configured: true,
+        localEmpty: false,
+        remoteHasData: true,
+        action: 'skip',
+        pendingFiles,
+        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteFingerprint,
+      }
+    }
+
+    return {
+      configured: true,
+      localEmpty: false,
+      remoteHasData: true,
+      action: prefs.startupAutoDownload ? 'auto_download' : 'prompt_download',
+      pendingFiles,
+      remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+      remoteFingerprint,
+    }
+  } catch (error: any) {
+    if (localEmpty) {
+      return {
+        configured: true,
+        localEmpty: true,
+        remoteHasData: false,
+        action: 'skip',
+        pendingFiles: 0,
+        offline: true,
+        message: error?.message || '无法连接云端，且本机尚无账本数据',
+      }
+    }
+    return {
+      configured: true,
+      localEmpty: false,
+      remoteHasData: false,
+      action: 'skip',
+      pendingFiles: 0,
+      offline: true,
+      message: '无法连接云端，当前使用本机账本',
+    }
+  }
 }
 
 export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadStatus> {

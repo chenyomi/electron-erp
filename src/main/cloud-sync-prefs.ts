@@ -7,6 +7,7 @@ import type { SyncFileEntry } from './backup'
 export interface CloudSyncPrefs {
   exitAutoUpload: boolean
   startupCheck: boolean
+  startupAutoDownload: boolean
   acknowledgedRemoteUpdatedAt?: string
   acknowledgedRemoteFingerprint?: string
 }
@@ -14,6 +15,7 @@ export interface CloudSyncPrefs {
 const DEFAULT_PREFS: CloudSyncPrefs = {
   exitAutoUpload: true,
   startupCheck: true,
+  startupAutoDownload: true,
 }
 
 function prefsPath(): string {
@@ -57,6 +59,7 @@ export function getCloudSyncPrefs(): CloudSyncPrefs {
     return {
       exitAutoUpload: parsed.exitAutoUpload !== false,
       startupCheck: parsed.startupCheck !== false,
+      startupAutoDownload: parsed.startupAutoDownload !== false,
       acknowledgedRemoteUpdatedAt: parsed.acknowledgedRemoteUpdatedAt,
       acknowledgedRemoteFingerprint: parsed.acknowledgedRemoteFingerprint,
     }
@@ -70,6 +73,7 @@ export function saveCloudSyncPrefs(input: Partial<CloudSyncPrefs>): CloudSyncPre
   const next: CloudSyncPrefs = {
     exitAutoUpload: input.exitAutoUpload ?? current.exitAutoUpload,
     startupCheck: input.startupCheck ?? current.startupCheck,
+    startupAutoDownload: input.startupAutoDownload ?? current.startupAutoDownload,
     acknowledgedRemoteUpdatedAt:
       input.acknowledgedRemoteUpdatedAt !== undefined
         ? input.acknowledgedRemoteUpdatedAt

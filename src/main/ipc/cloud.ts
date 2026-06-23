@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import {
   checkCloudPendingDownload,
+  evaluateCloudStartupSync,
   getCloudSyncStatus,
   getQiniuConfigView,
   listCloudBackups,
@@ -54,6 +55,8 @@ export function registerCloudHandlers(): void {
   })
 
   ipcMain.handle('cloud:status', () => getCloudSyncStatus())
+
+  ipcMain.handle('cloud:evaluate-startup', () => evaluateCloudStartupSync())
 
   ipcMain.handle('cloud:check-pending-updates', () => checkCloudPendingDownload())
 

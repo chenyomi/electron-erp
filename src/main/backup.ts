@@ -6,6 +6,16 @@ import * as fs from 'fs'
 import JSZip from 'jszip'
 import { closeDatabase, getDataDir, getDb, initDatabase } from './db'
 
+const BUSINESS_TABLES = [
+  'cash_ledger',
+  'bank_ledger',
+  'acceptance_bills',
+  'customer_ledger',
+  'stock_in_ledger',
+  'stock_out_ledger',
+  'product_catalog',
+] as const
+
 export interface SyncFileEntry {
   hash: string
   size: number
@@ -359,6 +369,22 @@ export function getBackupPathByName(name: string): string | null {
 
 function hashFileSync(filePath: string): string {
   return crypto.createHash('md5').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+export function isLocalDataEmpty(): boolean {
+  const db = getDb()
+  for (const table of BUSINESS_TABLES) {
+    const { total } = db.prepare(`SELECT COUNT(*) as total FROM ${table} WHERE deleted_at IS NULL`).get() as { total: number }
+    if (total > 0) return false
+  }
+  const { total: profileTotal } = db.prepare(`SELECT COUNT(*) as total FROM customer_profiles`).get() as { total: number }
+  if (profileTotal > 0) return false
+  const { total: attachmentTotal } = db.prepare(`SELECT COUNT(*) as total FROM attachments`).get() as { total: number }
+  if (attachmentTotal > 0) return false
+  for (const dirName of DATA_DIRS) {
+    if (countFiles(join(getDataDir(), dirName)) > 0) return false
+  }
+  return true
 }
 
 export async function hashLiveLedgerDbEntry(): Promise<SyncFileEntry> {

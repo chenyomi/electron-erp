@@ -52,6 +52,23 @@
       </v-card>
     </div>
 
+    <div v-else-if="cloudBootstrapBusy" class="fill-screen center cloud-bootstrap-screen">
+      <div class="cloud-bootstrap-card">
+        <v-progress-circular indeterminate color="primary" size="44" class="mb-4" />
+        <div class="cloud-bootstrap-title">{{ t('cloudBootstrapTitle') }}</div>
+        <p class="muted tiny">{{ cloudBootstrapMessage || t('cloudBootstrapSubtitle') }}</p>
+        <v-progress-linear
+          v-if="headerCloudProgress.total > 0 && headerCloudProgress.phase !== 'preparing'"
+          :model-value="headerCloudProgressPercent"
+          color="primary"
+          height="8"
+          rounded
+          class="mt-4"
+        />
+        <p v-if="headerCloudProgress.file" class="muted tiny mt-2 cloud-progress-file">{{ headerCloudProgress.file }}</p>
+      </div>
+    </div>
+
     <div v-else class="app-shell">
       <aside class="nav-drawer">
         <div class="drawer-brand">
@@ -337,6 +354,7 @@ import {
   VProgressLinear,
   VSelect,
   VSpacer,
+  VSwitch,
   VTab,
   VTable,
   VTabs,
@@ -609,6 +627,14 @@ const messages = {
     confirmCloudUpload: '确定将本机账本差异上传到七牛云吗？只会传输有变化的文件。',
     cloudExitAutoUpload: '退出软件时自动上传到云端',
     cloudStartupCheck: '启动时检查云端是否有更新',
+    cloudStartupAutoDownload: '检测到云端更新时自动拉取（会先备份本机）',
+    cloudBootstrapTitle: '正在从云端同步账本',
+    cloudBootstrapSubtitle: '首次在本机使用或云端有更新，正在拉取最新数据…',
+    cloudBootstrapDone: '云端数据已同步到本机',
+    cloudFirstDeviceHint: '云端尚无数据，可在本机录入；退出软件时会自动上传。',
+    cloudLocalOnlyHint: '云端尚无同步数据，当前使用本机账本。',
+    cloudOfflineHint: '无法连接云端，当前使用本机账本。',
+    cloudOfflineEmptyHint: '无法连接云端，且本机尚无账本数据。请检查网络或七牛云配置。',
     cloudStartupUpdateTitle: '云端有更新',
     cloudStartupUpdateMessage: '检测到云端有 {count} 个文件与本地不一致（云端更新于 {time}）。是否从云端拉取合并？会先自动备份本机数据。',
     total: '共 {count} 条',
@@ -973,6 +999,14 @@ const messages = {
     confirmCloudUpload: 'Upload local ledger changes to Qiniu Cloud? Only changed files will be transferred.',
     cloudExitAutoUpload: 'Auto-upload to cloud on exit',
     cloudStartupCheck: 'Check cloud updates on startup',
+    cloudStartupAutoDownload: 'Auto-pull cloud updates on startup (backs up local first)',
+    cloudBootstrapTitle: 'Syncing from cloud',
+    cloudBootstrapSubtitle: 'Pulling the latest ledger data for this device…',
+    cloudBootstrapDone: 'Cloud data synced to this device',
+    cloudFirstDeviceHint: 'Cloud is empty. Enter data locally; it uploads on exit.',
+    cloudLocalOnlyHint: 'No cloud data yet. Using local ledger.',
+    cloudOfflineHint: 'Cannot reach cloud. Using local ledger.',
+    cloudOfflineEmptyHint: 'Cannot reach cloud and local ledger is empty. Check network or Qiniu config.',
     cloudStartupUpdateTitle: 'Cloud updates available',
     cloudStartupUpdateMessage: '{count} file(s) differ from local (cloud updated at {time}). Pull and merge from cloud? A local backup runs first.',
     total: '{count} items',
@@ -1130,6 +1164,8 @@ let echartsModule: EChartsModule | null = null
 const headerCloudConfigured = ref(false)
 const headerCloudUploading = ref(false)
 const headerCloudSyncBusy = ref(false)
+const cloudBootstrapBusy = ref(false)
+const cloudBootstrapMessage = ref('')
 const headerCloudProgressDialog = ref(false)
 const headerCloudProgress = reactive({
   mode: 'upload' as 'upload' | 'download',
@@ -1189,6 +1225,52 @@ async function waitForInitialUpdateCheck(maxMs = 12000): Promise<void> {
   }
 }
 
+async function runCloudAutoDownload(plan?: { pendingFiles?: number; remoteUpdatedAt?: string; remoteFingerprint?: string }) {
+  headerCloudSyncBusy.value = true
+  beginHeaderCloudProgress('download')
+  try {
+    const result = await cloudAPI.syncDownload()
+    if (!result?.ok) {
+      if (!result?.canceled) notify(result?.error || t('restoreFailed'), 'error')
+      return false
+    }
+    const downloaded = Number(result.downloaded || 0)
+    const skipped = Number(result.skipped || 0)
+    if (downloaded) notify(t('cloudBootstrapDone'))
+    else if (!plan?.pendingFiles) notify(t('cloudSyncNoChange'))
+    else notify(t('cloudSyncDownloadDone', { downloaded, skipped }))
+    await refreshHeaderCloudStatus()
+    return true
+  } finally {
+    headerCloudSyncBusy.value = false
+    finishHeaderCloudProgress()
+  }
+}
+
+async function runCloudBootstrap() {
+  if (!currentUser.value) return
+  try {
+    const plan = await cloudAPI.evaluateStartup()
+    if (plan?.action === 'first_device') notify(t('cloudFirstDeviceHint'), 'info')
+    else if (plan?.offline && plan.localEmpty) notify(t('cloudOfflineEmptyHint'), 'warning')
+    if (plan?.action !== 'auto_download') return
+
+    cloudBootstrapBusy.value = true
+    cloudBootstrapMessage.value = plan.localEmpty
+      ? t('cloudBootstrapSubtitle')
+      : t('cloudStartupUpdateMessage', {
+        count: plan.pendingFiles || 0,
+        time: formatCloudStartupTime(plan.remoteUpdatedAt),
+      })
+    await runCloudAutoDownload(plan)
+  } catch {
+    notify(t('cloudOfflineHint'), 'warning')
+  } finally {
+    cloudBootstrapBusy.value = false
+    cloudBootstrapMessage.value = ''
+  }
+}
+
 async function maybePromptCloudUpdates() {
   if (cloudStartupChecked || !currentUser.value) return
   if (updateDialog.value) {
@@ -1197,45 +1279,27 @@ async function maybePromptCloudUpdates() {
   }
   cloudStartupChecked = true
   try {
-    const prefs = await cloudAPI.getSyncPrefs()
-    if (!prefs?.startupCheck) return
-    const check = await cloudAPI.checkPendingUpdates()
-    if (!check?.configured || !check?.hasUpdates) return
+    const plan = await cloudAPI.evaluateStartup()
+    if (plan?.action !== 'prompt_download') return
     const ok = await askConfirm({
       title: t('cloudStartupUpdateTitle'),
       message: t('cloudStartupUpdateMessage', {
-        count: check.pendingFiles,
-        time: formatCloudStartupTime(check.remoteUpdatedAt),
+        count: plan.pendingFiles,
+        time: formatCloudStartupTime(plan.remoteUpdatedAt),
       }),
       confirmColor: 'warning',
       confirmLabel: t('cloudSyncDownload'),
     })
     if (!ok) {
-      if (check.remoteFingerprint) {
+      if (plan.remoteFingerprint) {
         await cloudAPI.acknowledgeRemoteSnapshot({
-          updatedAt: check.remoteUpdatedAt,
-          fingerprint: check.remoteFingerprint,
+          updatedAt: plan.remoteUpdatedAt,
+          fingerprint: plan.remoteFingerprint,
         })
       }
       return
     }
-    headerCloudSyncBusy.value = true
-    beginHeaderCloudProgress('download')
-    try {
-      const result = await cloudAPI.syncDownload()
-      if (!result?.ok) {
-        if (!result?.canceled) notify(result?.error || t('restoreFailed'), 'error')
-        return
-      }
-      const downloaded = Number(result.downloaded || 0)
-      const skipped = Number(result.skipped || 0)
-      if (!downloaded) notify(t('cloudSyncNoChange'))
-      else notify(t('cloudSyncDownloadDone', { downloaded, skipped }))
-      await refreshHeaderCloudStatus()
-    } finally {
-      headerCloudSyncBusy.value = false
-      finishHeaderCloudProgress()
-    }
+    await runCloudAutoDownload(plan)
   } catch {
     // ignore startup cloud check errors
   }
@@ -1449,6 +1513,7 @@ async function handleLogin() {
       startupPromptsRan = false
       cloudStartupChecked = false
       cloudStartupPending = false
+      await runCloudBootstrap()
       void runStartupPromptSequence()
     }
     else loginError.value = result.error || '登录失败'
@@ -1520,6 +1585,7 @@ onMounted(async () => {
     maybeOpenUpdateDialog(updateState.value)
     if (currentUser.value) {
       await refreshHeaderCloudStatus()
+      await runCloudBootstrap()
       void runStartupPromptSequence()
     }
   } finally {
@@ -3780,6 +3846,11 @@ const ImportPage = defineComponent({
     const cloudTesting = ref(false)
     const cloudUploading = ref(false)
     const cloudDownloading = ref(false)
+    const cloudSyncPrefs = reactive({
+      exitAutoUpload: true,
+      startupCheck: true,
+      startupAutoDownload: true,
+    })
     const cloudProgressDialog = ref(false)
     const cloudProgress = reactive({
       mode: 'upload' as 'upload' | 'download',
@@ -3826,6 +3897,26 @@ const ImportPage = defineComponent({
         cloudProgressTimer = null
       }, 700)
     }
+    const loadCloudSyncPrefs = async () => {
+      try {
+        const prefs = await cloudAPI.getSyncPrefs()
+        cloudSyncPrefs.exitAutoUpload = prefs?.exitAutoUpload !== false
+        cloudSyncPrefs.startupCheck = prefs?.startupCheck !== false
+        cloudSyncPrefs.startupAutoDownload = prefs?.startupAutoDownload !== false
+      } catch {
+        cloudSyncPrefs.exitAutoUpload = true
+        cloudSyncPrefs.startupCheck = true
+        cloudSyncPrefs.startupAutoDownload = true
+      }
+    }
+    const saveCloudSyncPref = async (key: 'exitAutoUpload' | 'startupCheck' | 'startupAutoDownload', value: boolean) => {
+      cloudSyncPrefs[key] = value
+      try {
+        await cloudAPI.saveSyncPrefs({ [key]: value })
+      } catch {
+        emit('notify', props.t('backupFailed'), 'error')
+      }
+    }
     const loadCloudConfig = async () => {
       try {
         const config = await cloudAPI.getConfig()
@@ -3853,7 +3944,7 @@ const ImportPage = defineComponent({
     }
     const loadInfo = async () => {
       backups.value = await systemAPI.backupsList()
-      await loadCloudConfig()
+      await Promise.all([loadCloudConfig(), loadCloudSyncPrefs()])
       void refreshCloudStatus()
     }
     const saveCloudConfig = async () => {
@@ -4194,6 +4285,33 @@ const ImportPage = defineComponent({
               h(VBtn, { variant: 'tonal', loading: cloudTesting.value, onClick: testCloud }, () => props.t('cloudTest')),
               h(VBtn, { color: 'primary', loading: cloudUploading.value, onClick: cloudSyncUpload }, () => props.t('cloudSyncUpload')),
               h(VBtn, { color: 'error', variant: 'tonal', loading: cloudDownloading.value, onClick: cloudSyncDownload }, () => props.t('cloudSyncDownload')),
+            ]) : null,
+            cloudSectionReady.value ? h('div', { class: 'cloud-sync-prefs' }, [
+              h(VSwitch, {
+                modelValue: cloudSyncPrefs.exitAutoUpload,
+                'onUpdate:modelValue': (v: boolean | null) => { void saveCloudSyncPref('exitAutoUpload', Boolean(v)) },
+                label: props.t('cloudExitAutoUpload'),
+                density: 'compact',
+                hideDetails: true,
+                color: 'primary',
+              }),
+              h(VSwitch, {
+                modelValue: cloudSyncPrefs.startupCheck,
+                'onUpdate:modelValue': (v: boolean | null) => { void saveCloudSyncPref('startupCheck', Boolean(v)) },
+                label: props.t('cloudStartupCheck'),
+                density: 'compact',
+                hideDetails: true,
+                color: 'primary',
+              }),
+              h(VSwitch, {
+                modelValue: cloudSyncPrefs.startupAutoDownload,
+                'onUpdate:modelValue': (v: boolean | null) => { void saveCloudSyncPref('startupAutoDownload', Boolean(v)) },
+                label: props.t('cloudStartupAutoDownload'),
+                density: 'compact',
+                hideDetails: true,
+                color: 'primary',
+                disabled: !cloudSyncPrefs.startupCheck,
+              }),
             ]) : null,
           ]),
         ]),

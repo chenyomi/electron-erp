@@ -293,7 +293,7 @@
       <v-card class="record-dialog">
         <div class="record-dialog__header">
           <div>
-            <h2 class="record-dialog__title">{{ t('cloudSyncProgressTitleUpload') }}</h2>
+            <h2 class="record-dialog__title">{{ t(headerCloudProgress.mode === 'download' ? 'cloudSyncProgressTitleDownload' : 'cloudSyncProgressTitleUpload') }}</h2>
             <p class="record-dialog__subtitle">{{ headerCloudProgress.message || '…' }}</p>
           </div>
         </div>
@@ -607,6 +607,10 @@ const messages = {
     cloudStatusEmpty: '云端尚无同步数据',
     confirmCloudRestore: '确定从云端拉取差异并合并到本机吗？会先自动备份当前数据。',
     confirmCloudUpload: '确定将本机账本差异上传到七牛云吗？只会传输有变化的文件。',
+    cloudExitAutoUpload: '退出软件时自动上传到云端',
+    cloudStartupCheck: '启动时检查云端是否有更新',
+    cloudStartupUpdateTitle: '云端有更新',
+    cloudStartupUpdateMessage: '检测到云端有 {count} 个文件与本地不一致（云端更新于 {time}）。是否从云端拉取合并？会先自动备份本机数据。',
     total: '共 {count} 条',
     totalIncome: '总收入',
     totalExpense: '总支出',
@@ -954,6 +958,10 @@ const messages = {
     cloudStatusEmpty: 'No cloud sync data yet',
     confirmCloudRestore: 'Pull cloud differences and merge into this computer? A local backup runs first.',
     confirmCloudUpload: 'Upload local ledger changes to Qiniu Cloud? Only changed files will be transferred.',
+    cloudExitAutoUpload: 'Auto-upload to cloud on exit',
+    cloudStartupCheck: 'Check cloud updates on startup',
+    cloudStartupUpdateTitle: 'Cloud updates available',
+    cloudStartupUpdateMessage: '{count} file(s) differ from local (cloud updated at {time}). Pull and merge from cloud? A local backup runs first.',
     total: '{count} items',
     totalIncome: 'Income',
     totalExpense: 'Expense',
@@ -1095,14 +1103,19 @@ let echartsModule: EChartsModule | null = null
 
 const headerCloudConfigured = ref(false)
 const headerCloudUploading = ref(false)
+const headerCloudSyncBusy = ref(false)
 const headerCloudProgressDialog = ref(false)
 const headerCloudProgress = reactive({
+  mode: 'upload' as 'upload' | 'download',
   phase: 'preparing' as 'preparing' | 'transferring' | 'applying' | 'done',
   current: 0,
   total: 0,
   file: '',
   message: '',
 })
+let cloudStartupChecked = false
+let cloudStartupPending = false
+let startupPromptsRan = false
 const headerCloudProgressPercent = computed(() => {
   if (headerCloudProgress.phase === 'done') return 100
   if (!headerCloudProgress.total) return 0
@@ -1119,7 +1132,97 @@ const updateDialogSubtitle = computed(() => {
 
 function maybeOpenUpdateDialog(state: any) {
   if (!currentUser.value) return
-  if (state?.status === 'available' || state?.status === 'downloaded') updateDialog.value = true
+  if (state?.status === 'available' || state?.status === 'downloaded') {
+    updateDialog.value = true
+    cloudStartupPending = true
+  }
+}
+
+function formatCloudStartupTime(value?: string) {
+  if (!value) return '—'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return value
+  const y = dt.getFullYear()
+  const m = dt.getMonth() + 1
+  const d = dt.getDate()
+  const h = String(dt.getHours()).padStart(2, '0')
+  const min = String(dt.getMinutes()).padStart(2, '0')
+  return `${y}年${m}月${d}日 ${h}:${min}`
+}
+
+async function waitForInitialUpdateCheck(maxMs = 12000): Promise<void> {
+  const start = Date.now()
+  let sawChecking = false
+  while (Date.now() - start < maxMs) {
+    const status = updateState.value.status
+    if (status === 'checking') sawChecking = true
+    if (sawChecking && status !== 'checking' && status !== 'idle') return
+    if (!sawChecking && Date.now() - start > 2500 && status === 'idle') return
+    if (status === 'available' || status === 'downloaded' || status === 'not-available' || status === 'error') return
+    await new Promise(resolve => setTimeout(resolve, 350))
+  }
+}
+
+async function maybePromptCloudUpdates() {
+  if (cloudStartupChecked || !currentUser.value) return
+  if (updateDialog.value) {
+    cloudStartupPending = true
+    return
+  }
+  cloudStartupChecked = true
+  try {
+    const prefs = await cloudAPI.getSyncPrefs()
+    if (!prefs?.startupCheck) return
+    const check = await cloudAPI.checkPendingUpdates()
+    if (!check?.configured || !check?.hasUpdates) return
+    const ok = await askConfirm({
+      title: t('cloudStartupUpdateTitle'),
+      message: t('cloudStartupUpdateMessage', {
+        count: check.pendingFiles,
+        time: formatCloudStartupTime(check.remoteUpdatedAt),
+      }),
+      confirmColor: 'warning',
+      confirmLabel: t('cloudSyncDownload'),
+    })
+    if (!ok) return
+    headerCloudSyncBusy.value = true
+    beginHeaderCloudProgress('download')
+    try {
+      const result = await cloudAPI.syncDownload()
+      if (!result?.ok) {
+        if (!result?.canceled) notify(result?.error || t('restoreFailed'), 'error')
+        return
+      }
+      const downloaded = Number(result.downloaded || 0)
+      const skipped = Number(result.skipped || 0)
+      if (!downloaded) notify(t('cloudSyncNoChange'))
+      else notify(t('cloudSyncDownloadDone', { downloaded, skipped }))
+      await refreshHeaderCloudStatus()
+    } finally {
+      headerCloudSyncBusy.value = false
+      finishHeaderCloudProgress()
+    }
+  } catch {
+    // ignore startup cloud check errors
+  }
+}
+
+function tryRunPendingCloudStartupCheck() {
+  if (!cloudStartupPending || cloudStartupChecked || updateDialog.value) return
+  cloudStartupPending = false
+  void maybePromptCloudUpdates()
+}
+
+async function runStartupPromptSequence() {
+  if (!currentUser.value || startupPromptsRan) return
+  startupPromptsRan = true
+  await waitForInitialUpdateCheck()
+  const status = updateState.value.status
+  if (status === 'available' || status === 'downloaded') {
+    maybeOpenUpdateDialog(updateState.value)
+    return
+  }
+  await maybePromptCloudUpdates()
 }
 
 async function runUpdateCheck() {
@@ -1159,21 +1262,23 @@ async function refreshHeaderCloudStatus() {
   }
 }
 
-function beginHeaderCloudProgress() {
+function beginHeaderCloudProgress(mode: 'upload' | 'download' = 'upload') {
   if (headerCloudProgressTimer) {
     clearTimeout(headerCloudProgressTimer)
     headerCloudProgressTimer = null
   }
+  headerCloudProgress.mode = mode
   headerCloudProgress.phase = 'preparing'
   headerCloudProgress.current = 0
   headerCloudProgress.total = 0
   headerCloudProgress.file = ''
-  headerCloudProgress.message = '正在准备上传…'
+  headerCloudProgress.message = mode === 'upload' ? '正在准备上传…' : '正在准备恢复…'
   headerCloudProgressDialog.value = true
 }
 
 function handleHeaderCloudProgress(progress: any) {
-  if (!headerCloudUploading.value) return
+  if (!headerCloudSyncBusy.value) return
+  headerCloudProgress.mode = progress?.mode === 'download' ? 'download' : 'upload'
   headerCloudProgress.phase = progress?.phase || 'preparing'
   headerCloudProgress.current = Number(progress?.current || 0)
   headerCloudProgress.total = Number(progress?.total || 0)
@@ -1304,9 +1409,15 @@ async function handleLogin() {
   loginError.value = ''
   try {
     const result = await authAPI.login({ username: loginForm.username, password: loginForm.password })
-    if (result.ok) currentUser.value = result.user
+    if (result.ok) {
+      currentUser.value = result.user
+      await refreshHeaderCloudStatus()
+      startupPromptsRan = false
+      cloudStartupChecked = false
+      cloudStartupPending = false
+      void runStartupPromptSequence()
+    }
     else loginError.value = result.error || '登录失败'
-    if (result.ok) await refreshHeaderCloudStatus()
   } catch (error: any) {
     loginError.value = error?.message || '登录失败'
   } finally {
@@ -1324,6 +1435,10 @@ async function handleLogout() {
   await authAPI.logout()
   currentUser.value = null
   page.value = 'dashboard'
+  startupPromptsRan = false
+  cloudStartupChecked = false
+  cloudStartupPending = false
+  updateDialog.value = false
 }
 
 async function changePassword() {
@@ -1348,10 +1463,17 @@ watch(languageMode, (mode) => {
   localStorage.setItem('languageMode', mode)
 }, { immediate: true })
 
+watch(updateDialog, (open) => {
+  if (!open) tryRunPendingCloudStartupCheck()
+})
+
 onMounted(async () => {
   offUpdateState = updateAPI.onState((state) => {
     updateState.value = state
     maybeOpenUpdateDialog(state)
+    if (state?.status === 'not-available' || state?.status === 'error') {
+      tryRunPendingCloudStartupCheck()
+    }
   })
   offUpdateOpenDialog = updateAPI.onOpenDialog(() => {
     updateDialog.value = true
@@ -1362,7 +1484,10 @@ onMounted(async () => {
     currentUser.value = await authAPI.me()
     updateState.value = await updateAPI.getState()
     maybeOpenUpdateDialog(updateState.value)
-    if (currentUser.value) await refreshHeaderCloudStatus()
+    if (currentUser.value) {
+      await refreshHeaderCloudStatus()
+      void runStartupPromptSequence()
+    }
   } finally {
     checkingAuth.value = false
   }

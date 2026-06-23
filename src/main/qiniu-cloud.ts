@@ -807,6 +807,54 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
   }
 }
 
+export interface CloudPendingDownloadStatus {
+  configured: boolean
+  hasUpdates: boolean
+  pendingFiles: number
+  remoteUpdatedAt?: string
+}
+
+export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadStatus> {
+  const view = getQiniuConfigView()
+  if (!view.configured) {
+    return { configured: false, hasUpdates: false, pendingFiles: 0 }
+  }
+  try {
+    const config = requireConfig()
+    const remoteManifest = await fetchRemoteManifest(config)
+    const remoteEntries = Object.entries(remoteManifest.files || {})
+    if (!remoteEntries.length) {
+      return { configured: true, hasUpdates: false, pendingFiles: 0 }
+    }
+    const needsLedgerCompare = remoteEntries.some(([path]) => path === 'ledger.db')
+    const localLedger = needsLedgerCompare ? await hashLiveLedgerDbEntry() : undefined
+    let pendingFiles = 0
+    for (const [relativePath, entry] of remoteEntries) {
+      if (!localFileMatchesRemoteEntry(relativePath, entry, localLedger)) pendingFiles += 1
+    }
+    return {
+      configured: true,
+      hasUpdates: pendingFiles > 0,
+      pendingFiles,
+      remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+    }
+  } catch {
+    return { configured: true, hasUpdates: false, pendingFiles: 0 }
+  }
+}
+
+export async function runExitCloudUpload(): Promise<void> {
+  if (!getQiniuConfigView().configured) return
+  try {
+    const result = await syncCloudUpload()
+    if (!result.ok && result.error) {
+      console.warn('Exit cloud upload:', result.error)
+    }
+  } catch (error) {
+    console.warn('Exit cloud upload failed:', error)
+  }
+}
+
 export async function uploadCloudBackup(_backupName?: string, onProgress?: CloudSyncProgressReporter): Promise<CloudSyncResult> {
   return syncCloudUpload(onProgress)
 }

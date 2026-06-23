@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import {
+  checkCloudPendingDownload,
   getCloudSyncStatus,
   getQiniuConfigView,
   listCloudBackups,
@@ -11,6 +12,7 @@ import {
   uploadCloudBackup,
   type QiniuCloudConfig,
 } from '../qiniu-cloud'
+import { getCloudSyncPrefs, saveCloudSyncPrefs } from '../cloud-sync-prefs'
 
 async function confirmCloudRestore(parent: BrowserWindow | null): Promise<boolean> {
   const { dialog } = await import('electron')
@@ -52,6 +54,18 @@ export function registerCloudHandlers(): void {
   })
 
   ipcMain.handle('cloud:status', () => getCloudSyncStatus())
+
+  ipcMain.handle('cloud:check-pending-updates', () => checkCloudPendingDownload())
+
+  ipcMain.handle('cloud:get-sync-prefs', () => getCloudSyncPrefs())
+
+  ipcMain.handle('cloud:save-sync-prefs', (_event, prefs) => {
+    try {
+      return { ok: true, prefs: saveCloudSyncPrefs(prefs || {}) }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '保存同步设置失败' }
+    }
+  })
 
   ipcMain.handle('cloud:sync-upload', async (event) => syncCloudUpload((progress) => {
     if (!event.sender.isDestroyed()) event.sender.send('cloud:sync-progress', progress)

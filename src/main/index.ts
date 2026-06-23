@@ -5,10 +5,23 @@ import { getDataDir, initDatabase } from './db'
 import { registerIpcHandlers } from './ipc'
 import { autoBackup } from './backup'
 import { initAutoUpdater, checkForUpdates } from './updater'
+import { getCloudSyncPrefs } from './cloud-sync-prefs'
+import { runExitCloudUpload } from './qiniu-cloud'
 import * as fs from 'fs'
 
 const appIconPath = join(__dirname, '../../resources/icon.png')
 const APP_NAME = '东昊账务'
+
+let mainWindow: BrowserWindow | null = null
+let isQuitting = false
+
+async function runShutdownTasks(): Promise<void> {
+  await autoBackup({ automatic: true })
+  const prefs = getCloudSyncPrefs()
+  if (prefs.exitAutoUpload) {
+    await runExitCloudUpload()
+  }
+}
 
 function focusedWindow(): BrowserWindow | null {
   return BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0] || null
@@ -177,7 +190,7 @@ function createApplicationMenu(): void {
 }
 
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1024,
@@ -208,8 +221,20 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
-  mainWindow.on('close', () => {
-    void autoBackup({ automatic: true })
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    void (async () => {
+      try {
+        await runShutdownTasks()
+      } catch (error) {
+        console.error('Shutdown tasks failed:', error)
+      } finally {
+        isQuitting = true
+        mainWindow?.destroy()
+        mainWindow = null
+      }
+    })()
   })
 }
 

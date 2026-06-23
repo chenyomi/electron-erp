@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -32,6 +29,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -215,31 +216,6 @@ jobs:
         if: steps.qiniu.outputs.qiniu_published == 'true' && steps.qiniu.outputs.win_download_url != ''
         run: |
           find release-artifacts -type f \( -name '*.exe' -o -name '*.exe.blockmap' -o -name 'latest.yml' \) -delete
-
-      - name: Remove old Windows assets from existing GitHub Release
-        if: steps.qiniu.outputs.qiniu_published == 'true' && steps.qiniu.outputs.win_download_url != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          REPO="${{ github.repository }}"
-          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo "Release $TAG does not exist yet, skipping asset cleanup"
-            exit 0
-          fi
-          mapfile -t ASSET_NAMES < <(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name')
-          for name in "${ASSET_NAMES[@]}"; do
-            case "$name" in
-              *.exe|*.exe.blockmap|latest.yml)
-                asset_id=$(gh release view "$TAG" --repo "$REPO" --json assets -q ".assets[] | select(.name==\"$name\") | .id")
-                if [[ -n "$asset_id" ]]; then
-                  gh api --method DELETE "/repos/$REPO/releases/assets/$asset_id"
-                  echo "Removed existing asset: $name"
-                fi
-                ;;
-            esac
-          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

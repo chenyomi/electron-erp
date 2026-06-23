@@ -187,6 +187,8 @@ export const cloudAPI = {
   checkPendingUpdates: () => api.invoke('cloud:check-pending-updates'),
   getSyncPrefs: () => api.invoke('cloud:get-sync-prefs'),
   saveSyncPrefs: (prefs: any) => api.invoke('cloud:save-sync-prefs', prefs),
+  acknowledgeRemoteSnapshot: (payload: { updatedAt?: string; fingerprint?: string }) =>
+    api.invoke('cloud:ack-remote-snapshot', payload),
   syncUpload: () => api.invoke('cloud:sync-upload'),
   syncDownload: () => api.invoke('cloud:sync-download'),
   onSyncProgress: (listener: (progress: any) => void) => window.electronAPI.on('cloud:sync-progress', listener),

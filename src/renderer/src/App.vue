@@ -1184,7 +1184,15 @@ async function maybePromptCloudUpdates() {
       confirmColor: 'warning',
       confirmLabel: t('cloudSyncDownload'),
     })
-    if (!ok) return
+    if (!ok) {
+      if (check.remoteFingerprint) {
+        await cloudAPI.acknowledgeRemoteSnapshot({
+          updatedAt: check.remoteUpdatedAt,
+          fingerprint: check.remoteFingerprint,
+        })
+      }
+      return
+    }
     headerCloudSyncBusy.value = true
     beginHeaderCloudProgress('download')
     try {

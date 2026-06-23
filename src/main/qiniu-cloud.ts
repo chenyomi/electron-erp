@@ -7,6 +7,11 @@ import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { getDataDir } from './db'
 import {
+  acknowledgeRemoteManifest,
+  isRemoteManifestAcknowledged,
+  manifestFingerprint,
+} from './cloud-sync-prefs'
+import {
   applyIncrementalSync,
   buildLiveDataManifest,
   exportLiveSyncFile,
@@ -739,6 +744,7 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
     }
 
     if (!toDownload.length) {
+      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
       reportSyncProgress(onProgress, {
         mode: 'download',
         phase: 'done',
@@ -792,6 +798,17 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
         message: '恢复完成',
       })
 
+      let manifestToAck = remoteManifest
+      if (downloaded > 0) {
+        try {
+          await syncCloudUpload(onProgress)
+          manifestToAck = await fetchRemoteManifest(config)
+        } catch {
+          // upload failed; still acknowledge downloaded snapshot to avoid prompt loop
+        }
+      }
+      acknowledgeRemoteManifest(manifestToAck.updatedAt, manifestToAck.files || {})
+
       return {
         ok: true,
         downloaded,
@@ -812,6 +829,7 @@ export interface CloudPendingDownloadStatus {
   hasUpdates: boolean
   pendingFiles: number
   remoteUpdatedAt?: string
+  remoteFingerprint?: string
 }
 
 export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadStatus> {
@@ -822,9 +840,20 @@ export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadS
   try {
     const config = requireConfig()
     const remoteManifest = await fetchRemoteManifest(config)
-    const remoteEntries = Object.entries(remoteManifest.files || {})
+    const remoteFiles = remoteManifest.files || {}
+    const remoteEntries = Object.entries(remoteFiles)
     if (!remoteEntries.length) {
       return { configured: true, hasUpdates: false, pendingFiles: 0 }
+    }
+    const remoteFingerprint = manifestFingerprint(remoteFiles)
+    if (isRemoteManifestAcknowledged(remoteFiles)) {
+      return {
+        configured: true,
+        hasUpdates: false,
+        pendingFiles: 0,
+        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteFingerprint,
+      }
     }
     const needsLedgerCompare = remoteEntries.some(([path]) => path === 'ledger.db')
     const localLedger = needsLedgerCompare ? await hashLiveLedgerDbEntry() : undefined
@@ -837,6 +866,7 @@ export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadS
       hasUpdates: pendingFiles > 0,
       pendingFiles,
       remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+      remoteFingerprint,
     }
   } catch {
     return { configured: true, hasUpdates: false, pendingFiles: 0 }

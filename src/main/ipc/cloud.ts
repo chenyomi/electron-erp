@@ -12,7 +12,7 @@ import {
   uploadCloudBackup,
   type QiniuCloudConfig,
 } from '../qiniu-cloud'
-import { getCloudSyncPrefs, saveCloudSyncPrefs } from '../cloud-sync-prefs'
+import { acknowledgeRemoteSnapshot, getCloudSyncPrefs, saveCloudSyncPrefs } from '../cloud-sync-prefs'
 
 async function confirmCloudRestore(parent: BrowserWindow | null): Promise<boolean> {
   const { dialog } = await import('electron')
@@ -64,6 +64,14 @@ export function registerCloudHandlers(): void {
       return { ok: true, prefs: saveCloudSyncPrefs(prefs || {}) }
     } catch (error: any) {
       return { ok: false, error: error?.message || '保存同步设置失败' }
+    }
+  })
+
+  ipcMain.handle('cloud:ack-remote-snapshot', (_event, payload: { updatedAt?: string; fingerprint?: string }) => {
+    try {
+      return { ok: true, prefs: acknowledgeRemoteSnapshot(payload?.updatedAt, payload?.fingerprint) }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '记录云端版本失败' }
     }
   })
 

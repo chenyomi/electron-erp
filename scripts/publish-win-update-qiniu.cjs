@@ -255,7 +255,11 @@ async function main() {
   if (cdnUrl && exe) {
     const base = cdnUrl.endsWith('/') ? cdnUrl : `${cdnUrl}/`
     const downloadUrl = new URL(exe.name, base).href
-    writeGithubOutput({ qiniu_published: 'true', win_download_url: downloadUrl })
+    writeGithubOutput({
+      qiniu_published: 'true',
+      win_download_url: downloadUrl,
+      win_exe_name: exe.name,
+    })
     console.log(`Windows download URL: ${downloadUrl}`)
   } else {
     writeGithubOutput({ qiniu_published: 'true' })

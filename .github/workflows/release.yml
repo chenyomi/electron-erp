@@ -150,63 +150,103 @@ jobs:
         shell: bash
         env:
           WIN_DOWNLOAD_URL: ${{ steps.qiniu.outputs.win_download_url }}
+          WIN_EXE_NAME: ${{ steps.qiniu.outputs.win_exe_name }}
           QINIU_PUBLISHED: ${{ steps.qiniu.outputs.qiniu_published }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           if [[ "${QINIU_PUBLISHED}" == "true" && -n "${WIN_DOWNLOAD_URL}" ]]; then
-            WIN_LINE="| Windows 64 位 | [七牛云下载安装包](${WIN_DOWNLOAD_URL})（推荐，国内更快） |"
-            WIN_NOTE="- Windows 手动安装与自动更新均走七牛云 CDN"
-          else
-            WIN_LINE="| Windows 64 位 | 见下方附件 \`donghao-ledger-setup-*.exe\`（GitHub 下载） |"
-            if [[ "${QINIU_PUBLISHED}" == "false" ]]; then
-              WIN_NOTE="- Windows：七牛上传未成功，请从本页下方 GitHub 附件下载"
-            else
-              WIN_NOTE="- Windows：见 Release 附件下载"
-            fi
-          fi
-          cat > release-notes.md <<EOF
-          ## 下载说明
+            cat > release-notes.md <<EOF
+          ## Windows 安装包（七牛云 · 国内推荐）
+
+          **[⬇️ 点击下载 ${WIN_EXE_NAME}](${WIN_DOWNLOAD_URL})**
+
+          直链：\`${WIN_DOWNLOAD_URL}\`
+
+          Windows 安装包托管在七牛云 CDN，国内下载更快；应用内「检查更新」也走此地址。**本页下方 Assets 不提供 Windows 安装包。**
+
+          ---
+
+          ## 其他系统下载
 
           | 系统 | 下载 |
           | --- | --- |
           | Apple 芯片 Mac (M1/M2/M3) | 见下方附件 \`donghao-ledger-*-arm64-mac.dmg\` 或 \`.zip\` |
           | Intel Mac | 见下方附件 \`donghao-ledger-*-x64-mac.dmg\` 或 \`.zip\` |
-          ${WIN_LINE}
 
-          ### 自动更新说明
+          ### 自动更新
 
-          ${WIN_NOTE}
-          - Windows 应用内「检查更新」同样从七牛云拉取安装包
-          - macOS：请从本页附件手动下载安装（暂不支持自动更新）
-          - 未签名 macOS 应用安装后，仍可能需要右键打开或执行 \`xattr -cr\`
+          - Windows：七牛云 CDN（见上方链接）
+          - macOS：请从本页附件手动下载（暂不支持自动更新）
 
           ### macOS 提示「已损坏，无法打开」？
 
-          这是 **未签名应用** 被系统拦截，不是安装包坏了。Chrome 下载后会附加隔离标记，按下面任一方式即可：
-
-          **方法一（推荐）** — 终端执行（把 app 拖进「应用程序」后）：
+          这是 **未签名应用** 被系统拦截。终端执行（拖入「应用程序」后）：
 
           \`\`\`bash
           xattr -cr "/Applications/东昊账务.app"
           \`\`\`
 
-          **方法二** — 右键点击 app → **打开** → 再点 **打开**（仅首次需要）。
-
-          **方法三** — 系统设置 → 隐私与安全性 → 找到被拦截提示 → **仍要打开**。
-
-          > 若需免上述步骤，需购买 Apple 开发者证书，并在仓库 Secrets 中设置 \`ENABLE_CODE_SIGNING=true\` 及对应证书变量。
+          或右键 app → **打开** → **打开**（仅首次）。
           EOF
+          else
+            cat > release-notes.md <<EOF
+          ## Windows 安装包
+
+          七牛上传未成功，请从本页下方 **Assets** 下载 \`donghao-ledger-setup-*.exe\`（GitHub）。
+
+          ---
+
+          ## 其他系统下载
+
+          | 系统 | 下载 |
+          | --- | --- |
+          | Apple 芯片 Mac (M1/M2/M3) | 见下方附件 \`donghao-ledger-*-arm64-mac.dmg\` 或 \`.zip\` |
+          | Intel Mac | 见下方附件 \`donghao-ledger-*-x64-mac.dmg\` 或 \`.zip\` |
+          | Windows 64 位 | 见下方附件 \`donghao-ledger-setup-*.exe\` |
+
+          ### 自动更新
+
+          - Windows：见 Release 附件
+          - macOS：请从本页附件手动下载（暂不支持自动更新）
+          EOF
+          fi
 
       - name: Remove Windows artifacts from GitHub Release upload
         if: steps.qiniu.outputs.qiniu_published == 'true' && steps.qiniu.outputs.win_download_url != ''
         run: |
           find release-artifacts -type f \( -name '*.exe' -o -name '*.exe.blockmap' -o -name 'latest.yml' \) -delete
 
+      - name: Remove old Windows assets from existing GitHub Release
+        if: steps.qiniu.outputs.qiniu_published == 'true' && steps.qiniu.outputs.win_download_url != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG does not exist yet, skipping asset cleanup"
+            exit 0
+          fi
+          mapfile -t ASSET_NAMES < <(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name')
+          for name in "${ASSET_NAMES[@]}"; do
+            case "$name" in
+              *.exe|*.exe.blockmap|latest.yml)
+                asset_id=$(gh release view "$TAG" --repo "$REPO" --json assets -q ".assets[] | select(.name==\"$name\") | .id")
+                if [[ -n "$asset_id" ]]; then
+                  gh api --method DELETE "/repos/$REPO/releases/assets/$asset_id"
+                  echo "Removed existing asset: $name"
+                fi
+                ;;
+            esac
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          generate_release_notes: true
-          append_body: true
+          generate_release_notes: false
+          append_body: false
           body_path: release-notes.md
           files: release-artifacts/**/*
         env:

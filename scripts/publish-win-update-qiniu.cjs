@@ -219,7 +219,13 @@ async function uploadFile(uploadUrl, key, filePath) {
 
 async function main() {
   if (!accessKey || !secretKey || !bucket) {
-    console.log('Qiniu secrets not configured, skipping Windows update publish')
+    const missing = [
+      !accessKey && 'QINIU_ACCESS_KEY',
+      !secretKey && 'QINIU_SECRET_KEY',
+      !bucket && 'QINIU_BUCKET',
+    ].filter(Boolean).join(', ')
+    console.log(`Qiniu secrets not available (${missing || 'unknown'}), skipping Windows update publish`)
+    console.log('Hint: reusable workflows need secrets: inherit on the caller job.')
     writeGithubOutput({ qiniu_published: 'false' })
     return
   }

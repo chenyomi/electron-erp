@@ -16,6 +16,19 @@ on:
         description: 'Release tag to build (e.g. v1.0.3)'
         required: true
         type: string
+    secrets:
+      QINIU_ACCESS_KEY:
+        required: false
+      QINIU_SECRET_KEY:
+        required: false
+      QINIU_BUCKET:
+        required: false
+      QINIU_UPDATE_PREFIX:
+        required: false
+      QINIU_UPDATE_CDN_URL:
+        required: false
+      QINIU_UPLOAD_URL:
+        required: false
 
 permissions:
   contents: write

@@ -48,11 +48,6 @@
     "vite": "^5.4.21"
   },
   "build": {
-    "publish": {
-      "provider": "github",
-      "owner": "chenyomi",
-      "repo": "electron-erp"
-    },
     "asarUnpack": [
       "**/node_modules/sharp/**",
       "**/node_modules/@img/**",
@@ -102,7 +97,11 @@
       "target": "nsis",
       "artifactName": "${name}-setup-${version}.${ext}",
       "icon": "resources/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "publish": {
+        "provider": "generic",
+        "url": "https://update.example.com/version/"
+      }
     },
     "nsis": {
       "oneClick": false,

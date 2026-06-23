@@ -65,6 +65,7 @@ export function getUpdateState(): UpdateState {
 
 export function initAutoUpdater(): void {
   if (initialized || is.dev) return
+  if (process.platform !== 'win32') return
   initialized = true
 
   autoUpdater.autoDownload = false
@@ -112,7 +113,7 @@ export function initAutoUpdater(): void {
   autoUpdater.on('error', (error) => {
     let message = error?.message || '检查更新失败'
     if (/404|Not Found/i.test(message)) {
-      message = '更新包下载失败（404）：GitHub Release 上的安装包文件名与更新清单不一致，请安装新版本或联系管理员重新发布。'
+      message = '更新包下载失败（404）：更新服务器上的安装包或清单缺失，请从官网重新下载安装，或联系管理员。'
     }
     setState({
       status: 'error',
@@ -126,6 +127,9 @@ export function initAutoUpdater(): void {
 }
 
 export async function checkForUpdates(options: { silent?: boolean } = {}): Promise<UpdateState> {
+  if (process.platform !== 'win32') {
+    return getUpdateState()
+  }
   if (is.dev) {
     const state = {
       ...getUpdateState(),
@@ -156,6 +160,9 @@ export async function checkForUpdates(options: { silent?: boolean } = {}): Promi
 }
 
 export async function downloadUpdate(): Promise<UpdateState> {
+  if (process.platform !== 'win32') {
+    return getUpdateState()
+  }
   if (is.dev) {
     setState({ status: 'error', error: '开发模式不支持下载更新' })
     return getUpdateState()

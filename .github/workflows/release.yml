@@ -76,9 +76,15 @@ jobs:
         run: |
           unset CSC_LINK CSC_KEY_PASSWORD WIN_CSC_LINK WIN_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID || true
           export CSC_IDENTITY_AUTO_DISCOVERY=false
-          pnpm exec electron-builder ${{ matrix.args }} --publish never
+          BUILDER_EXTRA=()
+          if [[ "${{ matrix.platform }}" == "win" && -n "${QINIU_UPDATE_CDN_URL:-}" ]]; then
+            BUILDER_EXTRA+=(-c.win.publish.provider=generic)
+            BUILDER_EXTRA+=(-c.win.publish.url="${QINIU_UPDATE_CDN_URL}")
+          fi
+          pnpm exec electron-builder ${{ matrix.args }} --publish never "${BUILDER_EXTRA[@]}"
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          QINIU_UPDATE_CDN_URL: ${{ secrets.QINIU_UPDATE_CDN_URL }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -115,43 +121,74 @@ jobs:
           node scripts/align-release-assets.cjs release-artifacts
           node scripts/verify-release-yml.cjs release-artifacts
 
+      - name: Publish Windows update to Qiniu
+        id: qiniu
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
+          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET }}
+          QINIU_UPDATE_PREFIX: ${{ secrets.QINIU_UPDATE_PREFIX }}
+          QINIU_UPDATE_CDN_URL: ${{ secrets.QINIU_UPDATE_CDN_URL }}
+          QINIU_UPLOAD_URL: ${{ secrets.QINIU_UPLOAD_URL }}
+        run: node scripts/publish-win-update-qiniu.cjs release-artifacts
+
+      - name: Prepare release notes
+        shell: bash
+        env:
+          WIN_DOWNLOAD_URL: ${{ steps.qiniu.outputs.win_download_url }}
+        run: |
+          if [[ -n "${WIN_DOWNLOAD_URL}" ]]; then
+            WIN_LINE="| Windows 64 位 | [七牛云下载安装包](${WIN_DOWNLOAD_URL})（推荐，国内更快） |"
+            WIN_NOTE="- Windows 手动安装与自动更新均走七牛云 CDN"
+          else
+            WIN_LINE="| Windows 64 位 | 见下方附件 \`donghao-ledger-setup-*.exe\` |"
+            WIN_NOTE="- Windows：见 Release 附件下载（未配置七牛 Secrets 时）"
+          fi
+          cat > release-notes.md <<EOF
+          ## 下载说明
+
+          | 系统 | 下载 |
+          | --- | --- |
+          | Apple 芯片 Mac (M1/M2/M3) | 见下方附件 \`donghao-ledger-*-arm64-mac.dmg\` 或 \`.zip\` |
+          | Intel Mac | 见下方附件 \`donghao-ledger-*-x64-mac.dmg\` 或 \`.zip\` |
+          ${WIN_LINE}
+
+          ### 自动更新说明
+
+          ${WIN_NOTE}
+          - Windows 应用内「检查更新」同样从七牛云拉取安装包
+          - macOS：请从本页附件手动下载安装（暂不支持自动更新）
+          - 未签名 macOS 应用安装后，仍可能需要右键打开或执行 \`xattr -cr\`
+
+          ### macOS 提示「已损坏，无法打开」？
+
+          这是 **未签名应用** 被系统拦截，不是安装包坏了。Chrome 下载后会附加隔离标记，按下面任一方式即可：
+
+          **方法一（推荐）** — 终端执行（把 app 拖进「应用程序」后）：
+
+          \`\`\`bash
+          xattr -cr "/Applications/东昊账务.app"
+          \`\`\`
+
+          **方法二** — 右键点击 app → **打开** → 再点 **打开**（仅首次需要）。
+
+          **方法三** — 系统设置 → 隐私与安全性 → 找到被拦截提示 → **仍要打开**。
+
+          > 若需免上述步骤，需购买 Apple 开发者证书，并在仓库 Secrets 中设置 \`ENABLE_CODE_SIGNING=true\` 及对应证书变量。
+          EOF
+
+      - name: Remove Windows artifacts from GitHub Release upload
+        if: steps.qiniu.outputs.win_download_url != ''
+        run: |
+          find release-artifacts -type f \( -name '*.exe' -o -name '*.exe.blockmap' -o -name 'latest.yml' \) -delete
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           append_body: true
-          body: |
-            ## 下载说明
-
-            | 系统 | 文件 |
-            | --- | --- |
-            | Apple 芯片 Mac (M1/M2/M3) | `donghao-ledger-*-arm64-mac.zip`（自动更新）或 `donghao-ledger-*.dmg`（手动安装） |
-            | Intel Mac | `donghao-ledger-*-mac.zip`（自动更新）或 `donghao-ledger-*.dmg`（手动安装） |
-            | Windows 64 位 | `donghao-ledger-setup-*.exe` |
-            | 自动更新 | 应用启动后会检查 GitHub Release；也可在「帮助 > 检查更新」手动检查 |
-
-            ### 自动更新说明
-
-            - Windows：支持下载后重启安装
-            - macOS：需要 Release 中包含对应架构的 `.zip` 和 `latest-mac*.yml`
-            - 未签名 macOS 应用更新后，仍可能需要右键打开或执行 `xattr -cr`
-
-            ### macOS 提示「已损坏，无法打开」？
-
-            这是 **未签名应用** 被系统拦截，不是安装包坏了。Chrome 下载后会附加隔离标记，按下面任一方式即可：
-
-            **方法一（推荐）** — 终端执行（把 app 拖进「应用程序」后）：
-
-            ```bash
-            xattr -cr "/Applications/东昊账务.app"
-            ```
-
-            **方法二** — 右键点击 app → **打开** → 再点 **打开**（仅首次需要）。
-
-            **方法三** — 系统设置 → 隐私与安全性 → 找到被拦截提示 → **仍要打开**。
-
-            > 若需免上述步骤，需购买 Apple 开发者证书，并在仓库 Secrets 中设置 `ENABLE_CODE_SIGNING=true` 及对应证书变量。
+          body_path: release-notes.md
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

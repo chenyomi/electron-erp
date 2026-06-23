@@ -684,6 +684,13 @@ const messages = {
     restored: '已恢复',
     logsTitle: '操作日志',
     logsPageSub: '所有增删改记录，用于追溯和审计',
+    logDescription: '操作说明',
+    logClientIp: 'IP 地址',
+    logDeviceInfo: '设备信息',
+    logActionInsert: '新增',
+    logActionUpdate: '修改',
+    logActionDelete: '删除',
+    logActionRestore: '恢复',
     time: '时间',
     actionType: '操作类型',
     module: '所属模块',
@@ -1034,6 +1041,13 @@ const messages = {
     restored: 'Restored',
     logsTitle: 'Logs',
     logsPageSub: 'All create/update/delete records',
+    logDescription: 'Description',
+    logClientIp: 'IP Address',
+    logDeviceInfo: 'Device',
+    logActionInsert: 'Create',
+    logActionUpdate: 'Update',
+    logActionDelete: 'Delete',
+    logActionRestore: 'Restore',
     time: 'Time',
     actionType: 'Action',
     module: 'Module',
@@ -4285,10 +4299,17 @@ const LogsPage = defineComponent({
       { title: props.t('bank'), value: 'bank_ledger' },
       { title: props.t('bills'), value: 'acceptance_bills' },
       { title: props.t('customer'), value: 'customer_ledger' },
+      { title: props.t('customer'), value: 'customer_profiles' },
       { title: props.t('stockIn'), value: 'stock_in_ledger' },
       { title: props.t('stockOut'), value: 'stock_out_ledger' },
     ]
-    const actionOptions = ['INSERT', 'UPDATE', 'DELETE', 'RESTORE']
+    const actionOptions = [
+      { title: props.t('logActionInsert'), value: 'INSERT' },
+      { title: props.t('logActionUpdate'), value: 'UPDATE' },
+      { title: props.t('logActionDelete'), value: 'DELETE' },
+      { title: props.t('logActionRestore'), value: 'RESTORE' },
+    ]
+    const moduleLabel = (name: string) => moduleOptions.find((item) => item.value === name)?.title || name
     const load = async () => {
       const r = await systemAPI.logs({
         page: currentPage.value,
@@ -4329,9 +4350,25 @@ const LogsPage = defineComponent({
       }),
       h(VCard, { class: 'data-card table-card utility-table-card' }, () => [
         h('div', { class: 'table-scroll' }, [
-          h(VTable, { class: 'ledger-table', hover: true }, () => [
-            h('thead', [h('tr', [props.t('time'), props.t('actionType'), props.t('module'), 'ID', props.t('operator')].map(x => h('th', x)))]),
-            h('tbody', rows.value.map(row => h('tr', [h('td', row.created_at), h('td', row.action), h('td', row.table_name), h('td', row.record_id), h('td', row.operator)]))),
+          h(VTable, { class: 'ledger-table logs-table', hover: true }, () => [
+            h('thead', [h('tr', [
+              props.t('time'),
+              props.t('actionType'),
+              props.t('module'),
+              props.t('logDescription'),
+              props.t('operator'),
+              props.t('logClientIp'),
+              props.t('logDeviceInfo'),
+            ].map((x) => h('th', x)))]),
+            h('tbody', rows.value.map((row) => h('tr', [
+              h('td', { class: 'logs-time' }, row.created_at),
+              h('td', row.action_label || row.action),
+              h('td', row.module_label || moduleLabel(row.table_name)),
+              h('td', { class: 'logs-description', title: row.description || '' }, row.description || '—'),
+              h('td', row.operator || '—'),
+              h('td', { class: 'logs-meta', title: row.client_ip || '' }, row.client_ip || '—'),
+              h('td', { class: 'logs-meta', title: row.device_info || '' }, row.device_info || '—'),
+            ]))),
           ]),
         ]),
         h('div', { class: 'table-footer' }, [h('span', `${props.t('total', { count: total.value })} · 每页 ${pageSize} 条`), h(VPagination, { modelValue: currentPage.value, 'onUpdate:modelValue': (v: number) => currentPage.value = v, length: Math.max(1, Math.ceil(total.value / pageSize)), density: 'comfortable', size: 'small', totalVisible: 7 })]),

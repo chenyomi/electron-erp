@@ -53,6 +53,9 @@ function addColumnIfMissing(tableName: string, columnSql: string) {
 }
 
 function migrateSchema(): void {
+  addColumnIfMissing('operation_logs', "description TEXT DEFAULT ''")
+  addColumnIfMissing('operation_logs', "client_ip TEXT DEFAULT ''")
+  addColumnIfMissing('operation_logs', "device_info TEXT DEFAULT ''")
   addColumnIfMissing('stock_in_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('stock_out_ledger', "doc_no TEXT DEFAULT ''")
   migrateCustomerLedgerFields()
@@ -412,6 +415,9 @@ function createTables(): void {
       old_data    TEXT    DEFAULT NULL,
       new_data    TEXT    DEFAULT NULL,
       operator    TEXT    DEFAULT '',
+      description TEXT    DEFAULT '',
+      client_ip   TEXT    DEFAULT '',
+      device_info TEXT    DEFAULT '',
       created_at  TEXT    DEFAULT (datetime('now','localtime'))
     );
 

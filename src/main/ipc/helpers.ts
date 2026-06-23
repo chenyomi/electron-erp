@@ -2,8 +2,17 @@ import { getDb } from '../db'
 import Database from 'better-sqlite3'
 import { getCurrentUser } from './auth'
 import { buildDateOrderBy, ledgerDateSortSql, normalizeLedgerDateText } from '../../common/ledger-date'
+import { buildOperationDescription, getOperationClientContext } from '../operation-log'
 
-export type TableName = 'cash_ledger' | 'bank_ledger' | 'acceptance_bills' | 'customer_ledger' | 'other_ledger' | 'stock_in_ledger' | 'stock_out_ledger'
+export type TableName =
+  | 'cash_ledger'
+  | 'bank_ledger'
+  | 'acceptance_bills'
+  | 'customer_ledger'
+  | 'customer_profiles'
+  | 'other_ledger'
+  | 'stock_in_ledger'
+  | 'stock_out_ledger'
 
 export function logOperation(
   tableName: TableName,
@@ -16,16 +25,23 @@ export function logOperation(
   const db = getDb()
   const currentUser = getCurrentUser()
   const logOperator = operator || currentUser?.displayName || currentUser?.username || ''
+  const description = buildOperationDescription(tableName, action, oldData, newData)
+  const { clientIp, deviceInfo } = getOperationClientContext()
   db.prepare(`
-    INSERT INTO operation_logs (table_name, record_id, action, old_data, new_data, operator)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO operation_logs (
+      table_name, record_id, action, old_data, new_data, operator, description, client_ip, device_info
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     tableName,
     recordId,
     action,
     oldData ? JSON.stringify(oldData) : null,
     newData ? JSON.stringify(newData) : null,
-    logOperator
+    logOperator,
+    description,
+    clientIp,
+    deviceInfo,
   )
 }
 

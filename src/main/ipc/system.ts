@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as XLSX from 'xlsx-js-style'
 import { buildExportWorkbook, timestampForFile, type ExportParams, type ExportTable } from '../export/ledger-export'
 import { buildDateFilterClause } from './helpers'
+import { enrichOperationLogRow } from '../operation-log'
 import { getLastLedgerBalance } from './ledger-balance'
 
 async function confirmRestore(parent: BrowserWindow | null): Promise<boolean> {
@@ -103,11 +104,19 @@ export function registerSystemHandlers(): void {
     const where = `
       WHERE (? = '' OR table_name = ?)
         AND (? = '' OR action = ?)
-        AND (table_name LIKE ? OR action LIKE ? OR operator LIKE ? OR CAST(record_id AS TEXT) LIKE ?)
+        AND (
+          table_name LIKE ? OR action LIKE ? OR operator LIKE ? OR description LIKE ?
+          OR client_ip LIKE ? OR device_info LIKE ? OR CAST(record_id AS TEXT) LIKE ?
+        )
         ${dateWhere.sql}
     `
-    const queryParams = [tableName, tableName, action, action, like, like, like, like, ...dateWhere.params]
-    const rows = db.prepare(`SELECT * FROM operation_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...queryParams, pageSize, offset)
+    const queryParams = [
+      tableName, tableName, action, action,
+      like, like, like, like, like, like, like,
+      ...dateWhere.params,
+    ]
+    const rawRows = db.prepare(`SELECT * FROM operation_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...queryParams, pageSize, offset) as Array<Record<string, unknown>>
+    const rows = rawRows.map((row) => enrichOperationLogRow(row))
     const { total } = db.prepare(`SELECT COUNT(*) as total FROM operation_logs ${where}`).get(...queryParams) as { total: number }
     return { rows, total }
   })

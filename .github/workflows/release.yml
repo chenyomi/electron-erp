@@ -123,6 +123,7 @@ jobs:
 
       - name: Publish Windows update to Qiniu
         id: qiniu
+        continue-on-error: true
         env:
           QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
           QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
@@ -136,13 +137,18 @@ jobs:
         shell: bash
         env:
           WIN_DOWNLOAD_URL: ${{ steps.qiniu.outputs.win_download_url }}
+          QINIU_PUBLISHED: ${{ steps.qiniu.outputs.qiniu_published }}
         run: |
-          if [[ -n "${WIN_DOWNLOAD_URL}" ]]; then
+          if [[ "${QINIU_PUBLISHED}" == "true" && -n "${WIN_DOWNLOAD_URL}" ]]; then
             WIN_LINE="| Windows 64 位 | [七牛云下载安装包](${WIN_DOWNLOAD_URL})（推荐，国内更快） |"
             WIN_NOTE="- Windows 手动安装与自动更新均走七牛云 CDN"
           else
-            WIN_LINE="| Windows 64 位 | 见下方附件 \`donghao-ledger-setup-*.exe\` |"
-            WIN_NOTE="- Windows：见 Release 附件下载（未配置七牛 Secrets 时）"
+            WIN_LINE="| Windows 64 位 | 见下方附件 \`donghao-ledger-setup-*.exe\`（GitHub 下载） |"
+            if [[ "${QINIU_PUBLISHED}" == "false" ]]; then
+              WIN_NOTE="- Windows：七牛上传未成功，请从本页下方 GitHub 附件下载"
+            else
+              WIN_NOTE="- Windows：见 Release 附件下载"
+            fi
           fi
           cat > release-notes.md <<EOF
           ## 下载说明
@@ -178,7 +184,7 @@ jobs:
           EOF
 
       - name: Remove Windows artifacts from GitHub Release upload
-        if: steps.qiniu.outputs.win_download_url != ''
+        if: steps.qiniu.outputs.qiniu_published == 'true' && steps.qiniu.outputs.win_download_url != ''
         run: |
           find release-artifacts -type f \( -name '*.exe' -o -name '*.exe.blockmap' -o -name 'latest.yml' \) -delete
 

@@ -100,7 +100,7 @@
       "signAndEditExecutable": false,
       "publish": {
         "provider": "generic",
-        "url": "https://update.example.com/version/"
+        "url": "http://public.chenyomi.top/version/"
       }
     },
     "nsis": {

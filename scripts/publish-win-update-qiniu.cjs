@@ -220,7 +220,8 @@ async function uploadFile(uploadUrl, key, filePath) {
 async function main() {
   if (!accessKey || !secretKey || !bucket) {
     console.log('Qiniu secrets not configured, skipping Windows update publish')
-    process.exit(0)
+    writeGithubOutput({ qiniu_published: 'false' })
+    return
   }
 
   const files = collectWinUpdateFiles(releaseDir)
@@ -245,15 +246,25 @@ async function main() {
 
   const cdnUrl = (process.env.QINIU_UPDATE_CDN_URL || '').trim()
   const exe = files.find(file => file.name.endsWith('.exe'))
-  if (process.env.GITHUB_OUTPUT && cdnUrl && exe) {
+  if (cdnUrl && exe) {
     const base = cdnUrl.endsWith('/') ? cdnUrl : `${cdnUrl}/`
     const downloadUrl = new URL(exe.name, base).href
-    fs.appendFileSync(process.env.GITHUB_OUTPUT, `win_download_url=${downloadUrl}\n`)
+    writeGithubOutput({ qiniu_published: 'true', win_download_url: downloadUrl })
     console.log(`Windows download URL: ${downloadUrl}`)
+  } else {
+    writeGithubOutput({ qiniu_published: 'true' })
+  }
+}
+
+function writeGithubOutput(values) {
+  if (!process.env.GITHUB_OUTPUT) return
+  for (const [key, value] of Object.entries(values)) {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`)
   }
 }
 
 main().catch((error) => {
   console.error(error?.message || error)
+  writeGithubOutput({ qiniu_published: 'false' })
   process.exit(1)
 })

@@ -97,7 +97,7 @@
         <LedgerPage v-else-if="isLedgerPage" :page="page" :t="t" @notify="notify" />
         <template v-else-if="page === 'import'">
           <KeepAlive>
-            <ImportPage :t="t" @notify="notify" />
+            <ImportPage :t="t" @notify="notify" @cloud-config-changed="refreshHeaderCloudStatus" />
           </KeepAlive>
         </template>
         <TrashPage v-else-if="page === 'trash'" :t="t" @notify="notify" />
@@ -125,10 +125,24 @@
         </v-btn>
       </v-card>
       <div class="ai-float" :class="{ open: aiFloatingOpen }">
-        <v-btn class="ai-float-button" color="primary" :aria-expanded="aiFloatingOpen" @click="aiFloatingOpen = !aiFloatingOpen">
-          <span class="ai-core">AI</span>
-          <span>{{ aiFloatingOpen ? t('close') : t('ai') }}</span>
-        </v-btn>
+        <div class="ai-float-actions">
+          <v-btn
+            v-if="headerCloudConfigured"
+            class="cloud-float-button"
+            color="primary"
+            variant="flat"
+            :loading="headerCloudUploading"
+            :title="t('cloudSyncUpload')"
+            @click="headerCloudSyncUpload"
+          >
+            <span class="cloud-float-button__icon">☁</span>
+            <span>{{ t('cloudSyncUpload') }}</span>
+          </v-btn>
+          <v-btn class="ai-float-button" color="primary" :aria-expanded="aiFloatingOpen" @click="aiFloatingOpen = !aiFloatingOpen">
+            <span class="ai-core">AI</span>
+            <span>{{ aiFloatingOpen ? t('close') : t('ai') }}</span>
+          </v-btn>
+        </div>
         <v-card v-show="aiFloatingOpen" class="ai-floating-card">
           <div class="ai-floating-header">
             <div>
@@ -272,6 +286,29 @@
           <v-btn v-else-if="updateState.status === 'downloaded'" color="primary" @click="installUpdateNow">{{ t('updateInstall') }}</v-btn>
           <v-btn v-else-if="updateState.status === 'error' || updateState.status === 'not-available'" color="primary" :loading="updateBusy" @click="runUpdateCheck">{{ t('updateRetry') }}</v-btn>
         </div>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="headerCloudProgressDialog" persistent max-width="480">
+      <v-card class="record-dialog">
+        <div class="record-dialog__header">
+          <div>
+            <h2 class="record-dialog__title">{{ t('cloudSyncProgressTitleUpload') }}</h2>
+            <p class="record-dialog__subtitle">{{ headerCloudProgress.message || '…' }}</p>
+          </div>
+        </div>
+        <v-card-text class="record-dialog__body">
+          <v-progress-linear
+            v-if="headerCloudProgress.total > 0 && headerCloudProgress.phase !== 'preparing'"
+            :model-value="headerCloudProgressPercent"
+            color="primary"
+            height="8"
+            rounded
+          />
+          <v-progress-linear v-else indeterminate color="primary" height="8" rounded />
+          <p v-if="headerCloudProgress.file" class="muted tiny mt-2 cloud-progress-file">{{ headerCloudProgress.file }}</p>
+          <p v-if="headerCloudProgress.total > 0" class="muted tiny mt-1">{{ headerCloudProgress.current }}/{{ headerCloudProgress.total }}</p>
+        </v-card-text>
       </v-card>
     </v-dialog>
 
@@ -1050,7 +1087,25 @@ const updateBusy = ref(false)
 const updateState = ref<any>({ status: 'idle', currentVersion: '' })
 let offUpdateState: (() => void) | undefined
 let offUpdateOpenDialog: (() => void) | undefined
+let offHeaderCloudProgress: (() => void) | undefined
+let headerCloudProgressTimer: ReturnType<typeof setTimeout> | null = null
 let echartsModule: EChartsModule | null = null
+
+const headerCloudConfigured = ref(false)
+const headerCloudUploading = ref(false)
+const headerCloudProgressDialog = ref(false)
+const headerCloudProgress = reactive({
+  phase: 'preparing' as 'preparing' | 'transferring' | 'applying' | 'done',
+  current: 0,
+  total: 0,
+  file: '',
+  message: '',
+})
+const headerCloudProgressPercent = computed(() => {
+  if (headerCloudProgress.phase === 'done') return 100
+  if (!headerCloudProgress.total) return 0
+  return Math.min(100, Math.round((headerCloudProgress.current / headerCloudProgress.total) * 100))
+})
 
 const themeName = computed(() => themeMode.value === 'dark' ? 'donghaoDark' : 'donghaoLight')
 const isLedgerPage = computed(() => ['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut'].includes(page.value))
@@ -1091,6 +1146,66 @@ async function downloadUpdatePackage() {
 
 async function installUpdateNow() {
   await updateAPI.install()
+}
+
+async function refreshHeaderCloudStatus() {
+  try {
+    const status = await cloudAPI.status()
+    headerCloudConfigured.value = Boolean(status?.configured)
+  } catch {
+    headerCloudConfigured.value = false
+  }
+}
+
+function beginHeaderCloudProgress() {
+  if (headerCloudProgressTimer) {
+    clearTimeout(headerCloudProgressTimer)
+    headerCloudProgressTimer = null
+  }
+  headerCloudProgress.phase = 'preparing'
+  headerCloudProgress.current = 0
+  headerCloudProgress.total = 0
+  headerCloudProgress.file = ''
+  headerCloudProgress.message = '正在准备上传…'
+  headerCloudProgressDialog.value = true
+}
+
+function handleHeaderCloudProgress(progress: any) {
+  if (!headerCloudUploading.value) return
+  headerCloudProgress.phase = progress?.phase || 'preparing'
+  headerCloudProgress.current = Number(progress?.current || 0)
+  headerCloudProgress.total = Number(progress?.total || 0)
+  headerCloudProgress.file = String(progress?.file || '')
+  headerCloudProgress.message = String(progress?.message || '')
+  headerCloudProgressDialog.value = true
+}
+
+function finishHeaderCloudProgress() {
+  if (headerCloudProgressTimer) clearTimeout(headerCloudProgressTimer)
+  headerCloudProgressTimer = setTimeout(() => {
+    headerCloudProgressDialog.value = false
+    headerCloudProgressTimer = null
+  }, 700)
+}
+
+async function headerCloudSyncUpload() {
+  beginHeaderCloudProgress()
+  headerCloudUploading.value = true
+  try {
+    const result = await cloudAPI.syncUpload()
+    if (!result?.ok) {
+      if (!result?.canceled) notify(result?.error || t('backupFailed'), 'error')
+      return
+    }
+    const uploaded = Number(result.uploaded || 0)
+    const skipped = Number(result.skipped || 0)
+    if (!uploaded) notify(t('cloudSyncNoChange'))
+    else notify(t('cloudSyncUploadDone', { uploaded, skipped }))
+    await refreshHeaderCloudStatus()
+  } finally {
+    headerCloudUploading.value = false
+    finishHeaderCloudProgress()
+  }
 }
 
 const navItems = [
@@ -1183,6 +1298,7 @@ async function handleLogin() {
     const result = await authAPI.login({ username: loginForm.username, password: loginForm.password })
     if (result.ok) currentUser.value = result.user
     else loginError.value = result.error || '登录失败'
+    if (result.ok) await refreshHeaderCloudStatus()
   } catch (error: any) {
     loginError.value = error?.message || '登录失败'
   } finally {
@@ -1232,11 +1348,13 @@ onMounted(async () => {
   offUpdateOpenDialog = updateAPI.onOpenDialog(() => {
     updateDialog.value = true
   })
+  offHeaderCloudProgress = cloudAPI.onSyncProgress(handleHeaderCloudProgress)
   try {
     appVersion.value = await systemAPI.appVersion()
     currentUser.value = await authAPI.me()
     updateState.value = await updateAPI.getState()
     maybeOpenUpdateDialog(updateState.value)
+    if (currentUser.value) await refreshHeaderCloudStatus()
   } finally {
     checkingAuth.value = false
   }
@@ -1245,6 +1363,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   offUpdateState?.()
   offUpdateOpenDialog?.()
+  offHeaderCloudProgress?.()
+  if (headerCloudProgressTimer) clearTimeout(headerCloudProgressTimer)
 })
 
 function money(value: any) {
@@ -3409,7 +3529,7 @@ function formatBackupTime(name: string, time?: string) {
 const ImportPage = defineComponent({
   name: 'ImportPage',
   props: { t: { type: Function, required: true } },
-  emits: ['notify'],
+  emits: ['notify', 'cloud-config-changed'],
   setup(props, { emit }) {
     const loading = ref(false)
     const stockLoading = ref(false)
@@ -3459,6 +3579,7 @@ const ImportPage = defineComponent({
       cloudProgressDialog.value = true
     }
     const handleCloudProgress = (progress: any) => {
+      if (!cloudUploading.value && !cloudDownloading.value) return
       cloudProgress.mode = progress?.mode === 'download' ? 'download' : 'upload'
       cloudProgress.phase = progress?.phase || 'preparing'
       cloudProgress.current = Number(progress?.current || 0)
@@ -3522,6 +3643,7 @@ const ImportPage = defineComponent({
         cloudConfig.secretKey = ''
         cloudStatus.value = await cloudAPI.status()
         emit('notify', props.t('cloudConfigSaved'))
+        emit('cloud-config-changed')
       } finally {
         cloudSaving.value = false
       }

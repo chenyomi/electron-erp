@@ -58,8 +58,6 @@ export function registerCloudHandlers(): void {
   }))
 
   ipcMain.handle('cloud:sync-download', async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender)
-    if (!(await confirmCloudRestore(parent))) return { ok: false, canceled: true }
     const result = await syncCloudDownload((progress) => {
       if (!event.sender.isDestroyed()) event.sender.send('cloud:sync-progress', progress)
     })

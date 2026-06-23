@@ -606,6 +606,7 @@ const messages = {
     cloudStatusLine: '本地 {local} 个文件 · 云端 {remote} 个文件 · 云端更新 {time}',
     cloudStatusEmpty: '云端尚无同步数据',
     confirmCloudRestore: '确定从云端拉取差异并合并到本机吗？会先自动备份当前数据。',
+    confirmCloudUpload: '确定将本机账本差异上传到七牛云吗？只会传输有变化的文件。',
     total: '共 {count} 条',
     totalIncome: '总收入',
     totalExpense: '总支出',
@@ -952,6 +953,7 @@ const messages = {
     cloudStatusLine: 'Local {local} files · Cloud {remote} files · Cloud updated {time}',
     cloudStatusEmpty: 'No cloud sync data yet',
     confirmCloudRestore: 'Pull cloud differences and merge into this computer? A local backup runs first.',
+    confirmCloudUpload: 'Upload local ledger changes to Qiniu Cloud? Only changed files will be transferred.',
     total: '{count} items',
     totalIncome: 'Income',
     totalExpense: 'Expense',
@@ -1189,6 +1191,12 @@ function finishHeaderCloudProgress() {
 }
 
 async function headerCloudSyncUpload() {
+  const ok = await askConfirm({
+    message: t('confirmCloudUpload'),
+    confirmColor: 'warning',
+    confirmLabel: t('cloudSyncUpload'),
+  })
+  if (!ok) return
   beginHeaderCloudProgress()
   headerCloudUploading.value = true
   try {
@@ -3678,6 +3686,12 @@ const ImportPage = defineComponent({
       }
     }
     const cloudSyncUpload = async () => {
+      const ok = await askConfirm({
+        message: props.t('confirmCloudUpload'),
+        confirmColor: 'warning',
+        confirmLabel: props.t('cloudSyncUpload'),
+      })
+      if (!ok) return
       beginCloudProgress('upload')
       cloudUploading.value = true
       try {
@@ -3690,6 +3704,13 @@ const ImportPage = defineComponent({
       }
     }
     const cloudSyncDownload = async () => {
+      const ok = await askConfirm({
+        message: props.t('confirmCloudRestore'),
+        confirmColor: 'error',
+        confirmLabel: props.t('cloudSyncDownload'),
+      })
+      if (!ok) return
+      beginCloudProgress('download')
       cloudDownloading.value = true
       try {
         const result = await cloudAPI.syncDownload()

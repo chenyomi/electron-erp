@@ -104,6 +104,7 @@ export const supplierAPI = {
   profile: (supplierName: string) => api.invoke('supplier:profile', supplierName),
   create: (profile: {
     supplier_name: string
+    supplier_type?: string
     contact_person?: string
     phone?: string
     address?: string
@@ -113,6 +114,7 @@ export const supplierAPI = {
   setProfile: (profile: any) => api.invoke('supplier:set-profile', profile),
   removePreview: (supplierName: string) => api.invoke('supplier:remove-preview', supplierName),
   remove: (supplierName: string) => api.invoke('supplier:remove', supplierName),
+  backfillFromStockIn: (supplierName?: string) => api.invoke('supplier:backfill-from-stock-in', supplierName || ''),
   add: (row: any) => api.invoke('supplier:add', row),
   update: (row: any) => api.invoke('supplier:update', row),
   delete: (id: number) => api.invoke('supplier:delete', id),

@@ -366,7 +366,8 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { buildCustomerDescription, calcCustomerReceivableRemaining, calcCustomerReceivableSettlement, customerLedgerFinancialFieldsLocked, getCustomerLedgerRowActions, isCustomerPaymentDescription, isCustomerPaymentRecord, isCustomerReceivableRecord, isCustomerReturnRecord, listCustomerLedgerLinkedToReceivable, parseCustomerDescription, sortCustomerLedgerGrouped } from '../../common/customer-ledger'
-import { buildSupplierDescription, isSupplierPayableRecord, isSupplierPaymentDescription, isSupplierPaymentRecord } from '../../common/supplier-ledger'
+import { buildSupplierDescription, calcSupplierPayableRemaining, getSupplierLedgerRowActions, isSupplierPayableRecord, isSupplierPaymentDescription, isSupplierPaymentRecord, isSupplierReturnRecord, listSupplierLedgerLinkedToPayable, sortSupplierLedgerGrouped } from '../../common/supplier-ledger'
+import { isMaterialSupplierType, isOutsourcingSupplierType, normalizeSupplierType, supplierTypeLabelKey, type SupplierType } from '../../common/supplier-profile'
 import { parseLedgerDate } from '../../common/ledger-date'
 import {
   VAlert,
@@ -505,7 +506,7 @@ const messages = {
     stockInSpecHint: '必填；出库时按品名+规格+单位匹配库存',
     supplierCount: '供应商数',
     customerCount: '客户数',
-    searchStock: '搜索产品/规格/合同号…',
+    searchStock: '搜索产品/规格/类别/合同号…',
     typeProductName: '输入或选择产品',
     typeSupplierName: '输入或选择供应商',
     selectSupplier: '请选择供应商',
@@ -713,10 +714,10 @@ const messages = {
     customerLinkedReceivable: '关联应收',
     customerLinkedPaymentFor: '针对应收',
     customerLedgerDetail: '往来明细',
-    customerLedgerDetailSub: '每笔出库单独算待收。退货/收款必须点对应那一笔应收；已结清的不显示按钮。列表按「一笔出库+其退货/收款」分组排列。',
+    customerLedgerDetailSub: '每笔出库单独算待收。退货/收款必须点对应那一笔应收；已结清的不显示按钮。列表按「一笔出库+其退货/收款」分组，最近活动在上。',
     customerRemainingColumn: '待收',
     customerSettledTag: '已结清',
-    customerReturnBatchHint: '仅冲减本笔出库（{date} · {qty}{unit} · 待收 {remaining}），不影响其他批次。',
+    customerReturnBatchHint: '仅冲减本笔出库（{date} · {qty}{unit} · 待收 {remaining}），不影响其他批次；库存按退货数量加回。',
     customerLedgerEmptyHint: '产品出库后会自动生成应收。若仍为空，请重置筛选或到回收站恢复。',
     customerRefreshLedger: '刷新',
     customerPaymentLinkedHint: '登记本条应收的收款，可改金额（支持部分收）',
@@ -724,13 +725,15 @@ const messages = {
     addCustomerPayment: '登记收款',
     customerBizKind: '类型',
     customerBizSale: '应收',
-    customerBizReturn: '退货',
+    customerBizReturn: '客户退货',
     customerBizPayment: '收款',
-    customerReturnFormHint: '填写退货数量与单价（填正数即可），保存后自动冲减应收。',
+    customerReturnFormHint: '填写退货数量与单价即可，产品自动与关联应收一致；只冲减应收、加回库存，不生成出库单。',
     customerPaymentFormHint: '客户每转来一笔钱，登记一条收款；不支持批量合并收款。',
     customerOverview: '客户欠款一览',
     customerOverviewSub: '点右侧「台账」查看明细；出库自动生成应收，在应收行上登记退货与收款。',
     amountAutoCalc: '自动计算（数量 × 单价）',
+    materialAmountAutoCalc: '自动计算（公斤数 × 元/公斤）',
+    finishedUnitPriceHint: '成品参考单价，与下方材料费无关',
     addCustomer: '新增客户',
     addCustomerSub: '填写客户基本信息，保存后可继续登记出库与收款。',
     contactPerson: '联系人',
@@ -782,7 +785,7 @@ const messages = {
     supplier: '供应商往来',
     supplierSub: '应付与付款',
     supplierOverview: '供应商应付一览',
-    supplierOverviewSub: '点「台账」登记应付、付款；入库只改库存，不自动记应付。',
+    supplierOverviewSub: '入库自动生成应付；外协加工支持退货与付款，原材料仅付款。',
     supplierPayable: '应付',
     supplierPaid: '付款',
     supplierBalance: '尚欠',
@@ -792,7 +795,7 @@ const messages = {
     supplierBizPayable: '应付',
     supplierBizPayment: '付款',
     supplierLedgerDetail: '往来明细',
-    supplierLedgerDetailSub: '手工登记应付；应付行点「付款」；付款行可编辑或删除。',
+    supplierLedgerDetailSub: '入库自动生成应付；应付行可点「付款」；外协加工应付可点「退货」。列表按「一笔应付+其退货/付款」分组，最近活动在上。',
     supplierWorkspaceTitle: '供应商台账',
     addSupplier: '新增供应商',
     addSupplierSub: '只建供应商档案；应付与付款请进台账登记。',
@@ -803,15 +806,38 @@ const messages = {
     selectPayableRowToPay: '请从应付行点击「付款」',
     supplierPaymentLinkedHint: '登记本条应付的付款，可改金额（支持部分付）',
     supplierPaymentFormHint: '每付一笔登记一条付款；请从应付行点「付款」关联。',
-    supplierPayableFormHint: '登记欠供应商的货款或费用；可填数量×单价自动算应付金额。',
-    supplierLedgerEmptyHint: '点上方「登记应付」添加第一笔；应付行上可点「付款」。',
-    supplierWorkspaceSummaryHint: '尚欠 = 期初应付 + 应付 − 付款',
+    supplierPayableFormHint: '应付由入库自动生成；此处仅可编辑已有明细。',
+    supplierPayableAutoOnly: '应付由入库自动生成，请在应付行点「付款」或「退货」。',
+    supplierLedgerEmptyHint: '成品入库并选择该供应商后会自动生成应付。若仍为空，请重置筛选或到回收站恢复。',
+    supplierWorkspaceSummaryHint: '尚欠 = 期初应付 + 应付 − 退货 − 付款',
+    supplierType: '供应商类别',
+    supplierTypeMaterial: '原材料',
+    supplierTypeOutsourcing: '外协加工',
+    materialName: '材料名称',
+    materialSpec: '规格/牌号',
+    materialUnit: '单位',
+    materialQuantity: '公斤数',
+    materialUnitPrice: '元/公斤',
+    stockInNoSupplierHint: '未选供应商：成品计入库存并登记单价金额，不记入供应商台账。',
+    stockInOutsourcingHint: '外协加工：选择供应商后，数量 × 加工单价记入应付，成品计入库存。',
+    stockInMaterialHint: '原材料供应商：上方登记成品入库（计库存），下方材料公斤×单价记入应付。',
+    formSectionMaterialCost: '材料费用',
+    materialAmount: '材料金额',
+    finishedStockAmount: '成品金额',
+    finishedStockAmountHint: '仅供参考（数量×单价），不入应付',
+    addSupplierReturn: '登记退货',
+    supplierReturnRow: '退货',
+    selectPayableRowToReturn: '请从应付行点击「退货」',
+    supplierReturnFormHint: '填写退货数量与单价（正数）；冲减应付，并按退货数量直接减库存（不生成出库单）。',
+    supplierBizReturn: '退供应商',
     supplierDebtTag: '尚欠',
     supplierOverpaidTag: '多付',
     supplierLinkedPaymentFor: '针对应付',
     supplierProfile: '期初应付',
     supplierProfileSub: '对应期初欠供应商的款项。保存后按「期初 + 应付 − 付款」重算尚欠。',
     supplierCreated: '供应商已添加',
+    supplierPhone: '供应商电话',
+    supplierAddress: '供应商地址',
     deleteSupplier: '删除',
     confirmDeleteSupplierTitle: '删除供应商',
     confirmDeleteSupplierMessage: '确定删除供应商「{name}」吗？\n\n· 往来记录 {ledgerCount} 条将移入回收站\n· 供应商档案将一并删除',
@@ -961,7 +987,7 @@ const messages = {
     stockInSpecHint: 'Required; stock-out matches by name + spec + unit',
     supplierCount: 'Suppliers',
     customerCount: 'Customers',
-    searchStock: 'Search product/spec/contract…',
+    searchStock: 'Search product/spec/category/contract…',
     typeProductName: 'Type or select product',
     typeSupplierName: 'Type or select supplier',
     selectSupplier: 'Select supplier',
@@ -1177,13 +1203,15 @@ const messages = {
     addCustomerPayment: 'Record Payment',
     customerBizKind: 'Type',
     customerBizSale: 'Receivable',
-    customerBizReturn: 'Return',
+    customerBizReturn: 'Customer Return',
     customerBizPayment: 'Payment',
-    customerReturnFormHint: 'Enter return qty and price as positive numbers; receivable is reduced automatically.',
+    customerReturnFormHint: 'Enter qty and price only; product matches linked receivable. Reduces receivable and restores inventory—no stock-out record.',
     customerPaymentFormHint: 'Record one payment per transfer. Batch collection is not supported.',
     customerOverview: 'Customer Balances',
     customerOverviewSub: 'Click a customer or 台账 to view details. Register receivables and payments inside the ledger.',
     amountAutoCalc: 'Auto-calculated (qty × price)',
+    materialAmountAutoCalc: 'Auto-calculated (kg × price per kg)',
+    finishedUnitPriceHint: 'Finished-goods reference price; unrelated to material cost below',
     addCustomer: 'Add Customer',
     addCustomerSub: 'Enter basic customer info. You can record stock-out and payments after saving.',
     contactPerson: 'Contact',
@@ -1234,7 +1262,7 @@ const messages = {
     supplier: 'Suppliers',
     supplierSub: 'Payables & payments',
     supplierOverview: 'Supplier Payables',
-    supplierOverviewSub: 'Open 台账 to record payables and payments. Stock-in updates inventory only.',
+    supplierOverviewSub: 'Stock-in auto-creates payables. Outsourcing supports returns and payments.',
     supplierPayable: 'Payable',
     supplierPaid: 'Paid',
     supplierBalance: 'Balance Due',
@@ -1244,7 +1272,7 @@ const messages = {
     supplierBizPayable: 'Payable',
     supplierBizPayment: 'Payment',
     supplierLedgerDetail: 'Ledger',
-    supplierLedgerDetailSub: 'Record payables manually. On payable rows: Pay. On payment rows: Edit or Delete.',
+    supplierLedgerDetailSub: 'Stock-in with this supplier creates payables. On payable rows: Pay or Return (outsourcing).',
     supplierWorkspaceTitle: 'Supplier Ledger',
     addSupplier: 'Add Supplier',
     addSupplierSub: 'Profile only. Record payables and payments in the ledger.',
@@ -1255,8 +1283,14 @@ const messages = {
     selectPayableRowToPay: 'Click Pay on a payable row first',
     supplierPaymentLinkedHint: 'Record payment for this payable; partial payment supported',
     supplierPaymentFormHint: 'One payment per transfer. Link from a payable row via Pay.',
-    supplierPayableFormHint: 'Record amount owed to supplier; qty × price auto-calculates payable.',
-    supplierLedgerEmptyHint: 'Click Record Payable above to add the first entry.',
+    supplierPayableFormHint: 'Payables are auto-created from stock-in; edit existing rows only.',
+    supplierPayableAutoOnly: 'Payables are created from stock-in. Use Pay or Return on payable rows.',
+    stockInNoSupplierHint: 'No supplier: record qty, price and amount for inventory; not posted to supplier ledger.',
+    stockInOutsourcingHint: 'Outsourcing: with supplier, qty × processing price → payable; goods → inventory.',
+    stockInMaterialHint: 'Material supplier: finished goods above (inventory); material kg × price below (payable).',
+    finishedStockAmount: 'Finished Amount',
+    finishedStockAmountHint: 'Reference only (qty × price); not payable',
+    supplierLedgerEmptyHint: 'Payables are created automatically from stock-in with this supplier. Reset filters or check Trash if empty.',
     supplierWorkspaceSummaryHint: 'Due = opening + payables − payments',
     supplierDebtTag: 'Due',
     supplierOverpaidTag: 'Overpaid',
@@ -1264,6 +1298,8 @@ const messages = {
     supplierProfile: 'Opening Payable',
     supplierProfileSub: 'Opening amount owed to supplier. Saving recalculates balance.',
     supplierCreated: 'Supplier added',
+    supplierPhone: 'Supplier Phone',
+    supplierAddress: 'Supplier Address',
     deleteSupplier: 'Delete',
     confirmDeleteSupplierTitle: 'Delete Supplier',
     confirmDeleteSupplierMessage: 'Delete supplier "{name}"?\n\n· {ledgerCount} ledger row(s) will move to Trash\n· Supplier profile will be removed',
@@ -2143,7 +2179,7 @@ const ledgerConfigs: any = {
   bills: { title: 'bills', api: billsAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'currentSurplus'], table: 'bills', relatedTable: 'acceptance_bills' },
   customer: { title: 'customer', api: customerAPI, pageSize: 20, search: 'search', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note', 'month_label'], summary: [], table: 'customer', relatedTable: 'customer_ledger' },
   supplier: { title: 'supplier', api: supplierAPI, pageSize: 20, search: 'search', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: [], fields: ['supplier_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note'], summary: [], table: 'supplier', relatedTable: 'supplier_ledger' },
-  stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['doc_no', 'supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
+  stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['doc_no', 'supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'material_quantity', 'material_unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
   stockOut: { title: 'stockOut', api: stockOutAPI, pageSize: 20, search: 'searchStock', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['doc_no', 'customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockOut', relatedTable: 'stock_out_ledger' },
 }
 
@@ -2179,7 +2215,6 @@ const formSections: Record<string, FormSectionSpec[]> = {
   ],
   customerReturn: [
     { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
-    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
     { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
@@ -2194,11 +2229,34 @@ const formSections: Record<string, FormSectionSpec[]> = {
     { titleKey: 'formSectionAmount', fields: [{ key: 'amount_out', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
-  stockIn: [
-    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'category', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+  supplierReturn: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  stockInNoSupplier: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
     { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
     { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount', span: 'half' }] },
-    { titleKey: 'formSectionTax', fields: [{ key: 'tax_rate', span: 'half' }, { key: 'tax_amount', span: 'half' }, { key: 'invoice_amount', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  stockInMaterial: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: '_finished_stock_amount', span: 'half' }] },
+    { titleKey: 'formSectionMaterialCost', fields: [{ key: 'material_quantity', span: 'half' }, { key: 'material_unit_price', span: 'half' }, { key: 'amount', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  stockInOutsourcing: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  stockIn: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   stockOut: [
@@ -2312,13 +2370,16 @@ const LedgerPage = defineComponent({
     const supplierDetailDialog = ref(false)
     const supplierDetailName = ref('')
     const supplierDetailSummary = ref<any>({})
-    const supplierEntryMode = ref<'payable' | 'payment'>('payable')
+    const supplierEntryMode = ref<'payable' | 'payment' | 'return'>('payable')
     const linkedPayableRow = ref<any>(null)
+    const supplierDetailType = ref<SupplierType>('outsourcing')
+    const stockInSupplierType = ref<SupplierType>('outsourcing')
     const supplierCreateDialog = ref(false)
     const supplierProfileDialog = ref(false)
-    const supplierProfileForm = reactive({ contact_person: '', phone: '', address: '', opening_balance: 0, note: '' })
+    const supplierProfileForm = reactive({ supplier_type: 'outsourcing' as SupplierType, contact_person: '', phone: '', address: '', opening_balance: 0, note: '' })
     const supplierCreateForm = reactive({
       supplier_name: '',
+      supplier_type: 'outsourcing' as SupplierType,
       contact_person: '',
       phone: '',
       address: '',
@@ -2362,8 +2423,8 @@ const LedgerPage = defineComponent({
       const listParams = {
         customerName: name,
         entryType: 'all',
-        page: currentPage.value,
-        pageSize: config.value.pageSize,
+        page: 1,
+        pageSize: 10000,
       }
       const [res, sum] = await Promise.all([
         config.value.api.list(listParams),
@@ -2390,15 +2451,16 @@ const LedgerPage = defineComponent({
     const fetchSupplierDetailData = async (gen: number) => {
       if (!supplierDetailName.value) return
       const name = supplierDetailName.value
-      const listParams = { supplierName: name, entryType: 'all', page: currentPage.value, pageSize: config.value.pageSize }
+      const listParams = { supplierName: name, entryType: 'all', page: 1, pageSize: 10000 }
       const [res, sum] = await Promise.all([
         config.value.api.list(listParams),
         config.value.api.summary({ supplierName: name }),
       ])
       if (gen !== loadGeneration) return
-      rows.value = res.rows
+      rows.value = sortSupplierLedgerGrouped(res.rows || [])
       total.value = res.total
       supplierDetailSummary.value = sum
+      supplierDetailType.value = normalizeSupplierType(sum?.supplier_type)
     }
 
     const fetchSupplierOverview = async (gen: number) => {
@@ -2495,6 +2557,19 @@ const LedgerPage = defineComponent({
     const loadRecordOptions = async () => {
       await Promise.all([loadInventoryOptions(), loadProductOptions(), loadProfileOptions()])
     }
+    const loadStockInSupplierType = async (supplierName: string) => {
+      const name = String(supplierName || '').trim()
+      if (!name) {
+        stockInSupplierType.value = 'outsourcing'
+        return
+      }
+      try {
+        const profile = await supplierAPI.profile(name)
+        stockInSupplierType.value = normalizeSupplierType(profile?.supplier_type)
+      } catch {
+        stockInSupplierType.value = 'outsourcing'
+      }
+    }
     const openAdd = async (mode: 'sale' | 'return' | 'payment' | 'payable' = 'sale') => {
       if (props.page === 'customer' && !customerDetailName.value && !filterValue.value) {
         openCustomerPickAndAdd(mode as 'sale' | 'return' | 'payment')
@@ -2504,13 +2579,17 @@ const LedgerPage = defineComponent({
         emit('notify', props.t('selectSupplierToAdd'), 'warning')
         return
       }
+      if (props.page === 'supplier' && mode !== 'payment' && mode !== 'return') {
+        emit('notify', props.t('supplierPayableAutoOnly'), 'warning')
+        return
+      }
       editing.value = null
       Object.keys(form).forEach(k => delete form[k])
       attachments.value = []
       pendingAttachments.value = []
       pendingAttachmentDeletes.value = []
       if (props.page === 'customer') customerEntryMode.value = mode as 'sale' | 'return' | 'payment'
-      if (props.page === 'supplier') supplierEntryMode.value = mode === 'payment' ? 'payment' : 'payable'
+      if (props.page === 'supplier') supplierEntryMode.value = mode === 'payment' ? 'payment' : mode === 'return' ? 'return' : 'payable'
       const activeName = props.page === 'supplier'
         ? (supplierDetailName.value || filterValue.value)
         : (customerDetailName.value || filterValue.value)
@@ -2531,11 +2610,21 @@ const LedgerPage = defineComponent({
         if (mode === 'return') form.note = '退货'
         autoFillAmountFields(form, 'quantity')
       }
-      if (props.page === 'supplier' && mode !== 'payment') {
+      if (props.page === 'supplier' && mode === 'return') {
+        form.note = '退货'
+      }
+      if (props.page === 'supplier' && mode !== 'payment' && mode !== 'return') {
         form.amount_out = 0
         form.quantity = 1
         form.unit_price = 0
         autoFillAmountFields(form, 'quantity')
+      }
+      if (props.page === 'stockIn') {
+        await loadStockInSupplierType(String(form.supplier_name || ''))
+        if (isMaterialSupplierType(stockInSupplierType.value)) {
+          form.material_quantity = Number(form.material_quantity || 0)
+          form.material_unit_price = Number(form.material_unit_price || 0)
+        }
       }
       await loadRecordOptions()
       if (customerDetailDialog.value) await nextTick()
@@ -2551,6 +2640,17 @@ const LedgerPage = defineComponent({
       endDate.value = ''
       currentPage.value = 1
       await customerAPI.backfillFromStockOut(customerDetailName.value).catch(() => null)
+      await load()
+    }
+    const refreshSupplierWorkspace = async () => {
+      if (!supplierDetailName.value) return
+      keyword.value = ''
+      yearFilter.value = ''
+      monthFilter.value = ''
+      startDate.value = ''
+      endDate.value = ''
+      currentPage.value = 1
+      await supplierAPI.backfillFromStockIn(supplierDetailName.value).catch(() => null)
       await load()
     }
     const openCustomerWorkspace = async (customerName: string) => {
@@ -2654,6 +2754,7 @@ const LedgerPage = defineComponent({
     }
     const openSupplierCreate = () => {
       supplierCreateForm.supplier_name = ''
+      supplierCreateForm.supplier_type = 'outsourcing'
       supplierCreateForm.contact_person = ''
       supplierCreateForm.phone = ''
       supplierCreateForm.address = ''
@@ -2670,6 +2771,7 @@ const LedgerPage = defineComponent({
       try {
         await supplierAPI.create({
           supplier_name: name,
+          supplier_type: supplierCreateForm.supplier_type,
           contact_person: supplierCreateForm.contact_person || '',
           phone: supplierCreateForm.phone || '',
           address: supplierCreateForm.address || '',
@@ -2678,9 +2780,14 @@ const LedgerPage = defineComponent({
         })
         supplierCreateDialog.value = false
         emit('notify', props.t('supplierCreated'))
-        await load()
       } catch (error: any) {
         emit('notify', error?.message || '添加失败', 'error')
+        return
+      }
+      try {
+        await load()
+      } catch {
+        // 档案已保存，刷新失败不影响创建结果
       }
     }
     const openSupplierWorkspace = async (supplierName: string) => {
@@ -2689,6 +2796,7 @@ const LedgerPage = defineComponent({
       filterValue.value = supplierName
       keyword.value = ''
       resetSelection()
+      await supplierAPI.backfillFromStockIn(supplierName).catch(() => null)
       await load()
     }
     const closeSupplierWorkspace = () => {
@@ -2705,6 +2813,7 @@ const LedgerPage = defineComponent({
       const name = activeSupplierName()
       if (!name) return
       const profile = await supplierAPI.profile(name)
+      supplierProfileForm.supplier_type = normalizeSupplierType(profile.supplier_type)
       supplierProfileForm.contact_person = profile.contact_person || ''
       supplierProfileForm.phone = profile.phone || ''
       supplierProfileForm.address = profile.address || ''
@@ -2717,6 +2826,7 @@ const LedgerPage = defineComponent({
       if (!name) return
       await supplierAPI.setProfile({
         supplier_name: name,
+        supplier_type: supplierProfileForm.supplier_type,
         contact_person: supplierProfileForm.contact_person || '',
         phone: supplierProfileForm.phone || '',
         address: supplierProfileForm.address || '',
@@ -2763,13 +2873,53 @@ const LedgerPage = defineComponent({
       form.supplier_name = supplierDetailName.value || row.supplier_name
       form.ref_ledger_id = row.id
       form.date = todayIsoDate()
-      form.amount_out = Math.abs(Number(row.amount_in || 0))
+      const linked = listSupplierLedgerLinkedToPayable(Number(row.id || 0), rows.value)
+      form.amount_out = calcSupplierPayableRemaining(row.amount_in, linked)
       form.product_name = '付款'
       form.note = `付 ${row.product_name || '应付'}`.trim()
       await loadRecordOptions()
       dialog.value = true
     }
-    const canPaySupplierRow = (row: any) => props.page === 'supplier' && supplierDetailDialog.value && isSupplierPayableRecord(row)
+    const openReturnForPayableRow = async (row: any) => {
+      const linked = listSupplierLedgerLinkedToPayable(Number(row.id || 0), rows.value)
+      const remaining = calcSupplierPayableRemaining(row.amount_in, linked)
+      if (remaining <= 0.005) {
+        emit('notify', '该笔已结清，不能退货。', 'warning')
+        return
+      }
+      editing.value = null
+      Object.keys(form).forEach(k => delete form[k])
+      linkedPayableRow.value = row
+      supplierEntryMode.value = 'return'
+      form.supplier_name = supplierDetailName.value || row.supplier_name
+      form.ref_ledger_id = row.id
+      form.date = todayIsoDate()
+      form.contract_no = row.contract_no || ''
+      form.quantity = Math.abs(Number(row.quantity || 0))
+      form.unit_price = Math.abs(Number(row.unit_price || 0))
+      form.note = '退货'
+      await loadRecordOptions()
+      dialog.value = true
+    }
+    const supplierLinkedToPayable = (row: any) => {
+      if (isSupplierPayableRecord(row)) {
+        return listSupplierLedgerLinkedToPayable(Number(row.id || 0), rows.value)
+      }
+      const refId = Number(row.ref_ledger_id || 0)
+      return refId ? listSupplierLedgerLinkedToPayable(refId, rows.value) : []
+    }
+    const supplierPayableRemaining = (row: any) => calcSupplierPayableRemaining(row.amount_in, supplierLinkedToPayable(row))
+    const supplierRowActions = (row: any) => {
+      if (props.page !== 'supplier' || !supplierDetailDialog.value) {
+        return { showPay: false, showReturn: false, showEdit: true, showDelete: true }
+      }
+      const linked = supplierLinkedToPayable(row)
+      const remaining = isSupplierPayableRecord(row) ? supplierPayableRemaining(row) : undefined
+      const allowReturn = isOutsourcingSupplierType(supplierDetailType.value)
+      return getSupplierLedgerRowActions(row, linked, remaining, allowReturn)
+    }
+    const canPaySupplierRow = (row: any) => supplierRowActions(row).showPay
+    const canReturnSupplierRow = (row: any) => supplierRowActions(row).showReturn
     const renderOverviewActionLink = (label: string, onClick: () => void, options: { danger?: boolean } = {}) => h('button', {
       type: 'button',
       class: ['overview-action-link', options.danger ? 'overview-action-link--danger' : ''],
@@ -2803,14 +2953,17 @@ const LedgerPage = defineComponent({
       form.ref_ledger_id = row.id
       form.date = todayIsoDate()
       form.contract_no = row.contract_no || ''
-      form.product_name = row.product_name || ''
-      form.spec = row.spec || ''
-      form.unit = row.unit || ''
       form.quantity = Math.abs(Number(row.quantity || 0))
       form.unit_price = Math.abs(Number(row.unit_price || 0))
       form.note = '退货'
       await loadRecordOptions()
       dialog.value = true
+    }
+    const applyLinkedReturnProductFields = (payload: Record<string, any>, refRow: any) => {
+      if (!refRow) return
+      payload.product_name = refRow.product_name || ''
+      payload.spec = refRow.spec || ''
+      payload.unit = refRow.unit || ''
     }
     const customerReceivableRemaining = (row: any) => {
       if (Number(row?.remaining_receivable ?? NaN) >= 0) {
@@ -2893,6 +3046,12 @@ const LedgerPage = defineComponent({
       }
       if (props.page === 'customer') {
         customerLedgerFinancialLocked.value = customerLedgerFinancialFieldsLocked(row, customerLinkedToReceivable(row))
+      } else if (props.page === 'supplier' && isSupplierReturnRecord(row)) {
+        supplierEntryMode.value = 'return'
+        if (Number(form.quantity) < 0) form.quantity = Math.abs(Number(form.quantity))
+        if (Number(row.ref_ledger_id || 0) > 0) {
+          linkedPayableRow.value = rows.value.find((item: any) => item.id === Number(row.ref_ledger_id)) || null
+        }
       } else if (props.page === 'supplier' && (isSupplierPaymentDescription(form.description) || isSupplierPaymentRecord(row))) {
         form.product_name = '付款'
         supplierEntryMode.value = 'payment'
@@ -2902,8 +3061,9 @@ const LedgerPage = defineComponent({
       } else if (props.page === 'supplier') {
         supplierEntryMode.value = Number(form.amount_out) > 0 && !Number(form.amount_in) ? 'payment' : 'payable'
       }
-      pendingAttachments.value = []
-      pendingAttachmentDeletes.value = []
+      if (props.page === 'stockIn') {
+        await loadStockInSupplierType(String(form.supplier_name || ''))
+      }
       await loadRecordOptions()
       dialog.value = true
       await loadAttachments(row)
@@ -2935,15 +3095,20 @@ const LedgerPage = defineComponent({
               return
             }
           } else {
-            if (!String(payload.product_name || '').trim()) {
-              emit('notify', '请选择或填写产品', 'warning')
-              return
-            }
             let qty = Number(payload.quantity || 0)
             const price = Number(payload.unit_price || 0)
             if (customerEntryMode.value === 'return') {
               if (!Number(payload.ref_ledger_id || 0)) {
                 emit('notify', props.t('selectSaleRowToReturn'), 'warning')
+                return
+              }
+              applyLinkedReturnProductFields(
+                payload,
+                linkedReceivableRow.value
+                  || rows.value.find((item: any) => item.id === Number(payload.ref_ledger_id || 0)),
+              )
+              if (!String(payload.product_name || '').trim()) {
+                emit('notify', '关联应收缺少产品信息', 'warning')
                 return
               }
               if (qty <= 0 || price <= 0) {
@@ -2959,6 +3124,10 @@ const LedgerPage = defineComponent({
               payload.amount_out = 0
               payload.amount_in = 0
             } else {
+              if (!String(payload.product_name || '').trim()) {
+                emit('notify', '请选择或填写产品', 'warning')
+                return
+              }
               if (qty <= 0 || price <= 0) {
                 emit('notify', '请填写数量与单价', 'warning')
                 return
@@ -2996,7 +3165,34 @@ const LedgerPage = defineComponent({
               emit('notify', props.t('selectPayableRowToPay'), 'warning')
               return
             }
+          } else if (supplierEntryMode.value === 'return' || isSupplierReturnRecord(payload)) {
+            if (!Number(payload.ref_ledger_id || 0) && !editing.value) {
+              emit('notify', props.t('selectPayableRowToReturn'), 'warning')
+              return
+            }
+            const qty = Math.abs(Number(payload.quantity || 0))
+            const price = Math.abs(Number(payload.unit_price || 0))
+            if (qty <= 0 || price <= 0) {
+              emit('notify', '请填写退货数量与单价（正数）', 'warning')
+              return
+            }
+            payload.quantity = qty
+            payload.unit_price = price
+            payload.amount_in = 0
+            payload.amount_out = 0
+            applyLinkedReturnProductFields(
+              payload,
+              linkedPayableRow.value
+                || rows.value.find((item: any) => item.id === Number(payload.ref_ledger_id || 0)),
+            )
+            if (!String(payload.note || '').includes('退货')) {
+              payload.note = payload.note ? `${payload.note} 退货` : '退货'
+            }
           } else {
+            if (!editing.value) {
+              emit('notify', props.t('supplierPayableAutoOnly'), 'warning')
+              return
+            }
             const qty = Number(payload.quantity || 0)
             const price = Number(payload.unit_price || 0)
             if (qty > 0 && price > 0) {
@@ -3023,9 +3219,35 @@ const LedgerPage = defineComponent({
             emit('notify', props.t('stockInUnitRequired'), 'warning')
             return
           }
+          const hasSupplier = Boolean(String(payload.supplier_name || '').trim())
+          if (hasSupplier && isMaterialSupplierType(stockInSupplierType.value)) {
+            if (Number(payload.quantity || 0) <= 0) {
+              emit('notify', '请填写成品数量', 'warning')
+              return
+            }
+            if (Number(payload.material_quantity || 0) <= 0 || Number(payload.material_unit_price || 0) <= 0) {
+              emit('notify', '请填写材料公斤数与单价', 'warning')
+              return
+            }
+            payload.amount = roundMoneyValue(Number(payload.material_quantity || 0) * Number(payload.material_unit_price || 0))
+          } else {
+            payload.material_quantity = 0
+            payload.material_unit_price = 0
+            payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
+            if (Number(payload.quantity || 0) <= 0 || Number(payload.unit_price || 0) <= 0) {
+              emit('notify', '请填写数量与单价', 'warning')
+              return
+            }
+            if (Number(payload.amount || 0) <= 0) {
+              emit('notify', '请填写金额，或填写数量与单价', 'warning')
+              return
+            }
+          }
         }
         if (props.page === 'stockIn' || props.page === 'stockOut') {
-          payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
+          if (props.page === 'stockOut') {
+            payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
+          }
         }
         if (props.page === 'stockOut' && !editing.value) {
           const matched = inventoryOptions.value.find(item =>
@@ -3480,7 +3702,9 @@ const LedgerPage = defineComponent({
     const renderActionCell = (row: any) => {
       const actions = props.page === 'customer' && customerDetailDialog.value
         ? customerRowActions(row)
-        : { showReceive: canReceiveRow(row), showReturn: canReturnRow(row), showEdit: true, showDelete: true }
+        : props.page === 'supplier' && supplierDetailDialog.value
+          ? supplierRowActions(row)
+          : { showReceive: canReceiveRow(row), showReturn: canReturnRow(row), showEdit: true, showDelete: true }
       return h('td', { class: 'action-cell sticky-action-col' }, [
         ...(actions.showReceive
           ? [h(VBtn, {
@@ -3490,7 +3714,7 @@ const LedgerPage = defineComponent({
             onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentForRow(row) },
           }, () => props.t('customerReceiveRow'))]
           : []),
-        ...(actions.showReturn
+        ...(actions.showReturn && props.page === 'customer' && customerDetailDialog.value
           ? [h(VBtn, {
             size: 'small',
             variant: 'text',
@@ -3505,6 +3729,14 @@ const LedgerPage = defineComponent({
             color: 'success',
             onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentForPayableRow(row) },
           }, () => props.t('supplierPaymentRow'))]
+          : []),
+        ...(canReturnSupplierRow(row)
+          ? [h(VBtn, {
+            size: 'small',
+            variant: 'text',
+            color: 'warning',
+            onClick: (event: MouseEvent) => { event.stopPropagation(); openReturnForPayableRow(row) },
+          }, () => props.t('supplierReturnRow'))]
           : []),
         ...(actions.showEdit
           ? [h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit'))]
@@ -3657,7 +3889,7 @@ const LedgerPage = defineComponent({
               : null,
           props.page === 'customer' || props.page === 'supplier'
             ? null
-            : props.page === 'cash'
+            : ['cash', 'bank', 'bills'].includes(props.page)
               ? h(VBtn, { color: 'primary', size: 'small', onClick: () => openAdd() }, () => props.t('addRecord'))
               : h(VBtn, { color: 'primary', size: 'small', onClick: () => openAdd() }, () => props.t('add')),
         ]),
@@ -3726,6 +3958,7 @@ const LedgerPage = defineComponent({
               h(VTable, { class: 'ledger-table customer-overview-table', hover: true }, () => [
                 h('thead', [h('tr', [
                   h('th', props.t('supplierName')),
+                  h('th', props.t('supplierType')),
                   h('th', props.t('supplierOpeningBalance')),
                   h('th', props.t('supplierPayable')),
                   h('th', props.t('supplierPaid')),
@@ -3733,13 +3966,14 @@ const LedgerPage = defineComponent({
                   h('th', { class: 'sticky-action-col customer-overview-action-col' }, props.t('action')),
                 ])]),
                 h('tbody', loading.value
-                  ? [h('tr', [h('td', { colspan: 6, class: 'empty-cell' }, '加载中...')])]
+                  ? [h('tr', [h('td', { colspan: 7, class: 'empty-cell' }, '加载中...')])]
                   : summary.value.length
                     ? summary.value.map((row: any) => h('tr', {
                       key: row.supplier_name,
                       class: 'customer-overview-row',
                     }, [
                       h('td', { class: 'customer-name-cell customer-overview-name' }, row.supplier_name),
+                      h('td', props.t(supplierTypeLabelKey(normalizeSupplierType(row.supplier_type)))),
                       h('td', { class: customerOverviewAmountClass('opening', row.openingBalance) }, formatCell('amount_in', row.openingBalance)),
                       h('td', { class: customerOverviewAmountClass('in', row.totalIn) }, formatCustomerReceivableDisplay(row.totalIn)),
                       h('td', { class: customerOverviewAmountClass('out', row.totalOut) }, formatCustomerReceivedDisplay(row.totalOut)),
@@ -3752,7 +3986,7 @@ const LedgerPage = defineComponent({
                         renderOverviewActionLink(props.t('deleteSupplier'), () => removeSupplier(row.supplier_name), { danger: true }),
                       ]),
                     ]))
-                    : [h('tr', [h('td', { colspan: 6, class: 'empty-cell ledger-empty-cell' }, [
+                    : [h('tr', [h('td', { colspan: 7, class: 'empty-cell ledger-empty-cell' }, [
                       h('span', '暂无供应商，点击右上角「新增供应商」开始'),
                     ])])]),
               ]),
@@ -3877,6 +4111,18 @@ const LedgerPage = defineComponent({
                   autofocus: true,
                 }),
               ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VSelect, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.supplier_type,
+                  'onUpdate:modelValue': (v: SupplierType) => { supplierCreateForm.supplier_type = normalizeSupplierType(v) },
+                  items: [
+                    { title: props.t('supplierTypeMaterial'), value: 'material' },
+                    { title: props.t('supplierTypeOutsourcing'), value: 'outsourcing' },
+                  ],
+                  label: props.t('supplierType'),
+                }),
+              ]),
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
                 h(VTextField, {
                   ...commonFormFieldProps(),
@@ -3890,7 +4136,7 @@ const LedgerPage = defineComponent({
                   ...commonFormFieldProps(),
                   modelValue: supplierCreateForm.phone,
                   'onUpdate:modelValue': (v: string) => { supplierCreateForm.phone = v },
-                  label: props.t('customerPhone'),
+                  label: props.t('supplierPhone'),
                 }),
               ]),
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
@@ -3898,7 +4144,7 @@ const LedgerPage = defineComponent({
                   ...commonFormFieldProps(),
                   modelValue: supplierCreateForm.address,
                   'onUpdate:modelValue': (v: string) => { supplierCreateForm.address = v },
-                  label: props.t('customerAddress'),
+                  label: props.t('supplierAddress'),
                 }),
               ]),
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
@@ -4007,18 +4253,18 @@ const LedgerPage = defineComponent({
           h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t('supplierLedgerDetailSub')),
           renderLedgerTableCard({
             title: props.t('supplierLedgerDetail'),
-            headerAction: h(VBtn, {
-              size: 'small',
-              variant: 'tonal',
-              color: 'primary',
-              onClick: () => openAdd('payable'),
-            }, () => props.t('addSupplierPayable')),
             tableRows: rows.value,
             columnKeys: [...supplierLedgerColumnKeys, 'attachments'],
             totalCount: total.value,
             page: currentPage.value,
             pageSize: config.value.pageSize,
             onPageChange: (v: number) => { currentPage.value = v },
+            emptyAction: () => h(VBtn, {
+              size: 'small',
+              variant: 'tonal',
+              color: 'primary',
+              onClick: refreshSupplierWorkspace,
+            }, () => props.t('customerRefreshLedger')),
             emptyHint: props.t('supplierLedgerEmptyHint'),
           }),
         ]),
@@ -4032,8 +4278,8 @@ const LedgerPage = defineComponent({
           : props.page === 'customer'
             ? props.t(customerEntryMode.value === 'payment' ? 'addCustomerPayment' : customerEntryMode.value === 'return' ? 'addCustomerReturn' : 'addCustomerSale')
             : props.page === 'supplier'
-              ? props.t(supplierEntryMode.value === 'payment' ? 'addSupplierPayment' : 'addSupplierPayable')
-              : (props.page === 'cash' ? props.t('addRecord') : props.t('add')),
+              ? props.t(supplierEntryMode.value === 'payment' ? 'addSupplierPayment' : supplierEntryMode.value === 'return' ? 'addSupplierReturn' : 'addSupplierPayable')
+              : (['cash', 'bank', 'bills'].includes(props.page) ? props.t('addRecord') : props.t('add')),
         subtitle: editing.value
           ? props.t('formEditHint')
           : (props.page === 'customer' && customerEntryMode.value === 'payment'
@@ -4047,7 +4293,9 @@ const LedgerPage = defineComponent({
                   remaining: formatCustomerReceivableDisplay(customerReceivableRemaining(linkedReceivableRow.value)),
                 })
                 : props.t('customerReturnFormHint'))
-              : props.page === 'supplier' && supplierEntryMode.value === 'payment'
+                : props.page === 'supplier' && supplierEntryMode.value === 'return'
+                  ? props.t('supplierReturnFormHint')
+                : props.page === 'supplier' && supplierEntryMode.value === 'payment'
                 ? (linkedPayableRow.value ? props.t('supplierPaymentLinkedHint') : props.t('supplierPaymentFormHint'))
                 : props.page === 'supplier'
                   ? props.t('supplierPayableFormHint')
@@ -4068,7 +4316,7 @@ const LedgerPage = defineComponent({
               ]),
             ])
             : null,
-          linkedPayableRow.value && supplierEntryMode.value === 'payment'
+          linkedPayableRow.value && (supplierEntryMode.value === 'payment' || supplierEntryMode.value === 'return')
             ? h('div', { class: 'record-dialog__section' }, [
               h('div', { class: 'record-dialog__section-title' }, props.t('supplierLinkedPayable')),
               h('div', { class: 'muted' }, [
@@ -4079,10 +4327,19 @@ const LedgerPage = defineComponent({
               ]),
             ])
             : null,
+          props.page === 'stockIn'
+            ? h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t(
+              !String(form.supplier_name || '').trim()
+                ? 'stockInNoSupplierHint'
+                : isMaterialSupplierType(stockInSupplierType.value) ? 'stockInMaterialHint' : 'stockInOutsourcingHint',
+            ))
+            : null,
           ...getFormSections(
             props.page,
             config.value.fields,
             props.page === 'supplier' ? supplierEntryMode.value : customerEntryMode.value,
+            stockInSupplierType.value,
+            Boolean(String(form.supplier_name || '').trim()),
           ).map(section => h('div', { class: 'record-dialog__section', key: section.titleKey }, [
             h('div', { class: 'record-dialog__section-title' }, props.t(section.titleKey)),
             h('div', { class: 'record-dialog__grid' }, section.fields.map(field => renderRecordFormField(field, {
@@ -4096,6 +4353,8 @@ const LedgerPage = defineComponent({
               lockedSupplierName: supplierDetailName.value || filterValue.value,
               customerEntryMode: customerEntryMode.value,
               supplierEntryMode: supplierEntryMode.value,
+              stockInSupplierType: stockInSupplierType.value,
+              onStockInSupplierChange: loadStockInSupplierType,
               customerLedgerFinancialLocked: customerLedgerFinancialLocked.value,
               t: props.t,
             }))),
@@ -4217,6 +4476,18 @@ const LedgerPage = defineComponent({
         default: () => [
           h('div', { class: 'record-dialog__section' }, [
             h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VSelect, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierProfileForm.supplier_type,
+                  'onUpdate:modelValue': (v: SupplierType) => { supplierProfileForm.supplier_type = normalizeSupplierType(v) },
+                  items: [
+                    { title: props.t('supplierTypeMaterial'), value: 'material' },
+                    { title: props.t('supplierTypeOutsourcing'), value: 'outsourcing' },
+                  ],
+                  label: props.t('supplierType'),
+                }),
+              ]),
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
                 h(VTextField, {
                   ...commonFormFieldProps(),
@@ -4230,7 +4501,7 @@ const LedgerPage = defineComponent({
                   ...commonFormFieldProps(),
                   modelValue: supplierProfileForm.phone,
                   'onUpdate:modelValue': (v: string) => { supplierProfileForm.phone = v },
-                  label: props.t('customerPhone'),
+                  label: props.t('supplierPhone'),
                 }),
               ]),
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
@@ -4238,7 +4509,7 @@ const LedgerPage = defineComponent({
                   ...commonFormFieldProps(),
                   modelValue: supplierProfileForm.address,
                   'onUpdate:modelValue': (v: string) => { supplierProfileForm.address = v },
-                  label: props.t('customerAddress'),
+                  label: props.t('supplierAddress'),
                 }),
               ]),
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
@@ -4508,6 +4779,7 @@ function columnLabel(col: string) {
   return ({
     amount_in: 'amountIn', amount_out: 'amountOut', customer_name: 'customerName', supplier_name: 'supplierName',
     doc_no: 'docNo', contract_no: 'contractNo', product_name: 'productName', unit_price: 'unitPrice',
+    material_quantity: 'materialQuantity', material_unit_price: 'materialUnitPrice',
     tax_rate: 'taxRate', tax_amount: 'taxAmount', invoice_amount: 'invoiceAmount',
     total_in: 'totalInQuantity', total_out: 'totalOutQuantity', stock_qty: 'stockQty',
     default_price: 'defaultPrice', available_qty: 'availableQty',
@@ -4529,10 +4801,19 @@ function renderSupplierBizKindLabel(row: Record<string, any>, t: (key: string) =
   if (isSupplierPaymentRecord(row) || isSupplierPaymentDescription(String(row.description || ''))) {
     return h('span', { class: 'customer-biz-tag customer-biz-tag--payment' }, t('supplierBizPayment'))
   }
+  if (isSupplierReturnRecord(row)) {
+    return h('span', { class: 'customer-biz-tag customer-biz-tag--return' }, t('supplierBizReturn'))
+  }
   return h('span', { class: 'customer-biz-tag customer-biz-tag--sale' }, t('supplierBizPayable'))
 }
 
-function formFieldLabel(key: string, config: any, t: (key: string) => string) {
+function formFieldLabel(key: string, config: any, t: (key: string) => string, stockInType: SupplierType = 'outsourcing') {
+  if (key === '_finished_stock_amount') return t('finishedStockAmount')
+  if (config.table === 'stockIn' && isMaterialSupplierType(stockInType)) {
+    if (key === 'amount') return t('materialAmount')
+    if (key === 'material_quantity') return t('materialQuantity')
+    if (key === 'material_unit_price') return t('materialUnitPrice')
+  }
   if (key === 'contract_no') return t('contractNoOptional')
   return t(ledgerColumnLabel(key, config.table))
 }
@@ -4597,32 +4878,30 @@ function roundMoneyValue(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100
 }
 function autoFillAmountFields(form: any, changedKey: string) {
-  if (['quantity', 'unit_price'].includes(changedKey)) {
+  const isMaterialStockIn = 'material_quantity' in form
+  if (['quantity', 'unit_price'].includes(changedKey) && !isMaterialStockIn) {
     if ('amount' in form) form.amount = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
     if ('amount_in' in form && !('amount' in form)) {
       form.amount_in = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
     }
   }
-  if (changedKey === 'amount' && Number(form.quantity || 0) > 0 && Number(form.unit_price || 0) === 0) {
+  if (['material_quantity', 'material_unit_price'].includes(changedKey) && isMaterialStockIn) {
+    form.amount = roundMoneyValue(Number(form.material_quantity || 0) * Number(form.material_unit_price || 0))
+  }
+  if (!isMaterialStockIn && changedKey === 'amount' && Number(form.quantity || 0) > 0 && Number(form.unit_price || 0) === 0) {
     form.unit_price = roundMoneyValue(Number(form.amount || 0) / Number(form.quantity || 1))
   }
-  if (changedKey === 'amount' && Number(form.unit_price || 0) > 0 && Number(form.quantity || 0) === 0) {
+  if (!isMaterialStockIn && changedKey === 'amount' && Number(form.unit_price || 0) > 0 && Number(form.quantity || 0) === 0) {
     form.quantity = roundMoneyValue(Number(form.amount || 0) / Number(form.unit_price || 1))
   }
-  if (['quantity', 'unit_price', 'amount', 'tax_rate'].includes(changedKey) && 'tax_rate' in form) {
-    const rateValue = Number(form.tax_rate || 0)
-    const rate = rateValue > 1 ? rateValue / 100 : rateValue
-    form.tax_amount = roundMoneyValue(Number(form.amount || 0) * rate)
-    form.invoice_amount = roundMoneyValue(Number(form.amount || 0) + Number(form.tax_amount || 0))
+  if (isMaterialStockIn && changedKey === 'amount' && Number(form.material_quantity || 0) > 0 && Number(form.material_unit_price || 0) === 0) {
+    form.material_unit_price = roundMoneyValue(Number(form.amount || 0) / Number(form.material_quantity || 1))
   }
-  if (changedKey === 'tax_amount' && 'invoice_amount' in form) {
-    form.invoice_amount = roundMoneyValue(Number(form.amount || 0) + Number(form.tax_amount || 0))
-  }
-  if (changedKey === 'invoice_amount' && 'tax_amount' in form) {
-    form.tax_amount = roundMoneyValue(Number(form.invoice_amount || 0) - Number(form.amount || 0))
+  if (isMaterialStockIn && changedKey === 'amount' && Number(form.material_unit_price || 0) > 0 && Number(form.material_quantity || 0) === 0) {
+    form.material_quantity = roundMoneyValue(Number(form.amount || 0) / Number(form.material_unit_price || 1))
   }
 }
-function numericField(field: string) { return ['income', 'expense', 'amount_in', 'amount_out', 'balance', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'total_in', 'total_out', 'stock_qty', 'default_price', 'available_qty'].includes(field) }
+function numericField(field: string) { return ['income', 'expense', 'amount_in', 'amount_out', 'balance', 'quantity', 'unit_price', 'amount', 'material_quantity', 'material_unit_price', 'tax_rate', 'tax_amount', 'invoice_amount', 'total_in', 'total_out', 'stock_qty', 'default_price', 'available_qty'].includes(field) }
 function amountClass(col: string) { return numericField(col) ? 'amount-cell' : '' }
 function formatCell(col: string, value: any) { return numericField(col) ? (Number(value || 0) ? money(value) : '—') : (value || '') }
 
@@ -4721,6 +5000,8 @@ function getFormSections(
   pageKey: string,
   fields: string[],
   entryMode: 'sale' | 'return' | 'payment' | 'payable' = 'sale',
+  stockInType: SupplierType = 'outsourcing',
+  hasStockInSupplier = true,
 ): FormSectionSpec[] {
   if (pageKey === 'customer') {
     if (entryMode === 'payment') return formSections.customerPayment
@@ -4728,7 +5009,12 @@ function getFormSections(
   }
   if (pageKey === 'supplier') {
     if (entryMode === 'payment') return formSections.supplierPayment
+    if (entryMode === 'return') return formSections.supplierReturn
     return formSections.supplierPayable
+  }
+  if (pageKey === 'stockIn') {
+    if (!hasStockInSupplier) return formSections.stockInNoSupplier
+    return isMaterialSupplierType(stockInType) ? formSections.stockInMaterial : formSections.stockInOutsourcing
   }
   if (formSections[pageKey]) return formSections[pageKey]
   return [{ titleKey: 'formSectionBasic', fields: fields.map(key => ({ key, span: (key === 'note' || key === 'description') ? 'full' : 'half' })) }]
@@ -4746,7 +5032,9 @@ function renderRecordFormField(
     lockedCustomerName?: string
     lockedSupplierName?: string
     customerEntryMode?: 'sale' | 'return' | 'payment'
-    supplierEntryMode?: 'payable' | 'payment'
+    supplierEntryMode?: 'payable' | 'payment' | 'return'
+    stockInSupplierType?: SupplierType
+    onStockInSupplierChange?: (supplierName: string) => void | Promise<void>
     customerLedgerFinancialLocked?: boolean
     t: (key: string, params?: any) => string
   },
@@ -4763,9 +5051,13 @@ function renderRecordFormField(
     lockedSupplierName = '',
     customerEntryMode = 'sale',
     supplierEntryMode = 'payable',
+    stockInSupplierType = 'outsourcing',
+    onStockInSupplierChange,
     customerLedgerFinancialLocked = false,
     t,
   } = ctx
+  const isStockInMaterial = config.table === 'stockIn' && isMaterialSupplierType(stockInSupplierType)
+  const fieldLabel = (fieldKey: string) => formFieldLabel(fieldKey, config, t, stockInSupplierType)
   const wrapClass = `record-dialog__field record-dialog__field--${span === 'full' ? 'full' : 'half'}`
   const base = commonFormFieldProps()
   const lockedPartyName = lockedCustomerName || lockedSupplierName
@@ -4775,7 +5067,7 @@ function renderRecordFormField(
       h(VTextField, {
         ...base,
         modelValue: lockedPartyName,
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         readonly: true,
       }),
     ])
@@ -4790,9 +5082,14 @@ function renderRecordFormField(
       h(VSelect, {
         ...base,
         modelValue: form[key] || null,
-        'onUpdate:modelValue': (v: string | null) => { form[key] = v || '' },
+        'onUpdate:modelValue': async (v: string | null) => {
+          form[key] = v || ''
+          if (config.table === 'stockIn' && key === 'supplier_name' && onStockInSupplierChange) {
+            await onStockInSupplierChange(String(v || ''))
+          }
+        },
         items: partyItems,
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         placeholder: t(key === 'supplier_name' ? 'selectSupplier' : 'selectCustomerToAdd'),
         hint: key === 'supplier_name'
           ? t('supplierOptionalHint')
@@ -4812,7 +5109,7 @@ function renderRecordFormField(
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
         items: filterOptions,
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         placeholder: t(key === 'supplier_name' ? 'typeSupplierName' : 'typeCustomerName'),
         clearable: true,
         hideNoData: true,
@@ -4847,7 +5144,7 @@ function renderRecordFormField(
         items: productOptions,
         itemTitle: 'product_name',
         customFilter: productComboboxFilter(productOptionTitle),
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         placeholder: t('typeProductName'),
         returnObject: true,
         clearable: true,
@@ -4886,7 +5183,7 @@ function renderRecordFormField(
         items: inventoryOptions,
         itemTitle: 'product_name',
         customFilter: productComboboxFilter(inventoryTitle),
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         placeholder: t('selectInventoryProduct'),
         returnObject: true,
         clearable: true,
@@ -4900,7 +5197,7 @@ function renderRecordFormField(
       h(VTextField, {
         ...base,
         modelValue: stockOutLockedFieldDisplay(key, String(form[key] || ''), t),
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         readonly: true,
         hint: t('inventoryFieldAutoHint'),
         persistentHint: true,
@@ -4914,9 +5211,8 @@ function renderRecordFormField(
         ...base,
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
-        label: formFieldLabel(key, config, t),
-        hint: t(key === 'spec' ? 'stockInSpecHint' : 'stockInUnitHint'),
-        persistentHint: true,
+          label: fieldLabel(key),
+        ...(key === 'spec' ? { hint: t('stockInSpecHint'), persistentHint: true } : {}),
       }),
     ])
   }
@@ -4927,7 +5223,7 @@ function renderRecordFormField(
         ...base,
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         rows: key === 'note' ? 3 : 2,
         autoGrow: true,
       }),
@@ -4942,16 +5238,34 @@ function renderRecordFormField(
         'onUpdate:modelValue': (v: any) => {
           form[key] = normalizeDateValue(v)
         },
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         type: 'date',
       }),
     ])
   }
 
+  if (key === '_finished_stock_amount') {
+    const calcValue = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: calcValue ? money(calcValue) : '',
+        label: fieldLabel(key),
+        readonly: true,
+        hint: t('finishedStockAmountHint'),
+        persistentHint: true,
+      }),
+    ])
+  }
+
   const isAutoCalcAmount = (key === 'amount_in' && (config.table === 'customer' || config.table === 'supplier'))
-    || (key === 'amount' && (config.table === 'stockIn' || config.table === 'stockOut'))
+    || (key === 'amount' && config.table === 'stockOut')
+    || (key === 'amount' && config.table === 'stockIn' && !isStockInMaterial)
+    || (key === 'amount' && config.table === 'stockIn' && isStockInMaterial)
   if (isAutoCalcAmount) {
-    let calcValue = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    let calcValue = isStockInMaterial
+      ? roundMoneyValue(Number(form.material_quantity || 0) * Number(form.material_unit_price || 0))
+      : roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
     if (config.table === 'customer' && customerEntryMode === 'return' && calcValue > 0) {
       calcValue = -calcValue
     }
@@ -4960,9 +5274,24 @@ function renderRecordFormField(
       h(VTextField, {
         ...base,
         modelValue: calcValue ? displayValue : '',
-        label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
         readonly: true,
-        hint: t('amountAutoCalc'),
+        hint: t(isStockInMaterial ? 'materialAmountAutoCalc' : 'amountAutoCalc'),
+        persistentHint: true,
+      }),
+    ])
+  }
+
+  if (key === 'unit_price' && isStockInMaterial) {
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: form[key],
+        'onUpdate:modelValue': (v: any) => { form[key] = Number(v || 0) },
+        label: fieldLabel(key),
+        type: 'number',
+        step: 'any',
+        hint: t('finishedUnitPriceHint'),
         persistentHint: true,
       }),
     ])
@@ -4976,7 +5305,7 @@ function renderRecordFormField(
         form[key] = numericField(key) ? Number(v || 0) : v
         autoFillAmountFields(form, key)
       },
-      label: formFieldLabel(key, config, t),
+          label: fieldLabel(key),
       type: numericField(key) ? 'number' : 'text',
       readonly: key === 'month_label'
         || (config.table === 'customer' && customerLedgerFinancialLocked && ['quantity', 'unit_price', 'amount_out'].includes(key)),

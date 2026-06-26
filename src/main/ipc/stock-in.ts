@@ -3,7 +3,13 @@ import { getDb } from '../db'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, cleanupOrphanAttachments, withAttachmentPreviews } from './attachments'
 import { ensureProductCatalog, generateDocNo, recalcInventoryForRows, syncProductCatalogWithLedger } from './stock-business'
-import { assertSupplierProfileExists, listAllSupplierNames } from './supplier-profile'
+import { assertSupplierProfileExists, getSupplierType, listAllSupplierNames } from './supplier-profile'
+import { isMaterialSupplierType } from '../../common/supplier-profile'
+import {
+  deletePayableForStockIn,
+  syncPayableFromStockIn,
+} from './stock-supplier-link'
+import { resolveStockInCountsInventory } from './supplier-migrate'
 
 function normalizeStockInRow(row: any, fallbackDocNo = '') {
   return {
@@ -18,21 +24,55 @@ function normalizeStockInRow(row: any, fallbackDocNo = '') {
     quantity: Number(row?.quantity || 0),
     unit_price: Number(row?.unit_price || 0),
     amount: Number(row?.amount || 0),
+    material_quantity: Number(row?.material_quantity || 0),
+    material_unit_price: Number(row?.material_unit_price || 0),
     tax_rate: Number(row?.tax_rate || 0),
     tax_amount: Number(row?.tax_amount || 0),
     invoice_amount: Number(row?.invoice_amount || 0),
     note: String(row?.note || '').trim(),
+    counts_inventory: Number(row?.counts_inventory ?? 1) ? 1 : 0,
   }
 }
 
 function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
   if (!String(row?.date || '').trim()) throw new Error('请填写日期')
-  const supplierName = String(row?.supplier_name || '').trim()
-  if (supplierName) assertSupplierProfileExists(db, supplierName)
-  if (!String(row?.product_name || '').trim()) throw new Error('请填写产品名称')
+
+  if (!String(row?.product_name || '').trim()) {
+    throw new Error('请填写成品名称')
+  }
   if (!String(row?.spec || '').trim()) throw new Error('请填写规格（出库须与入库完全一致，用于库存匹配）')
   if (!String(row?.unit || '').trim()) throw new Error('请填写单位（出库须与入库完全一致，用于库存匹配）')
-  if (Number(row?.quantity || 0) <= 0) throw new Error('入库数量必须大于 0')
+  if (Number(row?.quantity || 0) <= 0) throw new Error('请填写成品数量')
+
+  const supplierName = String(row?.supplier_name || '').trim()
+  if (!supplierName) {
+    if (Number(row?.unit_price || 0) <= 0) throw new Error('请填写单价')
+    if (Number(row?.amount || 0) <= 0) throw new Error('请填写金额')
+    return
+  }
+
+  assertSupplierProfileExists(db, supplierName)
+  const isMaterial = isMaterialSupplierType(getSupplierType(db, supplierName))
+
+  if (isMaterial) {
+    if (Number(row?.material_quantity || 0) <= 0) throw new Error('请填写材料公斤数')
+    if (Number(row?.material_unit_price || 0) <= 0) throw new Error('请填写材料单价（元/公斤）')
+    if (Number(row?.amount || 0) <= 0) throw new Error('请填写材料金额')
+  } else {
+    if (Number(row?.unit_price || 0) <= 0) throw new Error('请填写加工单价')
+    if (Number(row?.amount || 0) <= 0) throw new Error('请填写加工费用')
+  }
+}
+
+function applyStockInSideEffects(db: ReturnType<typeof getDb>, row: Record<string, any>, oldRow?: Record<string, any>) {
+  if (Number(row?.counts_inventory || 0) === 1) {
+    ensureProductCatalog(row)
+    recalcInventoryForRows(row)
+  }
+  if (oldRow && Number(oldRow?.counts_inventory || 0) === 1) {
+    recalcInventoryForRows(oldRow)
+  }
+  syncPayableFromStockIn(db, row)
 }
 
 export function registerStockInHandlers(): void {
@@ -52,18 +92,18 @@ export function registerStockInHandlers(): void {
       FROM stock_in_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR supplier_name = ?)
-        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
+        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
         ${dateWhere.sql}
       ORDER BY ${buildDateOrderBy('stock_in_ledger.date')}
       LIMIT ? OFFSET ?
-    `).all(supplierName || '', supplierName || '', like, like, like, like, like, like, ...dateWhere.params, pageSize, offset)
+    `).all(supplierName || '', supplierName || '', like, like, like, like, like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM stock_in_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR supplier_name = ?)
-        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
+        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
         ${dateWhere.sql}
-    `).get(supplierName || '', supplierName || '', like, like, like, like, like, like, ...dateWhere.params) as { total: number }
+    `).get(supplierName || '', supplierName || '', like, like, like, like, like, like, like, ...dateWhere.params) as { total: number }
     return { rows: withAttachmentPreviews(rows), total }
   })
 
@@ -94,51 +134,63 @@ export function registerStockInHandlers(): void {
 
   ipcMain.handle('stockIn:add', (_e, row) => {
     const db = getDb()
-    const payload = normalizeStockInRow(row, generateDocNo('RK', 'stock_in_ledger', row?.date))
+    const supplierName = String(row?.supplier_name || '').trim()
+    const countsInventory = resolveStockInCountsInventory(db, supplierName)
+    const payload = {
+      ...normalizeStockInRow(row, generateDocNo('RK', 'stock_in_ledger', row?.date)),
+      counts_inventory: countsInventory,
+    }
     validateStockInRow(db, payload)
-    ensureProductCatalog(payload)
     const result = db.prepare(`
       INSERT INTO stock_in_ledger (
         doc_no, supplier_name, category, date, contract_no, product_name, spec, unit,
-        quantity, unit_price, amount, tax_rate, tax_amount, invoice_amount, note
+        quantity, unit_price, amount, material_quantity, material_unit_price,
+        tax_rate, tax_amount, invoice_amount, note, counts_inventory
       ) VALUES (
         @doc_no, @supplier_name, @category, @date, @contract_no, @product_name, @spec, @unit,
-        @quantity, @unit_price, @amount, @tax_rate, @tax_amount, @invoice_amount, @note
+        @quantity, @unit_price, @amount, @material_quantity, @material_unit_price,
+        @tax_rate, @tax_amount, @invoice_amount, @note, @counts_inventory
       )
     `).run(payload)
     const stockInId = Number(result.lastInsertRowid)
     const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId) as Record<string, any>
     logOperation('stock_in_ledger', stockInId, 'INSERT', null, newRow as object)
-    recalcInventoryForRows(newRow)
+    applyStockInSideEffects(db, newRow)
     return db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId)
   })
 
   ipcMain.handle('stockIn:update', (_e, { id, ...row }) => {
     const db = getDb()
     const oldRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as any
-    const payload = normalizeStockInRow(row, oldRow?.doc_no || generateDocNo('RK', 'stock_in_ledger', row?.date))
+    const supplierName = String(row?.supplier_name || oldRow?.supplier_name || '').trim()
+    const countsInventory = resolveStockInCountsInventory(db, supplierName)
+    const payload = {
+      ...normalizeStockInRow(row, oldRow?.doc_no || generateDocNo('RK', 'stock_in_ledger', row?.date)),
+      counts_inventory: countsInventory,
+    }
     validateStockInRow(db, payload)
-    ensureProductCatalog(payload)
     db.prepare(`
       UPDATE stock_in_ledger SET
         doc_no=@doc_no, supplier_name=@supplier_name, category=@category, date=@date,
         contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
         quantity=@quantity, unit_price=@unit_price, amount=@amount,
+        material_quantity=@material_quantity, material_unit_price=@material_unit_price,
         tax_rate=@tax_rate, tax_amount=@tax_amount, invoice_amount=@invoice_amount,
-        note=@note, updated_at=datetime('now','localtime')
+        note=@note, counts_inventory=@counts_inventory, updated_at=datetime('now','localtime')
       WHERE id=@id
     `).run({ ...payload, id })
     const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
     logOperation('stock_in_ledger', id, 'UPDATE', oldRow as object, newRow as object)
-    recalcInventoryForRows(oldRow, newRow)
+    applyStockInSideEffects(db, newRow, oldRow)
     return newRow
   })
 
   ipcMain.handle('stockIn:delete', (_e, id) => {
     const db = getDb()
     const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+    deletePayableForStockIn(db, row)
     softDelete('stock_in_ledger', id)
-    recalcInventoryForRows(row)
+    if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
     cleanupOrphanAttachments()
     syncProductCatalogWithLedger()
     return { ok: true }
@@ -149,8 +201,9 @@ export function registerStockInHandlers(): void {
     const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
     for (const id of uniqueIds) {
       const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+      deletePayableForStockIn(db, row)
       softDelete('stock_in_ledger', id)
-      recalcInventoryForRows(row)
+      if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
     }
     cleanupOrphanAttachments()
     syncProductCatalogWithLedger()
@@ -163,7 +216,8 @@ export function registerStockInHandlers(): void {
     const db = getDb()
     const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
     restore('stock_in_ledger', id)
-    recalcInventoryForRows(row)
+    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+    applyStockInSideEffects(db, newRow, row)
     return { ok: true }
   })
 }

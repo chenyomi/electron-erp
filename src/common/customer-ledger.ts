@@ -1,3 +1,5 @@
+import { sortLedgerGrouped } from './ledger-group-sort'
+
 export type CustomerLedgerFields = {
   description?: string
   contract_no?: string
@@ -69,31 +71,9 @@ export function calcCustomerReceivableSettlement(
 
 /** 客户台账：每笔应收及其退货/收款紧挨排列，避免混在一起看不清 */
 export function sortCustomerLedgerGrouped(rows: Array<Record<string, any>>): Array<Record<string, any>> {
-  const receivables = rows
-    .filter(isCustomerReceivableRecord)
-    .sort((a, b) => {
-      const dateCmp = String(b.date || '').localeCompare(String(a.date || ''))
-      if (dateCmp !== 0) return dateCmp
-      return Number(b.id || 0) - Number(a.id || 0)
-    })
-  const used = new Set<number>()
-  const ordered: Array<Record<string, any>> = []
-  for (const rec of receivables) {
-    ordered.push(rec)
-    used.add(Number(rec.id))
-    const children = rows
-      .filter(r => Number(r.ref_ledger_id || 0) === Number(rec.id))
-      .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
-    for (const child of children) {
-      ordered.push(child)
-      used.add(Number(child.id))
-    }
-  }
-  for (const row of rows) {
-    const rowId = Number(row.id || 0)
-    if (rowId && !used.has(rowId)) ordered.push(row)
-  }
-  return ordered
+  return sortLedgerGrouped(rows, {
+    isParent: isCustomerReceivableRecord,
+  })
 }
 
 export type CustomerLedgerRowActions = {

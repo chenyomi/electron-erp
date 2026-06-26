@@ -56,11 +56,34 @@ export function sumCustomerReturnQty(
   return Number(row?.qty || 0)
 }
 
-/** 库存流水：入库、出库；客户退货冲减出库（净出库 = 出库 − 退货） */
+/** 外协退供应商：供应商台账负数量，直接减库存（不写出库单） */
+export function sumSupplierReturnQty(
+  db: ReturnType<typeof getDb>,
+  productName: string,
+  spec: string,
+  unit: string,
+): number {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(ABS(s.quantity)), 0) AS qty
+    FROM supplier_ledger s
+    INNER JOIN supplier_ledger payable ON payable.id = s.ref_ledger_id AND payable.deleted_at IS NULL
+    INNER JOIN stock_in_ledger si ON si.id = payable.stock_in_id AND si.deleted_at IS NULL
+      AND COALESCE(si.counts_inventory, 1) = 1
+    WHERE s.deleted_at IS NULL
+      AND COALESCE(s.quantity, 0) < 0
+      AND s.product_name = ?
+      AND COALESCE(s.spec, '') = ?
+      AND COALESCE(s.unit, '') = ?
+  `).get(productName, spec, unit) as { qty?: number }
+  return Number(row?.qty || 0)
+}
+
+/** 库存流水：入库、销售出库、客户退货冲减出库、外协退供应商冲减入库 */
 export const inventoryFlowsSql = `
   SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
          quantity AS in_qty, 0 AS out_qty
-  FROM stock_in_ledger WHERE deleted_at IS NULL
+  FROM stock_in_ledger
+  WHERE deleted_at IS NULL AND COALESCE(counts_inventory, 1) = 1
   UNION ALL
   SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
          0, quantity AS out_qty
@@ -69,6 +92,14 @@ export const inventoryFlowsSql = `
   SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
          0, -ABS(quantity) AS out_qty
   FROM customer_ledger WHERE deleted_at IS NULL AND COALESCE(quantity, 0) < 0
+  UNION ALL
+  SELECT s.product_name, COALESCE(s.spec, '') AS spec, COALESCE(s.unit, '') AS unit,
+         -ABS(s.quantity) AS in_qty, 0 AS out_qty
+  FROM supplier_ledger s
+  INNER JOIN supplier_ledger payable ON payable.id = s.ref_ledger_id AND payable.deleted_at IS NULL
+  INNER JOIN stock_in_ledger si ON si.id = payable.stock_in_id AND si.deleted_at IS NULL
+    AND COALESCE(si.counts_inventory, 1) = 1
+  WHERE s.deleted_at IS NULL AND COALESCE(s.quantity, 0) < 0
 `
 
 export function recalcInventoryBalance(row: any) {
@@ -79,6 +110,7 @@ export function recalcInventoryBalance(row: any) {
     SELECT COALESCE(SUM(quantity), 0) AS qty
     FROM stock_in_ledger
     WHERE deleted_at IS NULL
+      AND COALESCE(counts_inventory, 1) = 1
       AND product_name = ?
       AND COALESCE(spec, '') = ?
       AND COALESCE(unit, '') = ?
@@ -91,8 +123,9 @@ export function recalcInventoryBalance(row: any) {
       AND COALESCE(spec, '') = ?
       AND COALESCE(unit, '') = ?
   `).get(product.product_name, product.spec, product.unit) as { qty: number }
-  const returnQty = sumCustomerReturnQty(db, product.product_name, product.spec, product.unit)
-  const qty = Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - returnQty)
+  const customerReturnQty = sumCustomerReturnQty(db, product.product_name, product.spec, product.unit)
+  const supplierReturnQty = sumSupplierReturnQty(db, product.product_name, product.spec, product.unit)
+  const qty = Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - customerReturnQty) - supplierReturnQty
   db.prepare(`
     INSERT INTO inventory_balances (product_name, spec, unit, stock_qty, available_qty)
     VALUES (?, ?, ?, ?, ?)
@@ -122,7 +155,7 @@ export function syncProductCatalogWithLedger(db = getDb()): void {
     WHERE deleted_at IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM stock_in_ledger s
-        WHERE s.deleted_at IS NULL AND ${productMatchSql}
+        WHERE s.deleted_at IS NULL AND COALESCE(s.counts_inventory, 1) = 1 AND ${productMatchSql}
       )
       AND NOT EXISTS (
         SELECT 1 FROM stock_out_ledger s
@@ -146,7 +179,7 @@ export function syncProductCatalogWithLedger(db = getDb()): void {
       AND (
         EXISTS (
           SELECT 1 FROM stock_in_ledger s
-          WHERE s.deleted_at IS NULL AND ${productMatchSql}
+          WHERE s.deleted_at IS NULL AND COALESCE(s.counts_inventory, 1) = 1 AND ${productMatchSql}
         )
         OR EXISTS (
           SELECT 1 FROM stock_out_ledger s
@@ -175,7 +208,8 @@ export function rebuildInventoryBusinessTables() {
       COALESCE(category, ''),
       COALESCE(MAX(NULLIF(unit_price, 0)), 0)
     FROM (
-      SELECT product_name, spec, unit, category, unit_price FROM stock_in_ledger WHERE deleted_at IS NULL
+      SELECT product_name, spec, unit, category, unit_price FROM stock_in_ledger
+      WHERE deleted_at IS NULL AND COALESCE(counts_inventory, 1) = 1
       UNION ALL
       SELECT product_name, spec, unit, category, unit_price FROM stock_out_ledger WHERE deleted_at IS NULL
     )

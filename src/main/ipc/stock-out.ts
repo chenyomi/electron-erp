@@ -3,7 +3,7 @@ import { getDb } from '../db'
 import { listCustomerProfileNames } from './customer-profile'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
 import { attachmentPreviewSql, cleanupOrphanAttachments, withAttachmentPreviews } from './attachments'
-import { ensureProductCatalog, generateDocNo, recalcInventoryForRows, sumCustomerReturnQty, syncProductCatalogWithLedger } from './stock-business'
+import { ensureProductCatalog, generateDocNo, recalcInventoryForRows, sumCustomerReturnQty, sumSupplierReturnQty, syncProductCatalogWithLedger } from './stock-business'
 import {
   assertStockOutCustomerExists,
   createReceivableFromStockOut,
@@ -56,8 +56,9 @@ function availableStock(row: any, excludeId?: number) {
       AND COALESCE(unit, '') = ?
       AND (? IS NULL OR id != ?)
   `).get(key.productName, key.spec, key.unit, excludeId ?? null, excludeId ?? null) as { qty: number }
-  const returnQty = sumCustomerReturnQty(db, key.productName, key.spec, key.unit)
-  return Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - returnQty)
+  const customerReturnQty = sumCustomerReturnQty(db, key.productName, key.spec, key.unit)
+  const supplierReturnQty = sumSupplierReturnQty(db, key.productName, key.spec, key.unit)
+  return Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - customerReturnQty) - supplierReturnQty
 }
 
 function formatSpecUnitLabel(spec: string, unit: string): string {
@@ -129,18 +130,18 @@ export function registerStockOutHandlers(): void {
       FROM stock_out_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR customer_name = ?)
-        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
+        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
         ${dateFilter.sql}
       ORDER BY ${buildDateOrderBy('stock_out_ledger.date')}
       LIMIT ? OFFSET ?
-    `).all(customerName || '', customerName || '', like, like, like, like, like, like, ...dateFilter.params, pageSize, offset)
+    `).all(customerName || '', customerName || '', like, like, like, like, like, like, like, ...dateFilter.params, pageSize, offset)
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM stock_out_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR customer_name = ?)
-        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
+        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
         ${dateFilter.sql}
-    `).get(customerName || '', customerName || '', like, like, like, like, like, like, ...dateFilter.params) as { total: number }
+    `).get(customerName || '', customerName || '', like, like, like, like, like, like, like, ...dateFilter.params) as { total: number }
     return { rows: withAttachmentPreviews(rows), total }
   })
 

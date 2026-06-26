@@ -18,6 +18,50 @@ export function assertStockOutCustomerExists(db: Database.Database, customerName
   }
 }
 
+/** 仅真实客户出库才生成应收；外协退货等无客户出库不入客户账 */
+export function shouldLinkReceivableFromStockOut(stockOutRow: Record<string, any>): boolean {
+  const customerName = String(stockOutRow.customer_name || '').trim()
+  if (!customerName) return false
+  const category = String(stockOutRow.category || '').trim()
+  if (category.includes('外协退货')) return false
+  const note = String(stockOutRow.note || '').trim()
+  if (note.includes('外协退货')) return false
+  return true
+}
+
+/** 清理误把外协退货出库补成客户应收的脏数据 */
+export function cleanupMislinkedReceivablesFromStockOut(db: Database.Database): number {
+  const rows = db.prepare(`
+    SELECT c.id, c.stock_out_id
+    FROM customer_ledger c
+    WHERE c.deleted_at IS NULL
+      AND TRIM(COALESCE(c.customer_name, '')) = ''
+  `).all() as Array<{ id: number; stock_out_id: number | null }>
+
+  let removed = 0
+  for (const row of rows) {
+    const stockOut = row.stock_out_id
+      ? db.prepare('SELECT * FROM stock_out_ledger WHERE id = ? AND deleted_at IS NULL').get(row.stock_out_id) as Record<string, any> | undefined
+      : undefined
+    if (stockOut && shouldLinkReceivableFromStockOut(stockOut)) {
+      const name = String(stockOut.customer_name || '').trim()
+      db.prepare(`
+        UPDATE customer_ledger
+        SET customer_name = ?, updated_at = datetime('now','localtime')
+        WHERE id = ?
+      `).run(name, row.id)
+      recalculateCustomerBalances(db, name)
+      continue
+    }
+    softDelete('customer_ledger', row.id)
+    if (stockOut?.id) {
+      db.prepare(`UPDATE stock_out_ledger SET ledger_id = NULL WHERE id = ?`).run(stockOut.id)
+    }
+    removed++
+  }
+  return removed
+}
+
 export function backfillReceivablesFromStockOut(db: Database.Database, customerName = ''): {
   added: number
   restored: number
@@ -51,6 +95,7 @@ export function backfillReceivablesFromStockOut(db: Database.Database, customerN
       AND (? = '' OR s.customer_name = ?)
   `).all(name, name) as Record<string, any>[]
   for (const row of orphans) {
+    if (!shouldLinkReceivableFromStockOut(row)) continue
     db.prepare(`UPDATE stock_out_ledger SET ledger_id = NULL WHERE id = ?`).run(row.id)
     createReceivableFromStockOut(db, row)
     added++
@@ -70,6 +115,8 @@ export function backfillReceivablesFromStockOut(db: Database.Database, customerN
 }
 
 export function createReceivableFromStockOut(db: Database.Database, stockOutRow: Record<string, any>) {
+  if (!shouldLinkReceivableFromStockOut(stockOutRow)) return null
+
   const payload = {
     customer_name: String(stockOutRow.customer_name || '').trim(),
     date: String(stockOutRow.date || '').trim(),

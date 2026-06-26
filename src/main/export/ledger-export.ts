@@ -506,14 +506,11 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       { key: 'quantity', header: '数量', width: 12, type: 'qty', sum: 'qty' },
       { key: 'unit_price', header: '单价', width: 12, type: 'money' },
       { key: 'amount', header: '金额', width: 14, type: 'money', sum: 'money' },
-      { key: 'tax_rate', header: '税率', width: 10, type: 'money' },
-      { key: 'tax_amount', header: '税额', width: 12, type: 'money', sum: 'money' },
-      { key: 'invoice_amount', header: '开票金额', width: 14, type: 'money', sum: 'money' },
       { key: 'note', header: '备注', width: 20 },
     ],
     query: (params) => {
       const ids = getSelectedIds(params.ids)
-      const columns = 'supplier_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, tax_rate, tax_amount, invoice_amount, note'
+      const columns = 'supplier_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
       if (ids.length) return idsQuery('stock_in_ledger', columns, ids, buildDateOrderBy('date'))
       const like = `%${params.keyword || ''}%`
       const supplierName = params.supplierName || ''
@@ -543,9 +540,6 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       quantity: num(row.quantity),
       unit_price: num(row.unit_price),
       amount: num(row.amount),
-      tax_rate: num(row.tax_rate),
-      tax_amount: num(row.tax_amount),
-      invoice_amount: num(row.invoice_amount),
       note: text(row.note),
     }),
   },

@@ -11,7 +11,10 @@ import { recalculateAllLedgerBalances } from './ipc/ledger-balance'
 import { cleanupOrphanAttachments } from './ipc/attachments'
 import { recompressLegacyStoredImages } from './image-compress'
 import { rebuildInventoryBusinessTables } from './ipc/stock-business'
-import { backfillReceivablesFromStockOut } from './ipc/stock-customer-link'
+import { backfillReceivablesFromStockOut, cleanupMislinkedReceivablesFromStockOut } from './ipc/stock-customer-link'
+import { cleanupLegacySupplierReturnStockOuts } from './ipc/stock-supplier-link'
+import { backfillSupplierPayablesFromStockIn } from './ipc/stock-supplier-link'
+import { inferLegacySupplierTypes, backfillStockInInventoryFlags } from './ipc/supplier-migrate'
 
 let db: Database.Database | undefined
 
@@ -83,12 +86,19 @@ function migrateSchema(): void {
   addColumnIfMissing('customer_profiles', "phone TEXT DEFAULT ''")
   addColumnIfMissing('customer_profiles', "address TEXT DEFAULT ''")
   addColumnIfMissing('supplier_profiles', "opening_balance REAL DEFAULT 0")
+  addColumnIfMissing('supplier_profiles', "supplier_type TEXT DEFAULT 'outsourcing'")
   addColumnIfMissing('stock_in_ledger', 'ledger_id INTEGER')
+  addColumnIfMissing('stock_in_ledger', 'counts_inventory INTEGER DEFAULT 1')
+  addColumnIfMissing('stock_in_ledger', 'material_quantity REAL DEFAULT 0')
+  addColumnIfMissing('stock_in_ledger', 'material_unit_price REAL DEFAULT 0')
   addColumnIfMissing('supplier_ledger', 'ref_ledger_id INTEGER')
+  addColumnIfMissing('supplier_ledger', 'return_stock_out_id INTEGER')
   migrateLedgerDates()
   backfillCustomerLedgerStructuredFields()
   dropLegacyImportUniqueIndexes()
   recalculateAllCustomerBalances()
+  cleanupMislinkedReceivablesFromStockOut(db!)
+  cleanupLegacySupplierReturnStockOuts(db!)
   backfillReceivablesFromStockOut(db!)
   recalculateAllLedgerBalances(db!)
   ensureCustomerProfilesTable(db!)
@@ -97,6 +107,9 @@ function migrateSchema(): void {
   cleanupAutoReturnSupplierProfiles(db!)
   cleanupCustomerReturnStockInRows(db!)
   syncSupplierProfilesFromLedger(db!)
+  inferLegacySupplierTypes(db!)
+  backfillStockInInventoryFlags(db!)
+  backfillSupplierPayablesFromStockIn(db!)
   recalculateAllSupplierBalances()
   purgeDeprecatedLedgerData()
   cleanupOrphanAttachments(db!)
@@ -286,6 +299,9 @@ function createTables(): void {
       invoice_amount  REAL    DEFAULT 0,
       note            TEXT    DEFAULT '',
       ledger_id       INTEGER, -- 关联 supplier_ledger 应付 id
+      counts_inventory INTEGER DEFAULT 1, -- 0=不计库存（保留兼容），1=成品入库
+      material_quantity REAL DEFAULT 0, -- 原材料公斤（应付）
+      material_unit_price REAL DEFAULT 0, -- 原材料元/公斤（应付）
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
@@ -378,6 +394,7 @@ function createTables(): void {
     -- 供应商档案（期初应付、联系方式；入库单通过 supplier_name 关联）
     CREATE TABLE IF NOT EXISTS supplier_profiles (
       supplier_name   TEXT PRIMARY KEY,
+      supplier_type   TEXT DEFAULT 'outsourcing',
       contact_person  TEXT DEFAULT '',
       phone           TEXT DEFAULT '',
       address         TEXT DEFAULT '',
@@ -403,6 +420,8 @@ function createTables(): void {
       balance         REAL    DEFAULT 0,
       note            TEXT    DEFAULT '',
       stock_in_id     INTEGER,
+      ref_ledger_id   INTEGER,
+      return_stock_out_id INTEGER,
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))

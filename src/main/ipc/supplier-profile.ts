@@ -1,9 +1,11 @@
 import type Database from 'better-sqlite3'
 import { buildDateOrderBy } from './helpers'
 import { sqlAutoReturnStockInExclude } from '../../common/supplier-ledger'
+import { normalizeSupplierType, type SupplierType, stockInCountsInventoryForSupplierType } from '../../common/supplier-profile'
 
 export type SupplierProfile = {
   supplier_name: string
+  supplier_type: SupplierType
   contact_person: string
   phone: string
   address: string
@@ -14,6 +16,7 @@ export type SupplierProfile = {
 function normalizeSupplierProfileInput(profile: Partial<SupplierProfile> & { supplier_name: string }): SupplierProfile {
   return {
     supplier_name: String(profile.supplier_name || '').trim(),
+    supplier_type: normalizeSupplierType(profile.supplier_type),
     contact_person: String(profile.contact_person || '').trim(),
     phone: String(profile.phone || '').trim(),
     address: String(profile.address || '').trim(),
@@ -26,6 +29,7 @@ export function ensureSupplierProfilesTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supplier_profiles (
       supplier_name   TEXT PRIMARY KEY,
+      supplier_type   TEXT DEFAULT 'outsourcing',
       contact_person  TEXT DEFAULT '',
       phone           TEXT DEFAULT '',
       address         TEXT DEFAULT '',
@@ -54,6 +58,8 @@ export function ensureSupplierLedgerTable(db: Database.Database): void {
       balance         REAL    DEFAULT 0,
       note            TEXT    DEFAULT '',
       stock_in_id     INTEGER,
+      ref_ledger_id   INTEGER,
+      return_stock_out_id INTEGER,
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
@@ -102,6 +108,7 @@ export function cleanupAutoReturnSupplierProfiles(db: Database.Database): { stoc
 export function getSupplierProfile(db: Database.Database, supplierName: string): SupplierProfile {
   const row = db.prepare(`
     SELECT supplier_name,
+      COALESCE(supplier_type, 'outsourcing') AS supplier_type,
       COALESCE(contact_person, '') AS contact_person,
       COALESCE(phone, '') AS phone,
       COALESCE(address, '') AS address,
@@ -113,6 +120,7 @@ export function getSupplierProfile(db: Database.Database, supplierName: string):
 
   return row || {
     supplier_name: supplierName,
+    supplier_type: 'outsourcing',
     contact_person: '',
     phone: '',
     address: '',
@@ -121,12 +129,30 @@ export function getSupplierProfile(db: Database.Database, supplierName: string):
   }
 }
 
+export function getSupplierType(db: Database.Database, supplierName: string): SupplierType {
+  return normalizeSupplierType(getSupplierProfile(db, supplierName).supplier_type)
+}
+
+export function syncStockInInventoryFlagsForSupplier(db: Database.Database, supplierName: string): void {
+  const counts = stockInCountsInventoryForSupplierType(getSupplierType(db, supplierName)) ? 1 : 0
+  db.prepare(`
+    UPDATE stock_in_ledger
+    SET counts_inventory = ?, updated_at = datetime('now','localtime')
+    WHERE deleted_at IS NULL AND supplier_name = ?
+  `).run(counts, supplierName)
+}
+
 export function setSupplierProfile(db: Database.Database, profile: Partial<SupplierProfile> & { supplier_name: string }): SupplierProfile {
   const payload = normalizeSupplierProfileInput(profile)
+  const existing = db.prepare(`
+    SELECT supplier_type FROM supplier_profiles WHERE supplier_name = ?
+  `).get(payload.supplier_name) as { supplier_type?: string } | undefined
+  const oldType = existing ? normalizeSupplierType(existing.supplier_type) : null
   db.prepare(`
-    INSERT INTO supplier_profiles (supplier_name, contact_person, phone, address, opening_balance, note, updated_at)
-    VALUES (@supplier_name, @contact_person, @phone, @address, @opening_balance, @note, datetime('now','localtime'))
+    INSERT INTO supplier_profiles (supplier_name, supplier_type, contact_person, phone, address, opening_balance, note, updated_at)
+    VALUES (@supplier_name, @supplier_type, @contact_person, @phone, @address, @opening_balance, @note, datetime('now','localtime'))
     ON CONFLICT(supplier_name) DO UPDATE SET
+      supplier_type = excluded.supplier_type,
       contact_person = excluded.contact_person,
       phone = excluded.phone,
       address = excluded.address,
@@ -134,6 +160,10 @@ export function setSupplierProfile(db: Database.Database, profile: Partial<Suppl
       note = excluded.note,
       updated_at = datetime('now','localtime')
   `).run(payload)
+  if (oldType && oldType !== payload.supplier_type) {
+    syncStockInInventoryFlagsForSupplier(db, payload.supplier_name)
+    rebuildInventoryBusinessTables()
+  }
   return getSupplierProfile(db, payload.supplier_name)
 }
 

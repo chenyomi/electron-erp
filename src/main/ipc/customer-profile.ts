@@ -94,8 +94,10 @@ export function listCustomerProfileNames(db: Database.Database): string[] {
 export function listAllCustomerNames(db: Database.Database): string[] {
   const rows = db.prepare(`
     SELECT customer_name FROM customer_profiles
+    WHERE TRIM(COALESCE(customer_name, '')) != ''
     UNION
-    SELECT DISTINCT customer_name FROM customer_ledger WHERE deleted_at IS NULL
+    SELECT DISTINCT customer_name FROM customer_ledger
+    WHERE deleted_at IS NULL AND TRIM(COALESCE(customer_name, '')) != ''
     ORDER BY customer_name
   `).all() as Array<{ customer_name: string }>
   return rows.map(row => row.customer_name).filter(Boolean)

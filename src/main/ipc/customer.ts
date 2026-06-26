@@ -180,8 +180,10 @@ export function registerCustomerHandlers(): void {
       const rows = db.prepare(`
         WITH names AS (
           SELECT customer_name FROM customer_profiles
+          WHERE TRIM(COALESCE(customer_name, '')) != ''
           UNION
-          SELECT DISTINCT customer_name FROM customer_ledger WHERE deleted_at IS NULL
+          SELECT DISTINCT customer_name FROM customer_ledger
+          WHERE deleted_at IS NULL AND TRIM(COALESCE(customer_name, '')) != ''
         ),
         totals AS (
           SELECT customer_name,
@@ -291,6 +293,7 @@ export function registerCustomerHandlers(): void {
   ipcMain.handle('customer:add', (_e, row) => {
     const db = getDb()
     const customerName = String(row.customer_name || '').trim()
+    if (!customerName) throw new Error('请填写客户名称')
     const isPayment = isCustomerPaymentRecord(row)
     const isReturn = !isPayment && Number(row.ref_ledger_id || 0) > 0
     const stockOutId = Number(row.stock_out_id || 0)

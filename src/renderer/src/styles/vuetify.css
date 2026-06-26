@@ -1472,6 +1472,12 @@ body {
   margin-bottom: 6px;
 }
 
+.cloud-bootstrap-cancel-hint {
+  line-height: 1.45;
+  max-width: 320px;
+  margin-inline: auto;
+}
+
 .cloud-progress-file {
   word-break: break-all;
 }

@@ -12,6 +12,7 @@ import {
   syncCloudUpload,
   testCloudConnection,
   uploadCloudBackup,
+  cancelActiveCloudSync,
   type QiniuCloudConfig,
 } from '../qiniu-cloud'
 import { acknowledgeRemoteSnapshot, getCloudSyncPrefs, saveCloudSyncPrefs } from '../cloud-sync-prefs'
@@ -100,6 +101,11 @@ export function registerCloudHandlers(): void {
       })
     }
     return result
+  })
+
+  ipcMain.handle('cloud:cancel-sync', () => {
+    cancelActiveCloudSync()
+    return { ok: true }
   })
 
   ipcMain.handle('cloud:upload', async (_event, backupName?: string) => uploadCloudBackup(backupName))

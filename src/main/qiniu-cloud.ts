@@ -1,6 +1,7 @@
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
+import type { ClientRequest } from 'http'
 import * as https from 'https'
 import { join, dirname } from 'path'
 import { mkdtempSync } from 'fs'
@@ -58,6 +59,7 @@ export interface CloudSyncResult {
   bytes?: number
   totalFiles?: number
   replacedLedger?: boolean
+  canceled?: boolean
   error?: string
 }
 
@@ -80,6 +82,63 @@ export interface CloudSyncProgress {
 }
 
 export type CloudSyncProgressReporter = (progress: CloudSyncProgress) => void
+
+class CloudSyncCancellation {
+  canceled = false
+  private readonly activeRequests = new Set<ClientRequest>()
+
+  cancel(): void {
+    if (this.canceled) return
+    this.canceled = true
+    for (const req of [...this.activeRequests]) {
+      req.destroy()
+    }
+    this.activeRequests.clear()
+  }
+
+  trackRequest(req: ClientRequest): void {
+    if (this.canceled) {
+      req.destroy()
+      return
+    }
+    this.activeRequests.add(req)
+    const cleanup = () => { this.activeRequests.delete(req) }
+    req.once('close', cleanup)
+  }
+}
+
+class CloudSyncCanceledError extends Error {
+  constructor() {
+    super('已取消云端同步')
+    this.name = 'CloudSyncCanceledError'
+  }
+}
+
+let activeCloudSyncCancel: CloudSyncCancellation | null = null
+
+function startCloudSyncOperation(): CloudSyncCancellation {
+  activeCloudSyncCancel?.cancel()
+  const token = new CloudSyncCancellation()
+  activeCloudSyncCancel = token
+  return token
+}
+
+function finishCloudSyncOperation(token: CloudSyncCancellation): void {
+  if (activeCloudSyncCancel === token) activeCloudSyncCancel = null
+}
+
+export function cancelActiveCloudSync(): void {
+  activeCloudSyncCancel?.cancel()
+}
+
+function assertCloudSyncNotCanceled(token: CloudSyncCancellation): void {
+  if (token.canceled) throw new CloudSyncCanceledError()
+}
+
+function isCloudSyncCanceledError(error: unknown): boolean {
+  return error instanceof CloudSyncCanceledError
+    || (error instanceof Error && error.name === 'CloudSyncCanceledError')
+}
 
 const CONFIG_FILE = 'qiniu-cloud.json'
 
@@ -474,10 +533,16 @@ function flushSyncProgress(): Promise<void> {
 
 const DOWNLOAD_CONCURRENCY = 6
 
-async function runConcurrent<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
+async function runConcurrent<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+  shouldAbort?: () => boolean,
+): Promise<void> {
   if (!items.length) return
   let index = 0
   async function next(): Promise<void> {
+    if (shouldAbort?.()) throw new CloudSyncCanceledError()
     const current = index++
     if (current >= items.length) return
     await worker(items[current])
@@ -536,11 +601,19 @@ function downloadCloudFileOnce(
   url: string,
   destPath: string,
   onBytes?: DownloadBytesReporter,
-): Promise<{ ok: boolean; error?: string }> {
+  cancel?: CloudSyncCancellation,
+): Promise<{ ok: boolean; error?: string; canceled?: boolean }> {
+  if (cancel?.canceled) return Promise.resolve({ ok: false, canceled: true })
   return new Promise((resolve) => {
     const target = new URL(url)
     const client = target.protocol === 'https:' ? https : http
     const req = client.request(target, { method: 'GET' }, (res) => {
+      if (cancel?.canceled) {
+        res.destroy()
+        fs.rmSync(destPath, { force: true })
+        resolve({ ok: false, canceled: true })
+        return
+      }
       const statusCode = res.statusCode || 0
       if (statusCode >= 400) {
         const chunks: Buffer[] = []
@@ -559,6 +632,13 @@ function downloadCloudFileOnce(
       fs.mkdirSync(dirname(destPath), { recursive: true })
       const fileStream = fs.createWriteStream(destPath)
       res.on('data', (chunk: Buffer) => {
+        if (cancel?.canceled) {
+          res.destroy()
+          fileStream.close()
+          fs.rmSync(destPath, { force: true })
+          resolve({ ok: false, canceled: true })
+          return
+        }
         received += chunk.length
         onBytes?.(received, contentLength)
         if (!fileStream.write(chunk)) {
@@ -570,6 +650,11 @@ function downloadCloudFileOnce(
         fileStream.end()
       })
       fileStream.on('finish', () => {
+        if (cancel?.canceled) {
+          fs.rmSync(destPath, { force: true })
+          resolve({ ok: false, canceled: true })
+          return
+        }
         if (received === 0) {
           fs.rmSync(destPath, { force: true })
           resolve({ ok: false, error: '下载内容为空' })
@@ -580,15 +665,28 @@ function downloadCloudFileOnce(
       fileStream.on('error', (error) => {
         fileStream.close()
         fs.rmSync(destPath, { force: true })
+        if (cancel?.canceled) {
+          resolve({ ok: false, canceled: true })
+          return
+        }
         resolve({ ok: false, error: error?.message || '写入本地文件失败' })
       })
       res.on('error', (error) => {
         fileStream.close()
         fs.rmSync(destPath, { force: true })
+        if (cancel?.canceled) {
+          resolve({ ok: false, canceled: true })
+          return
+        }
         resolve({ ok: false, error: error?.message || '下载失败' })
       })
     })
-    req.on('error', (error) => resolve({ ok: false, error: error?.message || '下载失败' }))
+    cancel?.trackRequest(req)
+    req.on('error', (error) => {
+      fs.rmSync(destPath, { force: true })
+      if (cancel?.canceled) resolve({ ok: false, canceled: true })
+      else resolve({ ok: false, error: error?.message || '下载失败' })
+    })
     req.end()
   })
 }
@@ -598,7 +696,9 @@ async function downloadCloudFile(
   key: string,
   destPath: string,
   onBytes?: DownloadBytesReporter,
+  cancel?: CloudSyncCancellation,
 ): Promise<void> {
+  if (cancel?.canceled) throw new CloudSyncCanceledError()
   const deadline = Math.floor(Date.now() / 1000) + 3600
   const { downloadDomainBases } = await resolveBucketRegionInfo(config)
   const domains = downloadDomainBases.length
@@ -607,12 +707,15 @@ async function downloadCloudFile(
 
   let lastError = '下载失败'
   for (const domain of domains) {
+    if (cancel?.canceled) throw new CloudSyncCanceledError()
     const url = buildPrivateDownloadUrl(domain, key, deadline, config)
     try {
-      const result = await downloadCloudFileOnce(url, destPath, onBytes)
+      const result = await downloadCloudFileOnce(url, destPath, onBytes, cancel)
+      if (result.canceled) throw new CloudSyncCanceledError()
       if (result.ok) return
       lastError = result.error || lastError
     } catch (error: any) {
+      if (isCloudSyncCanceledError(error) || cancel?.canceled) throw new CloudSyncCanceledError()
       lastError = error?.message || lastError
     }
   }
@@ -839,7 +942,10 @@ export async function syncCloudDownload(
   options: { includeMedia?: boolean } = {},
 ): Promise<CloudSyncResult> {
   const includeMedia = options.includeMedia !== false
+  const cancel = startCloudSyncOperation()
+  let tempRoot = ''
   try {
+    assertCloudSyncNotCanceled(cancel)
     const config = requireConfig()
     reportSyncProgress(onProgress, {
       mode: 'download',
@@ -849,6 +955,7 @@ export async function syncCloudDownload(
       message: '正在读取云端清单…',
     })
     const remoteManifest = await fetchRemoteManifest(config)
+    assertCloudSyncNotCanceled(cancel)
     const remoteEntries = Object.entries(remoteManifest.files || {})
     if (!remoteEntries.length) {
       return { ok: false, error: '云端还没有同步数据，请先在另一台电脑上传' }
@@ -870,6 +977,7 @@ export async function syncCloudDownload(
     let skipped = 0
     let compared = 0
     for (const [relativePath, entry] of remoteEntries) {
+      assertCloudSyncNotCanceled(cancel)
       compared += 1
       if (localFileMatchesRemoteEntry(relativePath, entry, localLedger)) {
         skipped += 1
@@ -903,111 +1011,126 @@ export async function syncCloudDownload(
       return { ok: true, downloaded: 0, skipped, bytes: 0, totalFiles: total, replacedLedger: false }
     }
 
-    const tempRoot = mkdtempSync(join(tmpdir(), 'donghao-cloud-down-'))
+    tempRoot = mkdtempSync(join(tmpdir(), 'donghao-cloud-down-'))
     const changed: string[] = []
     let downloaded = 0
     let bytes = 0
     let transferCompleted = 0
     const downloadTotal = filesToApply.length
 
-    try {
-      await runConcurrent(filesToApply, DOWNLOAD_CONCURRENCY, async ({ relativePath, entry }) => {
-        reportSyncProgress(onProgress, {
-          mode: 'download',
-          phase: 'transferring',
-          current: skipped + transferCompleted,
-          total,
-          file: relativePath,
-          message: downloadTotal === 1
-            ? `正在下载 ${relativePath}…`
-            : `正在下载 (${transferCompleted + 1}/${downloadTotal})`,
-        })
-        await flushSyncProgress()
-        const tempFile = join(tempRoot, relativePath)
-        fs.mkdirSync(dirname(tempFile), { recursive: true })
-        try {
-          await downloadCloudFile(
-            config,
-            fileObjectKey(config, relativePath),
-            tempFile,
-            (received, contentLength) => {
-              if (downloadTotal !== 1 || !onProgress) return
-              const pct = contentLength ? Math.round((received / contentLength) * 100) : undefined
-              reportSyncProgress(onProgress, {
-                mode: 'download',
-                phase: 'transferring',
-                current: skipped,
-                total,
-                file: relativePath,
-                message: pct != null ? `正在下载 ${relativePath} (${pct}%)` : `正在下载 ${relativePath}…`,
-              })
-            },
-          )
-        } catch (error) {
-          if (relativePath === 'ledger.db') throw error
-          console.warn(`Cloud download skipped missing file ${relativePath}:`, error)
-          return
-        }
-        transferCompleted += 1
-        changed.push(relativePath)
-        downloaded += 1
-        bytes += entry.size
-        reportSyncProgress(onProgress, {
-          mode: 'download',
-          phase: 'transferring',
-          current: skipped + transferCompleted,
-          total,
-          file: relativePath,
-          message: `已完成 (${skipped + transferCompleted}/${total})`,
-        })
-      })
-
-      if (!changed.length) {
-        acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
-        reportSyncProgress(onProgress, {
-          mode: 'download',
-          phase: 'done',
-          current: total,
-          total,
-          message: '云端清单已对齐（部分图片在云端不存在，已跳过）',
-        })
-        return { ok: true, downloaded: 0, skipped, bytes: 0, totalFiles: total, replacedLedger: false }
-      }
-
+    await runConcurrent(filesToApply, DOWNLOAD_CONCURRENCY, async ({ relativePath, entry }) => {
+      assertCloudSyncNotCanceled(cancel)
       reportSyncProgress(onProgress, {
         mode: 'download',
-        phase: 'applying',
-        current: total,
+        phase: 'transferring',
+        current: skipped + transferCompleted,
         total,
-        message: '正在合并到本地账本…',
+        file: relativePath,
+        message: downloadTotal === 1
+          ? `正在下载 ${relativePath}…`
+          : `正在下载 (${transferCompleted + 1}/${downloadTotal})`,
       })
       await flushSyncProgress()
-      const applied = await applyIncrementalSync(changed, tempRoot, { preBackup: 'db-only' })
-      if (!applied.ok) return { ok: false, error: applied.error || '应用云端差异失败' }
+      const tempFile = join(tempRoot, relativePath)
+      fs.mkdirSync(dirname(tempFile), { recursive: true })
+      try {
+        await downloadCloudFile(
+          config,
+          fileObjectKey(config, relativePath),
+          tempFile,
+          (received, contentLength) => {
+            if (downloadTotal !== 1 || !onProgress) return
+            const pct = contentLength ? Math.round((received / contentLength) * 100) : undefined
+            reportSyncProgress(onProgress, {
+              mode: 'download',
+              phase: 'transferring',
+              current: skipped,
+              total,
+              file: relativePath,
+              message: pct != null ? `正在下载 ${relativePath} (${pct}%)` : `正在下载 ${relativePath}…`,
+            })
+          },
+          cancel,
+        )
+      } catch (error) {
+        if (isCloudSyncCanceledError(error) || cancel.canceled) throw error
+        if (relativePath === 'ledger.db') throw error
+        console.warn(`Cloud download skipped missing file ${relativePath}:`, error)
+        return
+      }
+      transferCompleted += 1
+      changed.push(relativePath)
+      downloaded += 1
+      bytes += entry.size
+      reportSyncProgress(onProgress, {
+        mode: 'download',
+        phase: 'transferring',
+        current: skipped + transferCompleted,
+        total,
+        file: relativePath,
+        message: `已完成 (${skipped + transferCompleted}/${total})`,
+      })
+    }, () => cancel.canceled)
 
+    assertCloudSyncNotCanceled(cancel)
+
+    if (!changed.length) {
+      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
       reportSyncProgress(onProgress, {
         mode: 'download',
         phase: 'done',
         current: total,
         total,
-        message: '恢复完成',
+        message: '云端清单已对齐（部分图片在云端不存在，已跳过）',
       })
+      return { ok: true, downloaded: 0, skipped, bytes: 0, totalFiles: total, replacedLedger: false }
+    }
 
-      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
+    reportSyncProgress(onProgress, {
+      mode: 'download',
+      phase: 'applying',
+      current: total,
+      total,
+      message: '正在合并到本地账本…',
+    })
+    await flushSyncProgress()
+    assertCloudSyncNotCanceled(cancel)
+    const applied = await applyIncrementalSync(changed, tempRoot, { preBackup: 'db-only' })
+    if (!applied.ok) return { ok: false, error: applied.error || '应用云端差异失败' }
 
-      return {
-        ok: true,
-        downloaded,
-        skipped,
-        bytes,
-        totalFiles: total,
-        replacedLedger: changed.includes('ledger.db'),
-      }
-    } finally {
-      fs.rmSync(tempRoot, { recursive: true, force: true })
+    reportSyncProgress(onProgress, {
+      mode: 'download',
+      phase: 'done',
+      current: total,
+      total,
+      message: '恢复完成',
+    })
+
+    acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
+
+    return {
+      ok: true,
+      downloaded,
+      skipped,
+      bytes,
+      totalFiles: total,
+      replacedLedger: changed.includes('ledger.db'),
     }
   } catch (error: any) {
+    if (cancel.canceled || isCloudSyncCanceledError(error)) {
+      reportSyncProgress(onProgress, {
+        mode: 'download',
+        phase: 'done',
+        current: 0,
+        total: 0,
+        message: '已取消',
+      })
+      return { ok: false, canceled: true }
+    }
     return { ok: false, error: error?.message || '差异化下载失败' }
+  } finally {
+    if (tempRoot) fs.rmSync(tempRoot, { recursive: true, force: true })
+    finishCloudSyncOperation(cancel)
   }
 }
 

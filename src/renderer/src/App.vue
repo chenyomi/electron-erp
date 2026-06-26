@@ -67,6 +67,15 @@
           class="mt-4"
         />
         <p v-if="headerCloudProgress.file" class="muted tiny mt-2 cloud-progress-file">{{ headerCloudProgress.file }}</p>
+        <v-btn
+          variant="tonal"
+          class="mt-4"
+          :loading="cloudBootstrapCanceling"
+          @click="cancelCloudBootstrap"
+        >
+          {{ t('cloudBootstrapCancel') }}
+        </v-btn>
+        <p class="muted tiny mt-2 cloud-bootstrap-cancel-hint">{{ t('cloudBootstrapCancelHint') }}</p>
       </div>
     </div>
 
@@ -343,6 +352,10 @@
           <p v-if="headerCloudProgress.file" class="muted tiny mt-2 cloud-progress-file">{{ headerCloudProgress.file }}</p>
           <p v-if="headerCloudProgress.total > 0" class="muted tiny mt-1">{{ headerCloudProgress.current }}/{{ headerCloudProgress.total }}</p>
         </v-card-text>
+        <div v-if="headerCloudProgress.mode === 'download' && headerCloudSyncBusy" class="record-dialog__footer">
+          <v-spacer />
+          <v-btn variant="text" :loading="cloudBootstrapCanceling" @click="cancelCloudSync">{{ t('cloudSyncCancel') }}</v-btn>
+        </div>
       </v-card>
     </v-dialog>
 
@@ -665,6 +678,10 @@ const messages = {
     cloudBootstrapTitle: '正在从云端同步账本',
     cloudBootstrapSubtitle: '首次在本机使用或云端有更新，正在拉取最新数据…',
     cloudBootstrapDone: '云端数据已同步到本机',
+    cloudBootstrapCancel: '跳过，先用本机账',
+    cloudBootstrapCancelHint: '下载较慢时可跳过，稍后在数据管理手动恢复',
+    cloudSyncCancel: '取消下载',
+    cloudSyncDownloadCanceled: '已跳过云端同步，当前使用本机数据',
     cloudFirstDeviceHint: '云端尚无数据，可在本机录入；退出软件时会自动上传。',
     cloudLocalOnlyHint: '云端尚无同步数据，当前使用本机账本。',
     cloudOfflineHint: '无法连接云端，当前使用本机账本。',
@@ -1117,6 +1134,10 @@ const messages = {
     cloudBootstrapTitle: 'Syncing from cloud',
     cloudBootstrapSubtitle: 'Pulling the latest ledger data for this device…',
     cloudBootstrapDone: 'Cloud data synced to this device',
+    cloudBootstrapCancel: 'Skip and use local data',
+    cloudBootstrapCancelHint: 'If download is slow, skip and restore manually later in Data Management',
+    cloudSyncCancel: 'Cancel download',
+    cloudSyncDownloadCanceled: 'Cloud sync skipped; using local data',
     cloudFirstDeviceHint: 'Cloud is empty. Enter data locally; it uploads on exit.',
     cloudLocalOnlyHint: 'No cloud data yet. Using local ledger.',
     cloudOfflineHint: 'Cannot reach cloud. Using local ledger.',
@@ -1349,6 +1370,7 @@ let echartsModule: EChartsModule | null = null
 
 const headerCloudSyncBusy = ref(false)
 const cloudBootstrapBusy = ref(false)
+const cloudBootstrapCanceling = ref(false)
 const cloudBootstrapMessage = ref('')
 const headerCloudProgressDialog = ref(false)
 const headerCloudProgress = reactive({
@@ -1428,13 +1450,20 @@ async function runCloudAutoDownload(plan?: {
   try {
     const includeMedia = plan?.downloadIncludeMedia ?? Boolean(plan?.localEmpty)
     const result = await cloudAPI.syncDownload({ includeMedia })
+    if (result?.canceled) {
+      notify(t('cloudSyncDownloadCanceled'), 'info')
+      return false
+    }
     if (!result?.ok) {
       if (!result?.canceled) notify(result?.error || t('restoreFailed'), 'error')
       return false
     }
     const downloaded = Number(result.downloaded || 0)
     const skipped = Number(result.skipped || 0)
-    if (result.replacedLedger || downloaded > 0) notify(t('cloudBootstrapDone'))
+    if (result.replacedLedger || downloaded > 0) {
+      sessionStorage.removeItem(CLOUD_BOOTSTRAP_USER_SKIPPED_KEY)
+      notify(t('cloudBootstrapDone'))
+    }
     else if (!plan?.pendingFiles) notify(t('cloudSyncNoChange'))
     else if (!includeMedia && downloaded === 0) notify('账本已对齐，图片/附件保留本机设置', 'info')
     else notify(t('cloudSyncDownloadDone', { downloaded, skipped }))
@@ -1446,9 +1475,26 @@ async function runCloudAutoDownload(plan?: {
 }
 
 const CLOUD_BOOTSTRAP_GUARD_KEY = 'donghao-cloud-bootstrap-guard'
+const CLOUD_BOOTSTRAP_USER_SKIPPED_KEY = 'donghao-cloud-bootstrap-user-skipped'
+
+async function cancelCloudSync() {
+  if (cloudBootstrapCanceling.value) return
+  cloudBootstrapCanceling.value = true
+  try {
+    await cloudAPI.cancelSync()
+  } finally {
+    cloudBootstrapCanceling.value = false
+  }
+}
+
+async function cancelCloudBootstrap() {
+  sessionStorage.setItem(CLOUD_BOOTSTRAP_USER_SKIPPED_KEY, '1')
+  await cancelCloudSync()
+}
 
 async function runCloudBootstrap() {
   if (!currentUser.value) return
+  if (sessionStorage.getItem(CLOUD_BOOTSTRAP_USER_SKIPPED_KEY)) return
   const guardTs = Number(sessionStorage.getItem(CLOUD_BOOTSTRAP_GUARD_KEY) || 0)
   if (guardTs && Date.now() - guardTs < 45000) return
   try {
@@ -5213,7 +5259,10 @@ const ImportPage = defineComponent({
       cloudDownloading.value = true
       try {
         const result = await cloudAPI.syncDownload()
-        if (result?.canceled) return
+        if (result?.canceled) {
+          emit('notify', props.t('cloudSyncDownloadCanceled'), 'info')
+          return
+        }
         notifyCloudSyncResult(result, 'download')
         if (result?.ok && (result.downloaded || 0) > 0) {
           await loadInfo()
@@ -5587,6 +5636,13 @@ const ImportPage = defineComponent({
             ? h('p', { class: 'muted tiny mt-1' }, `${cloudProgress.current}/${cloudProgress.total}`)
             : null,
         ]),
+        cloudDownloading.value ? h('div', { class: 'record-dialog__footer' }, [
+          h(VSpacer),
+          h(VBtn, {
+            variant: 'text',
+            onClick: () => { void cloudAPI.cancelSync() },
+          }, () => props.t('cloudSyncCancel')),
+        ]) : null,
       ])),
     ])
   },

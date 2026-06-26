@@ -228,6 +228,7 @@ export const cloudAPI = {
     api.invoke('cloud:ack-remote-snapshot', payload),
   syncUpload: (password: string) => api.invoke('cloud:sync-upload', { password }),
   syncDownload: (options?: { includeMedia?: boolean }) => api.invoke('cloud:sync-download', options),
+  cancelSync: () => api.invoke('cloud:cancel-sync'),
   onSyncProgress: (listener: (progress: any) => void) => window.electronAPI.on('cloud:sync-progress', listener),
   list: () => api.invoke('cloud:list'),
 }

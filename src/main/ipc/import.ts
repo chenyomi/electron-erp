@@ -10,7 +10,7 @@ import * as path from 'path'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
 import { getDataDir } from '../db'
-import sharp from 'sharp'
+import { compressImageBuffer } from '../image-compress'
 import { insertAttachmentIfMissing } from './attachments'
 import { importStockInExcel } from './stock-import'
 import { rebuildInventoryBusinessTables } from './stock-business'
@@ -143,7 +143,7 @@ async function extractExcelImages(filePath: string): Promise<ExtractedExcelImage
         const sheetDir = path.join(outputRoot, safeSheet)
         fs.mkdirSync(sheetDir, { recursive: true })
         const raw = Buffer.from(await mediaFile.async('uint8array'))
-        const optimized = await optimizeImage(raw)
+        const optimized = await compressImageBuffer(raw)
         const outputPath = path.join(sheetDir, fileName)
         fs.writeFileSync(outputPath, optimized)
         const rowKey = imageRowKey(sheet.name, image.row)
@@ -156,19 +156,6 @@ async function extractExcelImages(filePath: string): Promise<ExtractedExcelImage
   }
 
   return { total: count, bySheetRow }
-}
-
-async function optimizeImage(raw: Buffer): Promise<Buffer> {
-  try {
-    const optimized = await sharp(raw)
-      .rotate()
-      .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 82, effort: 4 })
-      .toBuffer()
-    return optimized
-  } catch {
-    return raw
-  }
 }
 
 function imageRowKey(sheetName: string, row: number): string {
@@ -407,7 +394,7 @@ function importCustomerSheet(
   imagesBySheetRow: Map<string, StoredExcelImage[]>
 ): void {
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO customer_ledger (
+    INSERT INTO customer_ledger (
       customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
       amount_in, amount_out, balance, note, month_label
     )
@@ -415,7 +402,8 @@ function importCustomerSheet(
   `)
   const findExisting = db.prepare(`
     SELECT id FROM customer_ledger
-    WHERE customer_name = ? AND date = ? AND description = ?
+    WHERE deleted_at IS NULL
+      AND customer_name = ? AND date = ? AND description = ?
       AND amount_in = ? AND amount_out = ? AND balance = ? AND note = ?
     ORDER BY id DESC LIMIT 1
   `)
@@ -430,13 +418,12 @@ function importCustomerSheet(
   const insertMany = db.transaction((items: any[]) => {
     for (const item of items) {
       const { values, excelRow } = item
-      const result = insert.run(...values)
-      let recordId = Number(result.lastInsertRowid || 0)
-      if (result.changes) {
+      const existing = findExisting.get(values[0], values[1], values[2], values[3], values[4], values[5], values[6]) as any
+      let recordId = Number(existing?.id || 0)
+      if (!recordId) {
+        const result = insert.run(...values)
+        recordId = Number(result.lastInsertRowid || 0)
         imported.customers++
-      } else {
-        const existing = findExisting.get(values[0], values[1], values[2], values[3], values[4], values[5], values[6]) as any
-        recordId = Number(existing?.id || 0)
       }
       if (!recordId || !excelRow) continue
       const images = imagesBySheetRow.get(imageRowKey(sheetName, excelRow)) || []

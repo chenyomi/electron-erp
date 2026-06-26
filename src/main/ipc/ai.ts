@@ -156,7 +156,9 @@ function buildAiDataContext() {
       FROM (
         SELECT product_name, spec, unit, quantity AS in_qty, 0 AS out_qty FROM stock_in_ledger WHERE deleted_at IS NULL
         UNION ALL
-        SELECT product_name, spec, unit, 0 AS in_qty, quantity AS out_qty FROM stock_out_ledger WHERE deleted_at IS NULL
+        SELECT product_name, spec, unit, 0, quantity FROM stock_out_ledger WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT product_name, spec, unit, 0, -ABS(quantity) FROM customer_ledger WHERE deleted_at IS NULL AND COALESCE(quantity, 0) < 0
       )
       GROUP BY product_name, spec, unit
       HAVING stock_qty <= 0

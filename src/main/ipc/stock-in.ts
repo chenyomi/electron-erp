@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
-import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
-import { ensureProductCatalog, generateDocNo, recalcInventoryForRows } from './stock-business'
+import { attachmentPreviewSql, cleanupOrphanAttachments, withAttachmentPreviews } from './attachments'
+import { ensureProductCatalog, generateDocNo, recalcInventoryForRows, syncProductCatalogWithLedger } from './stock-business'
+import { assertSupplierProfileExists, listAllSupplierNames } from './supplier-profile'
 
 function normalizeStockInRow(row: any, fallbackDocNo = '') {
   return {
@@ -24,20 +25,17 @@ function normalizeStockInRow(row: any, fallbackDocNo = '') {
   }
 }
 
-function validateStockInRow(row: any) {
-  if (!String(row?.supplier_name || '').trim()) throw new Error('请填写供应商')
+function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
   if (!String(row?.date || '').trim()) throw new Error('请填写日期')
+  const supplierName = String(row?.supplier_name || '').trim()
+  if (supplierName) assertSupplierProfileExists(db, supplierName)
   if (!String(row?.product_name || '').trim()) throw new Error('请填写产品名称')
   if (Number(row?.quantity || 0) <= 0) throw new Error('入库数量必须大于 0')
 }
 
 export function registerStockInHandlers(): void {
   ipcMain.handle('stockIn:names', () => {
-    const db = getDb()
-    return db.prepare(`
-      SELECT DISTINCT supplier_name FROM stock_in_ledger
-      WHERE deleted_at IS NULL ORDER BY supplier_name
-    `).all()
+    return listAllSupplierNames(getDb()).map(supplier_name => ({ supplier_name }))
   })
 
   ipcMain.handle('stockIn:list', (_e, params = {}) => {
@@ -95,7 +93,7 @@ export function registerStockInHandlers(): void {
   ipcMain.handle('stockIn:add', (_e, row) => {
     const db = getDb()
     const payload = normalizeStockInRow(row, generateDocNo('RK', 'stock_in_ledger', row?.date))
-    validateStockInRow(payload)
+    validateStockInRow(db, payload)
     ensureProductCatalog(payload)
     const result = db.prepare(`
       INSERT INTO stock_in_ledger (
@@ -106,17 +104,18 @@ export function registerStockInHandlers(): void {
         @quantity, @unit_price, @amount, @tax_rate, @tax_amount, @invoice_amount, @note
       )
     `).run(payload)
-    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(result.lastInsertRowid)
-    logOperation('stock_in_ledger', result.lastInsertRowid as number, 'INSERT', null, newRow as object)
+    const stockInId = Number(result.lastInsertRowid)
+    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId) as Record<string, any>
+    logOperation('stock_in_ledger', stockInId, 'INSERT', null, newRow as object)
     recalcInventoryForRows(newRow)
-    return newRow
+    return db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId)
   })
 
   ipcMain.handle('stockIn:update', (_e, { id, ...row }) => {
     const db = getDb()
     const oldRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as any
     const payload = normalizeStockInRow(row, oldRow?.doc_no || generateDocNo('RK', 'stock_in_ledger', row?.date))
-    validateStockInRow(payload)
+    validateStockInRow(db, payload)
     ensureProductCatalog(payload)
     db.prepare(`
       UPDATE stock_in_ledger SET
@@ -127,23 +126,40 @@ export function registerStockInHandlers(): void {
         note=@note, updated_at=datetime('now','localtime')
       WHERE id=@id
     `).run({ ...payload, id })
-    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id)
+    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
     logOperation('stock_in_ledger', id, 'UPDATE', oldRow as object, newRow as object)
     recalcInventoryForRows(oldRow, newRow)
     return newRow
   })
 
   ipcMain.handle('stockIn:delete', (_e, id) => {
-    const row = getDb().prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id)
+    const db = getDb()
+    const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
     softDelete('stock_in_ledger', id)
     recalcInventoryForRows(row)
+    cleanupOrphanAttachments()
+    syncProductCatalogWithLedger()
     return { ok: true }
+  })
+
+  ipcMain.handle('stockIn:deleteMany', (_e, ids: number[] = []) => {
+    const db = getDb()
+    const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
+    for (const id of uniqueIds) {
+      const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+      softDelete('stock_in_ledger', id)
+      recalcInventoryForRows(row)
+    }
+    cleanupOrphanAttachments()
+    syncProductCatalogWithLedger()
+    return { ok: true, count: uniqueIds.length }
   })
   ipcMain.handle('stockIn:trash', () => {
     return getDb().prepare(`SELECT * FROM stock_in_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
   })
   ipcMain.handle('stockIn:restore', (_e, id) => {
-    const row = getDb().prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id)
+    const db = getDb()
+    const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
     restore('stock_in_ledger', id)
     recalcInventoryForRows(row)
     return { ok: true }

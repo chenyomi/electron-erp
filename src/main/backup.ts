@@ -5,6 +5,7 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import JSZip from 'jszip'
 import { closeDatabase, getDataDir, getDb, initDatabase } from './db'
+import { cleanupOrphanAttachments } from './ipc/attachments'
 
 const BUSINESS_TABLES = [
   'cash_ledger',
@@ -35,6 +36,10 @@ const AUTO_BACKUP_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000
 const MAX_BACKUPS = 30
 
 const DATA_DIRS = ['excel-images', 'attachments'] as const
+
+export function isCloudMediaSyncPath(relativePath: string): boolean {
+  return relativePath.startsWith('excel-images/') || relativePath.startsWith('attachments/')
+}
 
 export interface BackupInfo {
   name: string
@@ -521,6 +526,7 @@ export async function applyIncrementalSync(
     if (needsDb) {
       initDatabase()
       normalizeRestoredAttachmentPaths()
+      cleanupOrphanAttachments()
     }
     return { ok: true }
   } catch (e: any) {

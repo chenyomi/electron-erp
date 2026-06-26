@@ -39,6 +39,22 @@ export function getCurrentUser(): CurrentUser | null {
   return currentUser
 }
 
+export function verifyCurrentUserPassword(password: string): { ok: boolean; error?: string } {
+  if (!currentUser) {
+    return { ok: false, error: '请先登录' }
+  }
+  const plainPassword = String(password || '')
+  if (!plainPassword) {
+    return { ok: false, error: '请输入密码' }
+  }
+  const db = getDb()
+  const row = db.prepare(`SELECT * FROM users WHERE id = ?`).get(currentUser.id) as UserRow | undefined
+  if (!row || row.status !== 'active' || !isValidLoginPassword(plainPassword, row.password_hash)) {
+    return { ok: false, error: '密码错误' }
+  }
+  return { ok: true }
+}
+
 function toCurrentUser(row: UserRow): CurrentUser {
   return {
     id: row.id,

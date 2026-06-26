@@ -59,7 +59,8 @@
         <p class="muted tiny">{{ cloudBootstrapMessage || t('cloudBootstrapSubtitle') }}</p>
         <v-progress-linear
           v-if="headerCloudProgress.total > 0 && headerCloudProgress.phase !== 'preparing'"
-          :model-value="headerCloudProgressPercent"
+          :model-value="headerCloudProgressIndeterminate ? undefined : headerCloudProgressPercent"
+          :indeterminate="headerCloudProgressIndeterminate"
           color="primary"
           height="8"
           rounded
@@ -109,16 +110,15 @@
 
       <main class="content-shell">
         <DashboardPage v-if="page === 'dashboard'" :t="t" />
-        <ProductCatalogPage v-else-if="page === 'products'" :t="t" />
         <InventoryPage v-else-if="page === 'inventory'" :t="t" />
         <LedgerPage v-else-if="isLedgerPage" :page="page" :t="t" @notify="notify" />
         <template v-else-if="page === 'import'">
           <KeepAlive>
-            <ImportPage :t="t" @notify="notify" @cloud-config-changed="refreshHeaderCloudStatus" />
+            <ImportPage :t="t" @notify="notify" />
           </KeepAlive>
         </template>
         <TrashPage v-else-if="page === 'trash'" :t="t" @notify="notify" />
-        <LogsPage v-else-if="page === 'logs'" :t="t" />
+        <LogsPage v-else-if="page === 'logs'" :t="t" @notify="notify" />
       </main>
 
       <v-card class="user-card top-user-card">
@@ -143,18 +143,6 @@
       </v-card>
       <div class="ai-float" :class="{ open: aiFloatingOpen }">
         <div class="ai-float-actions">
-          <v-btn
-            v-if="headerCloudConfigured"
-            class="cloud-float-button"
-            color="primary"
-            variant="flat"
-            :loading="headerCloudUploading"
-            :title="t('cloudSyncUpload')"
-            @click="headerCloudSyncUpload"
-          >
-            <span class="cloud-float-button__icon">☁</span>
-            <span>{{ t('cloudSyncUpload') }}</span>
-          </v-btn>
           <v-btn class="ai-float-button" color="primary" :aria-expanded="aiFloatingOpen" @click="aiFloatingOpen = !aiFloatingOpen">
             <span class="ai-core">AI</span>
             <span>{{ aiFloatingOpen ? t('close') : t('ai') }}</span>
@@ -274,6 +262,34 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="passwordConfirmDialog.show" max-width="480" persistent>
+      <v-card class="record-dialog confirm-dialog">
+        <div class="record-dialog__header">
+          <div>
+            <h2 class="record-dialog__title">{{ passwordConfirmDialog.title }}</h2>
+            <p class="record-dialog__subtitle confirm-dialog__message">{{ passwordConfirmDialog.message }}</p>
+          </div>
+        </div>
+        <v-card-text class="record-dialog__body">
+          <v-text-field
+            v-model="passwordConfirmDialog.password"
+            :label="t('password')"
+            :placeholder="t('passwordPlaceholder')"
+            type="password"
+            variant="outlined"
+            density="comfortable"
+            hide-details="auto"
+            autofocus
+            @keyup.enter="resolvePasswordConfirm(true)"
+          />
+        </v-card-text>
+        <div class="record-dialog__footer">
+          <v-btn variant="text" @click="resolvePasswordConfirm(false)">{{ passwordConfirmDialog.cancelLabel }}</v-btn>
+          <v-btn :color="passwordConfirmDialog.confirmColor" :loading="passwordConfirmDialog.loading" @click="resolvePasswordConfirm(true)">{{ passwordConfirmDialog.confirmLabel }}</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="updateDialog" max-width="520" persistent>
       <v-card class="record-dialog">
         <div class="record-dialog__header">
@@ -317,7 +333,8 @@
         <v-card-text class="record-dialog__body">
           <v-progress-linear
             v-if="headerCloudProgress.total > 0 && headerCloudProgress.phase !== 'preparing'"
-            :model-value="headerCloudProgressPercent"
+            :model-value="headerCloudProgressIndeterminate ? undefined : headerCloudProgressPercent"
+            :indeterminate="headerCloudProgressIndeterminate"
             color="primary"
             height="8"
             rounded
@@ -335,7 +352,8 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { buildCustomerDescription, isCustomerPaymentDescription, isCustomerPaymentRecord, isCustomerReturnRecord, parseCustomerDescription } from '../../common/customer-ledger'
+import { buildCustomerDescription, calcCustomerReceivableRemaining, calcCustomerReceivableSettlement, customerLedgerFinancialFieldsLocked, getCustomerLedgerRowActions, isCustomerPaymentDescription, isCustomerPaymentRecord, isCustomerReceivableRecord, isCustomerReturnRecord, listCustomerLedgerLinkedToReceivable, parseCustomerDescription, sortCustomerLedgerGrouped } from '../../common/customer-ledger'
+import { buildSupplierDescription, isSupplierPayableRecord, isSupplierPaymentDescription, isSupplierPaymentRecord } from '../../common/supplier-ledger'
 import { parseLedgerDate } from '../../common/ledger-date'
 import {
   VAlert,
@@ -361,10 +379,10 @@ import {
   VTextarea,
   VTextField,
 } from 'vuetify/components'
-import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI, updateAPI, cloudAPI } from './api'
+import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, supplierAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI, updateAPI, cloudAPI } from './api'
 import { runLodopScript, checkLodopAvailable } from './lodop-print'
 
-type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut' | 'products' | 'inventory' | 'trash' | 'logs' | 'import'
+type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'supplier' | 'stockIn' | 'stockOut' | 'inventory' | 'trash' | 'logs' | 'import'
 type ThemeMode = 'dark' | 'light'
 type Lang = 'zh' | 'en'
 type EChartsModule = typeof import('echarts')
@@ -436,8 +454,6 @@ const messages = {
     stockInSub: '产品入库记录',
     stockOut: '产品出库',
     stockOutSub: '产品出库记录',
-    products: '产品档案',
-    productsSub: '产品/规格/单位标准化',
     inventory: '库存汇总',
     inventorySub: '入库减出库结存',
     docNo: '单据号',
@@ -445,6 +461,7 @@ const messages = {
     filterSupplier: '筛选供应商',
     category: '类别',
     contractNo: '合同编号',
+    contractNoOptional: '合同编号（选填）',
     productName: '产品名称',
     spec: '规格',
     unit: '单位',
@@ -462,7 +479,6 @@ const messages = {
     totalStockQuantity: '当前库存',
     stockQty: '库存数量',
     searchInventory: '搜索产品/规格/单位…',
-    searchProduct: '搜索产品/规格/单位/分类…',
     defaultPrice: '默认单价',
     availableQty: '可用库存',
     selectInventoryProduct: '选择库存产品',
@@ -471,6 +487,9 @@ const messages = {
     searchStock: '搜索产品/规格/合同号…',
     typeProductName: '输入或选择产品',
     typeSupplierName: '输入或选择供应商',
+    selectSupplier: '请选择供应商',
+    supplierOptionalHint: '可选；有供应商时只能从档案中选择',
+    partySelectOnlyHint: '请先在档案中添加，此处只能从列表选择',
     typeCustomerName: '输入或选择客户',
     importStockIn: '导入入库 Excel',
     importStockInDone: '入库导入完成',
@@ -494,6 +513,11 @@ const messages = {
     action: '操作',
     edit: '编辑',
     delete: '删除',
+    batchDelete: '批量删除',
+    batchDeleteTitle: '批量删除',
+    batchDeleteMessage: '确定删除选中的 {count} 条记录吗？记录将移入回收站。',
+    batchDeleteDone: '已删除 {count} 条记录',
+    selectRowsToDelete: '请先勾选要删除的记录',
     restore: '恢复',
     add: '新增',
     addRecord: '新增记录',
@@ -625,6 +649,8 @@ const messages = {
     cloudStatusEmpty: '云端尚无同步数据',
     confirmCloudRestore: '确定从云端拉取差异并合并到本机吗？会先自动备份当前数据。',
     confirmCloudUpload: '确定将本机账本差异上传到七牛云吗？只会传输有变化的文件。',
+    confirmCloudUploadTitle: '上传到云端',
+    confirmCloudUploadMessage: '上传会覆盖云端已有差异文件。请输入登录密码确认。',
     cloudExitAutoUpload: '退出软件时自动上传到云端',
     cloudStartupCheck: '启动时检查云端是否有更新',
     cloudStartupAutoDownload: '检测到云端更新时自动拉取（会先备份本机）',
@@ -655,6 +681,21 @@ const messages = {
     customerBalanceColumn: '欠款/多收',
     addCustomerSale: '登记应收',
     addCustomerReturn: '登记退货',
+    customerReturnRow: '退货',
+    customerReceiveRow: '收款',
+    selectSaleRowToReturn: '请从应收行点击「退货」',
+    selectSaleRowToReceive: '请从应收行点击「收款」',
+    customerLinkedReceivable: '关联应收',
+    customerLinkedPaymentFor: '针对应收',
+    customerLedgerDetail: '往来明细',
+    customerLedgerDetailSub: '每笔出库单独算待收。退货/收款必须点对应那一笔应收；已结清的不显示按钮。列表按「一笔出库+其退货/收款」分组排列。',
+    customerRemainingColumn: '待收',
+    customerSettledTag: '已结清',
+    customerReturnBatchHint: '仅冲减本笔出库（{date} · {qty}{unit} · 待收 {remaining}），不影响其他批次。',
+    customerLedgerEmptyHint: '产品出库后会自动生成应收。若仍为空，请重置筛选或到回收站恢复。',
+    customerRefreshLedger: '刷新',
+    customerPaymentLinkedHint: '登记本条应收的收款，可改金额（支持部分收）',
+    customerRemainingToReceive: '待收',
     addCustomerPayment: '登记收款',
     customerBizKind: '类型',
     customerBizSale: '应收',
@@ -663,10 +704,11 @@ const messages = {
     customerReturnFormHint: '填写退货数量与单价（填正数即可），保存后自动冲减应收。',
     customerPaymentFormHint: '客户每转来一笔钱，登记一条收款；不支持批量合并收款。',
     customerOverview: '客户欠款一览',
-    customerOverviewSub: '点客户名或「台账」查看明细；在台账内登记应收与收款。',
+    customerOverviewSub: '点右侧「台账」查看明细；出库自动生成应收，在应收行上登记退货与收款。',
     amountAutoCalc: '自动计算（数量 × 单价）',
     addCustomer: '新增客户',
-    addCustomerSub: '新建客户档案（可设期初欠款），保存后自动打开该客户台账。',
+    addCustomerSub: '填写客户基本信息，保存后可继续登记出库与收款。',
+    contactPerson: '联系人',
     customerCreated: '客户已添加',
     deleteCustomer: '删除',
     confirmDeleteCustomerTitle: '删除客户',
@@ -712,8 +754,56 @@ const messages = {
     customerAnomalyNeedManual: '需手工处理',
     customerAnomalyAutoFix: '可自动修复',
     allCustomerSummary: '所有客户汇总',
+    supplier: '供应商往来',
+    supplierSub: '应付与付款',
+    supplierOverview: '供应商应付一览',
+    supplierOverviewSub: '点「台账」登记应付、付款；入库只改库存，不自动记应付。',
+    supplierPayable: '应付',
+    supplierPaid: '付款',
+    supplierBalance: '尚欠',
+    supplierBalanceColumn: '尚欠/多付',
+    supplierOpeningBalance: '期初应付',
+    supplierBizKind: '类型',
+    supplierBizPayable: '应付',
+    supplierBizPayment: '付款',
+    supplierLedgerDetail: '往来明细',
+    supplierLedgerDetailSub: '手工登记应付；应付行点「付款」；付款行可编辑或删除。',
+    supplierWorkspaceTitle: '供应商台账',
+    addSupplier: '新增供应商',
+    addSupplierSub: '只建供应商档案；应付与付款请进台账登记。',
+    addSupplierPayable: '登记应付',
+    addSupplierPayment: '登记付款',
+    supplierPaymentRow: '付款',
+    supplierLinkedPayable: '关联应付',
+    selectPayableRowToPay: '请从应付行点击「付款」',
+    supplierPaymentLinkedHint: '登记本条应付的付款，可改金额（支持部分付）',
+    supplierPaymentFormHint: '每付一笔登记一条付款；请从应付行点「付款」关联。',
+    supplierPayableFormHint: '登记欠供应商的货款或费用；可填数量×单价自动算应付金额。',
+    supplierLedgerEmptyHint: '点上方「登记应付」添加第一笔；应付行上可点「付款」。',
+    supplierWorkspaceSummaryHint: '尚欠 = 期初应付 + 应付 − 付款',
+    supplierDebtTag: '尚欠',
+    supplierOverpaidTag: '多付',
+    supplierLinkedPaymentFor: '针对应付',
+    supplierProfile: '期初应付',
+    supplierProfileSub: '对应期初欠供应商的款项。保存后按「期初 + 应付 − 付款」重算尚欠。',
+    supplierCreated: '供应商已添加',
+    deleteSupplier: '删除',
+    confirmDeleteSupplierTitle: '删除供应商',
+    confirmDeleteSupplierMessage: '确定删除供应商「{name}」吗？\n\n· 往来记录 {ledgerCount} 条将移入回收站\n· 供应商档案将一并删除',
+    confirmDeleteSupplierProfileOnly: '确定删除供应商「{name}」吗？该供应商暂无往来记录，将只删除档案。',
+    supplierRemoved: '供应商已删除',
+    supplierRemoveBlockedStockIn: '该供应商在产品入库中还有 {count} 条记录，无法删除。请先在「产品入库」中处理。',
+    selectSupplierToAdd: '请填写供应商名称',
     deletedAt: '删除时间',
     restored: '已恢复',
+    clearTrash: '清空回收站',
+    clearLogs: '清空日志',
+    confirmClearTrashTitle: '清空回收站',
+    confirmClearTrashMessage: '将永久删除回收站中的全部记录及关联图片，无法恢复。请输入登录密码确认。',
+    confirmClearLogsTitle: '清空操作日志',
+    confirmClearLogsMessage: '将永久删除全部操作日志，无法恢复。请输入登录密码确认。',
+    clearTrashDone: '已永久删除回收站 {count} 条记录',
+    clearLogsDone: '已清空 {count} 条操作日志',
     logsTitle: '操作日志',
     logsPageSub: '所有增删改记录，用于追溯和审计',
     logDescription: '操作说明',
@@ -734,7 +824,7 @@ const messages = {
     helpProjectDesc: '东昊账务是面向汽配业务的本地账务和库存管理系统，用于记录现金、公账、承兑票、客户往来、产品入库、产品出库、库存结存、图片附件、导入导出和备份恢复。',
     helpBusinessTitle: '业务范围',
     helpBusinessFinance: '财务账本：现金账、公账、承兑票、客户往来，支持新增、编辑、删除、筛选、导出和审计追踪。',
-    helpBusinessStock: '库存业务：产品档案、产品入库、产品出库、库存汇总，出库会校验当前库存。',
+    helpBusinessStock: '库存业务：产品入库、产品出库、库存汇总；出库会校验当前库存并自动生成客户应收。',
     helpBusinessData: '数据管理：Excel 导入、总表导出、本机备份、备份包迁移和回收站恢复。',
     helpTutorialTitle: '快速教程',
     helpTutorialStep1: '先在左侧选择业务模块，例如现金账、产品入库或产品出库。',
@@ -808,8 +898,6 @@ const messages = {
     stockInSub: 'Product inbound records',
     stockOut: 'Stock Out',
     stockOutSub: 'Product outbound',
-    products: 'Products',
-    productsSub: 'Standard product catalog',
     inventory: 'Inventory',
     inventorySub: 'Inbound minus outbound stock',
     docNo: 'Doc No',
@@ -817,6 +905,7 @@ const messages = {
     filterSupplier: 'Supplier',
     category: 'Category',
     contractNo: 'Contract',
+    contractNoOptional: 'Contract No. (optional)',
     productName: 'Product',
     spec: 'Spec',
     unit: 'Unit',
@@ -834,7 +923,6 @@ const messages = {
     totalStockQuantity: 'Stock Qty',
     stockQty: 'Stock Qty',
     searchInventory: 'Search product/spec/unit…',
-    searchProduct: 'Search product/spec/unit/category…',
     defaultPrice: 'Default Price',
     availableQty: 'Available Qty',
     selectInventoryProduct: 'Select inventory product',
@@ -843,6 +931,9 @@ const messages = {
     searchStock: 'Search product/spec/contract…',
     typeProductName: 'Type or select product',
     typeSupplierName: 'Type or select supplier',
+    selectSupplier: 'Select supplier',
+    supplierOptionalHint: 'Optional; pick from profiles when used',
+    partySelectOnlyHint: 'Add the profile first; selection from list only',
     typeCustomerName: 'Type or select customer',
     importStockIn: 'Import Stock In Excel',
     importStockInDone: 'Stock in import complete',
@@ -866,6 +957,11 @@ const messages = {
     action: 'Action',
     edit: 'Edit',
     delete: 'Delete',
+    batchDelete: 'Batch Delete',
+    batchDeleteTitle: 'Batch Delete',
+    batchDeleteMessage: 'Delete {count} selected record(s)? They will be moved to trash.',
+    batchDeleteDone: 'Deleted {count} record(s)',
+    selectRowsToDelete: 'Select records to delete first',
     restore: 'Restore',
     add: 'Add',
     addRecord: 'Add Record',
@@ -997,6 +1093,8 @@ const messages = {
     cloudStatusEmpty: 'No cloud sync data yet',
     confirmCloudRestore: 'Pull cloud differences and merge into this computer? A local backup runs first.',
     confirmCloudUpload: 'Upload local ledger changes to Qiniu Cloud? Only changed files will be transferred.',
+    confirmCloudUploadTitle: 'Upload to Cloud',
+    confirmCloudUploadMessage: 'Upload will apply local changes to the cloud. Enter your login password to confirm.',
     cloudExitAutoUpload: 'Auto-upload to cloud on exit',
     cloudStartupCheck: 'Check cloud updates on startup',
     cloudStartupAutoDownload: 'Auto-pull cloud updates on startup (backs up local first)',
@@ -1027,6 +1125,18 @@ const messages = {
     customerBalanceColumn: 'Due / Overpaid',
     addCustomerSale: 'Add Receivable',
     addCustomerReturn: 'Add Return',
+    customerReturnRow: 'Return',
+    customerReceiveRow: 'Receive',
+    selectSaleRowToReturn: 'Click Return on a receivable row',
+    selectSaleRowToReceive: 'Click Receive on a receivable row',
+    customerLinkedReceivable: 'Linked receivable',
+    customerLinkedPaymentFor: 'For receivable',
+    customerLedgerDetail: 'Ledger',
+    customerLedgerDetailSub: 'Stock-out creates receivable rows. On receivable: Receive / Return. On payment/return rows: Edit or Delete.',
+    customerLedgerEmptyHint: 'Receivables are created automatically from stock-out. Reset filters or check Trash if empty.',
+    customerRefreshLedger: 'Refresh',
+    customerPaymentLinkedHint: 'Record payment for this receivable; amount can be partial',
+    customerRemainingToReceive: 'Due',
     addCustomerPayment: 'Record Payment',
     customerBizKind: 'Type',
     customerBizSale: 'Receivable',
@@ -1038,7 +1148,8 @@ const messages = {
     customerOverviewSub: 'Click a customer or 台账 to view details. Register receivables and payments inside the ledger.',
     amountAutoCalc: 'Auto-calculated (qty × price)',
     addCustomer: 'Add Customer',
-    addCustomerSub: 'Create a customer profile with optional opening balance.',
+    addCustomerSub: 'Enter basic customer info. You can record stock-out and payments after saving.',
+    contactPerson: 'Contact',
     customerCreated: 'Customer added',
     deleteCustomer: 'Delete',
     confirmDeleteCustomerTitle: 'Delete Customer',
@@ -1083,8 +1194,56 @@ const messages = {
     customerAnomalyNeedManual: 'Manual fix needed',
     customerAnomalyAutoFix: 'Auto-fixable',
     allCustomerSummary: 'All Customer Summary',
+    supplier: 'Suppliers',
+    supplierSub: 'Payables & payments',
+    supplierOverview: 'Supplier Payables',
+    supplierOverviewSub: 'Open 台账 to record payables and payments. Stock-in updates inventory only.',
+    supplierPayable: 'Payable',
+    supplierPaid: 'Paid',
+    supplierBalance: 'Balance Due',
+    supplierBalanceColumn: 'Due / Overpaid',
+    supplierOpeningBalance: 'Opening Payable',
+    supplierBizKind: 'Type',
+    supplierBizPayable: 'Payable',
+    supplierBizPayment: 'Payment',
+    supplierLedgerDetail: 'Ledger',
+    supplierLedgerDetailSub: 'Record payables manually. On payable rows: Pay. On payment rows: Edit or Delete.',
+    supplierWorkspaceTitle: 'Supplier Ledger',
+    addSupplier: 'Add Supplier',
+    addSupplierSub: 'Profile only. Record payables and payments in the ledger.',
+    addSupplierPayable: 'Record Payable',
+    addSupplierPayment: 'Record Payment',
+    supplierPaymentRow: 'Pay',
+    supplierLinkedPayable: 'Linked payable',
+    selectPayableRowToPay: 'Click Pay on a payable row first',
+    supplierPaymentLinkedHint: 'Record payment for this payable; partial payment supported',
+    supplierPaymentFormHint: 'One payment per transfer. Link from a payable row via Pay.',
+    supplierPayableFormHint: 'Record amount owed to supplier; qty × price auto-calculates payable.',
+    supplierLedgerEmptyHint: 'Click Record Payable above to add the first entry.',
+    supplierWorkspaceSummaryHint: 'Due = opening + payables − payments',
+    supplierDebtTag: 'Due',
+    supplierOverpaidTag: 'Overpaid',
+    supplierLinkedPaymentFor: 'For payable',
+    supplierProfile: 'Opening Payable',
+    supplierProfileSub: 'Opening amount owed to supplier. Saving recalculates balance.',
+    supplierCreated: 'Supplier added',
+    deleteSupplier: 'Delete',
+    confirmDeleteSupplierTitle: 'Delete Supplier',
+    confirmDeleteSupplierMessage: 'Delete supplier "{name}"?\n\n· {ledgerCount} ledger row(s) will move to Trash\n· Supplier profile will be removed',
+    confirmDeleteSupplierProfileOnly: 'Delete supplier "{name}"? No ledger rows; only profile will be removed.',
+    supplierRemoved: 'Supplier deleted',
+    supplierRemoveBlockedStockIn: 'This supplier has {count} stock-in row(s). Handle them in Stock In before deleting.',
+    selectSupplierToAdd: 'Enter supplier name',
     deletedAt: 'Deleted At',
     restored: 'Restored',
+    clearTrash: 'Empty Trash',
+    clearLogs: 'Clear Logs',
+    confirmClearTrashTitle: 'Empty Trash',
+    confirmClearTrashMessage: 'Permanently delete all records in trash and their images. This cannot be undone. Enter your login password to confirm.',
+    confirmClearLogsTitle: 'Clear Operation Logs',
+    confirmClearLogsMessage: 'Permanently delete all operation logs. This cannot be undone. Enter your login password to confirm.',
+    clearTrashDone: 'Permanently deleted {count} trash record(s)',
+    clearLogsDone: 'Cleared {count} operation log(s)',
     logsTitle: 'Logs',
     logsPageSub: 'All create/update/delete records',
     logDescription: 'Description',
@@ -1105,7 +1264,7 @@ const messages = {
     helpProjectDesc: 'Donghao Ledger is a local finance and inventory system for auto parts operations, covering cash, bank, acceptance bills, customers, product inbound, product outbound, inventory, attachments, import/export, backup, and restore.',
     helpBusinessTitle: 'Business Scope',
     helpBusinessFinance: 'Finance: cash, bank, acceptance bills, and customer ledgers with create, edit, delete, filters, export, and audit logs.',
-    helpBusinessStock: 'Inventory: product catalog, product inbound, product outbound, and stock summary with outbound stock validation.',
+    helpBusinessStock: 'Inventory: product inbound, product outbound, and stock summary; outbound validates stock and auto-creates customer receivables.',
     helpBusinessData: 'Data: Excel import, workbook export, local backup, backup package migration, and trash restore.',
     helpTutorialTitle: 'Quick Tutorial',
     helpTutorialStep1: 'Choose a module from the left navigation, such as Cash, Product Inbound, or Stock Out.',
@@ -1151,6 +1310,17 @@ const confirmDialog = reactive({
   confirmColor: 'primary',
 })
 let confirmResolver: ((value: boolean) => void) | null = null
+const passwordConfirmDialog = reactive({
+  show: false,
+  title: '',
+  message: '',
+  password: '',
+  confirmLabel: '确定',
+  cancelLabel: '取消',
+  confirmColor: 'error',
+  loading: false,
+})
+let passwordConfirmResolver: ((value: string | null) => void) | null = null
 const appVersion = ref('')
 const updateDialog = ref(false)
 const updateBusy = ref(false)
@@ -1161,8 +1331,6 @@ let offHeaderCloudProgress: (() => void) | undefined
 let headerCloudProgressTimer: ReturnType<typeof setTimeout> | null = null
 let echartsModule: EChartsModule | null = null
 
-const headerCloudConfigured = ref(false)
-const headerCloudUploading = ref(false)
 const headerCloudSyncBusy = ref(false)
 const cloudBootstrapBusy = ref(false)
 const cloudBootstrapMessage = ref('')
@@ -1180,12 +1348,19 @@ let cloudStartupPending = false
 let startupPromptsRan = false
 const headerCloudProgressPercent = computed(() => {
   if (headerCloudProgress.phase === 'done') return 100
+  if (headerCloudProgress.phase === 'applying') return 0
   if (!headerCloudProgress.total) return 0
   return Math.min(100, Math.round((headerCloudProgress.current / headerCloudProgress.total) * 100))
 })
+const headerCloudProgressIndeterminate = computed(() => {
+  if (headerCloudProgress.phase === 'preparing' || headerCloudProgress.phase === 'applying') return true
+  return headerCloudProgress.phase === 'transferring'
+    && headerCloudProgress.total === 1
+    && headerCloudProgress.current === 0
+})
 
 const themeName = computed(() => themeMode.value === 'dark' ? 'donghaoDark' : 'donghaoLight')
-const isLedgerPage = computed(() => ['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut'].includes(page.value))
+const isLedgerPage = computed(() => ['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut'].includes(page.value))
 const userInitial = computed(() => (currentUser.value?.displayName || currentUser.value?.username || '东').slice(0, 1).toUpperCase())
 const updateDialogSubtitle = computed(() => {
   if (updateState.value.status === 'downloaded') return t('updateSubtitleReady')
@@ -1225,21 +1400,28 @@ async function waitForInitialUpdateCheck(maxMs = 12000): Promise<void> {
   }
 }
 
-async function runCloudAutoDownload(plan?: { pendingFiles?: number; remoteUpdatedAt?: string; remoteFingerprint?: string }) {
+async function runCloudAutoDownload(plan?: {
+  pendingFiles?: number
+  remoteUpdatedAt?: string
+  remoteFingerprint?: string
+  localEmpty?: boolean
+  downloadIncludeMedia?: boolean
+}) {
   headerCloudSyncBusy.value = true
   beginHeaderCloudProgress('download')
   try {
-    const result = await cloudAPI.syncDownload()
+    const includeMedia = plan?.downloadIncludeMedia ?? Boolean(plan?.localEmpty)
+    const result = await cloudAPI.syncDownload({ includeMedia })
     if (!result?.ok) {
       if (!result?.canceled) notify(result?.error || t('restoreFailed'), 'error')
       return false
     }
     const downloaded = Number(result.downloaded || 0)
     const skipped = Number(result.skipped || 0)
-    if (downloaded) notify(t('cloudBootstrapDone'))
+    if (result.replacedLedger || downloaded > 0) notify(t('cloudBootstrapDone'))
     else if (!plan?.pendingFiles) notify(t('cloudSyncNoChange'))
+    else if (!includeMedia && downloaded === 0) notify('账本已对齐，图片/附件保留本机设置', 'info')
     else notify(t('cloudSyncDownloadDone', { downloaded, skipped }))
-    await refreshHeaderCloudStatus()
     return true
   } finally {
     headerCloudSyncBusy.value = false
@@ -1247,8 +1429,12 @@ async function runCloudAutoDownload(plan?: { pendingFiles?: number; remoteUpdate
   }
 }
 
+const CLOUD_BOOTSTRAP_GUARD_KEY = 'donghao-cloud-bootstrap-guard'
+
 async function runCloudBootstrap() {
   if (!currentUser.value) return
+  const guardTs = Number(sessionStorage.getItem(CLOUD_BOOTSTRAP_GUARD_KEY) || 0)
+  if (guardTs && Date.now() - guardTs < 45000) return
   try {
     const plan = await cloudAPI.evaluateStartup()
     if (plan?.action === 'first_device') notify(t('cloudFirstDeviceHint'), 'info')
@@ -1258,10 +1444,13 @@ async function runCloudBootstrap() {
     cloudBootstrapBusy.value = true
     cloudBootstrapMessage.value = plan.localEmpty
       ? t('cloudBootstrapSubtitle')
-      : t('cloudStartupUpdateMessage', {
-        count: plan.pendingFiles || 0,
-        time: formatCloudStartupTime(plan.remoteUpdatedAt),
-      })
+      : plan.pendingLedgerFiles
+        ? t('cloudStartupUpdateMessage', {
+          count: plan.pendingLedgerFiles || plan.pendingFiles || 0,
+          time: formatCloudStartupTime(plan.remoteUpdatedAt),
+        })
+        : '正在对齐云端账本（不拉回图片/附件）…'
+    sessionStorage.setItem(CLOUD_BOOTSTRAP_GUARD_KEY, String(Date.now()))
     await runCloudAutoDownload(plan)
   } catch {
     notify(t('cloudOfflineHint'), 'warning')
@@ -1351,15 +1540,6 @@ async function installUpdateNow() {
   await updateAPI.install()
 }
 
-async function refreshHeaderCloudStatus() {
-  try {
-    const status = await cloudAPI.status()
-    headerCloudConfigured.value = Boolean(status?.configured)
-  } catch {
-    headerCloudConfigured.value = false
-  }
-}
-
 function beginHeaderCloudProgress(mode: 'upload' | 'download' = 'upload') {
   if (headerCloudProgressTimer) {
     clearTimeout(headerCloudProgressTimer)
@@ -1393,39 +1573,13 @@ function finishHeaderCloudProgress() {
   }, 700)
 }
 
-async function headerCloudSyncUpload() {
-  const ok = await askConfirm({
-    message: t('confirmCloudUpload'),
-    confirmColor: 'warning',
-    confirmLabel: t('cloudSyncUpload'),
-  })
-  if (!ok) return
-  beginHeaderCloudProgress()
-  headerCloudUploading.value = true
-  try {
-    const result = await cloudAPI.syncUpload()
-    if (!result?.ok) {
-      if (!result?.canceled) notify(result?.error || t('backupFailed'), 'error')
-      return
-    }
-    const uploaded = Number(result.uploaded || 0)
-    const skipped = Number(result.skipped || 0)
-    if (!uploaded) notify(t('cloudSyncNoChange'))
-    else notify(t('cloudSyncUploadDone', { uploaded, skipped }))
-    await refreshHeaderCloudStatus()
-  } finally {
-    headerCloudUploading.value = false
-    finishHeaderCloudProgress()
-  }
-}
-
 const navItems = [
   { key: 'dashboard' as PageKey, icon: '◼', label: 'dashboard', sub: 'dashboardSub' },
   { key: 'cash' as PageKey, icon: '💵', label: 'cash', sub: 'cashSub' },
   { key: 'bank' as PageKey, icon: '🏦', label: 'bank', sub: 'bankSub' },
   { key: 'bills' as PageKey, icon: '📄', label: 'bills', sub: 'billsSub' },
   { key: 'customer' as PageKey, icon: '🏭', label: 'customer', sub: 'customerSub' },
-  { key: 'products' as PageKey, icon: '▣', label: 'products', sub: 'productsSub' },
+  { key: 'supplier' as PageKey, icon: '🏪', label: 'supplier', sub: 'supplierSub' },
   { key: 'stockIn' as PageKey, icon: '📦', label: 'stockIn', sub: 'stockInSub' },
   { key: 'stockOut' as PageKey, icon: '🚚', label: 'stockOut', sub: 'stockOutSub' },
   { key: 'inventory' as PageKey, icon: '▦', label: 'inventory', sub: 'inventorySub' },
@@ -1490,6 +1644,37 @@ function resolveConfirm(confirmed: boolean) {
   confirmResolver = null
 }
 
+interface PasswordConfirmOptions {
+  title: string
+  message: string
+  confirmLabel?: string
+  cancelLabel?: string
+  confirmColor?: string
+}
+
+function askPasswordConfirm(options: PasswordConfirmOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    passwordConfirmResolver = resolve
+    passwordConfirmDialog.title = options.title
+    passwordConfirmDialog.message = options.message
+    passwordConfirmDialog.confirmLabel = options.confirmLabel || t('confirm')
+    passwordConfirmDialog.cancelLabel = options.cancelLabel || t('cancel')
+    passwordConfirmDialog.confirmColor = options.confirmColor || 'error'
+    passwordConfirmDialog.password = ''
+    passwordConfirmDialog.loading = false
+    passwordConfirmDialog.show = true
+  })
+}
+
+function resolvePasswordConfirm(confirmed: boolean) {
+  const password = passwordConfirmDialog.password.trim()
+  passwordConfirmDialog.show = false
+  passwordConfirmDialog.password = ''
+  passwordConfirmResolver?.(confirmed && password ? password : null)
+  passwordConfirmResolver = null
+  passwordConfirmDialog.loading = false
+}
+
 function toggleTheme() {
   themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark'
 }
@@ -1509,7 +1694,6 @@ async function handleLogin() {
     const result = await authAPI.login({ username: loginForm.username, password: loginForm.password })
     if (result.ok) {
       currentUser.value = result.user
-      await refreshHeaderCloudStatus()
       startupPromptsRan = false
       cloudStartupChecked = false
       cloudStartupPending = false
@@ -1584,7 +1768,6 @@ onMounted(async () => {
     updateState.value = await updateAPI.getState()
     maybeOpenUpdateDialog(updateState.value)
     if (currentUser.value) {
-      await refreshHeaderCloudStatus()
       await runCloudBootstrap()
       void runStartupPromptSequence()
     }
@@ -1887,70 +2070,13 @@ const InventoryPage = defineComponent({
   },
 })
 
-const ProductCatalogPage = defineComponent({
-  props: { t: { type: Function, required: true } },
-  setup(props) {
-    const rows = ref<any[]>([])
-    const total = ref(0)
-    const currentPage = ref(1)
-    const pageSize = 20
-    const keyword = ref('')
-    const loading = ref(false)
-    const columns = ['product_name', 'spec', 'unit', 'category', 'default_price', 'stock_qty', 'available_qty']
-
-    const load = async () => {
-      loading.value = true
-      const res = await productAPI.list({ page: currentPage.value, pageSize, keyword: keyword.value })
-      rows.value = res.rows || []
-      total.value = res.total || 0
-      loading.value = false
-    }
-
-    watch(keyword, () => {
-      if (currentPage.value !== 1) currentPage.value = 1
-      else load()
-    })
-    watch(currentPage, load)
-    onMounted(load)
-
-    return () => h('div', { class: 'page-wrap ledger-page' }, [
-      h(PageHeader, { title: props.t('products'), subtitle: props.t('productsSub') }, {
-        actions: () => h('div', { class: 'header-toolbar' }, [
-          h(VTextField, {
-            modelValue: keyword.value,
-            'onUpdate:modelValue': (v: string) => { keyword.value = v },
-            label: props.t('searchProduct'),
-            density: 'compact',
-            hideDetails: true,
-            class: 'toolbar-input header-toolbar-input',
-          }),
-        ]),
-      }),
-      h(VCard, { class: 'data-card table-card' }, () => [
-        h('div', { class: 'table-scroll' }, [
-          h(VTable, { class: 'ledger-table', hover: true }, () => [
-            h('thead', [h('tr', columns.map(c => h('th', props.t(columnLabel(c)))))]) ,
-            h('tbody', loading.value
-              ? [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '加载中...')])]
-              : rows.value.length
-                ? rows.value.map(row => h('tr', { key: row.id }, columns.map(c => h('td', { class: amountClass(c) }, formatCell(c, row[c])))))
-                : [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '暂无产品档案')])]),
-          ]),
-        ]),
-        h('div', { class: 'table-footer' }, [
-          h('span', `${props.t('total', { count: total.value })} · 每页 ${pageSize} 条`),
-          h(VPagination, { modelValue: currentPage.value, 'onUpdate:modelValue': (v: number) => currentPage.value = v, length: Math.max(1, Math.ceil(total.value / pageSize)), density: 'comfortable', size: 'small', totalVisible: 7 }),
-        ]),
-      ]),
-    ])
-  },
-})
 
 const ledgerConfigs: any = {
   cash: { title: 'cash', api: cashAPI, pageSize: 20, search: 'searchCash', columns: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], fields: ['date', 'description', 'income', 'expense', 'balance', 'operator', 'note'], summary: ['totalIncome', 'totalExpense', 'currentSurplus'], table: 'cash', relatedTable: 'cash_ledger' },
   bank: { title: 'bank', api: bankAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'currentSurplus'], table: 'bank', relatedTable: 'bank_ledger' },
   bills: { title: 'bills', api: billsAPI, pageSize: 20, search: 'search', columns: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['date', 'description', 'amount_in', 'amount_out', 'balance', 'note'], summary: ['totalIn', 'totalOut', 'currentSurplus'], table: 'bills', relatedTable: 'acceptance_bills' },
   customer: { title: 'customer', api: customerAPI, pageSize: 20, search: 'search', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note'], fields: ['customer_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note', 'month_label'], summary: [], table: 'customer', relatedTable: 'customer_ledger' },
+  supplier: { title: 'supplier', api: supplierAPI, pageSize: 20, search: 'search', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: [], fields: ['supplier_name', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'balance', 'note'], summary: [], table: 'supplier', relatedTable: 'supplier_ledger' },
   stockIn: { title: 'stockIn', api: stockInAPI, pageSize: 20, search: 'searchStock', filterField: 'supplierName', filterKey: 'supplier_name', filterLabel: 'filterSupplier', columns: ['doc_no', 'supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['supplier_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount', 'invoice_amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockIn', relatedTable: 'stock_in_ledger' },
   stockOut: { title: 'stockOut', api: stockOutAPI, pageSize: 20, search: 'searchStock', filterField: 'customerName', filterKey: 'customer_name', filterLabel: 'filterCustomer', columns: ['doc_no', 'customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], fields: ['customer_name', 'category', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount', 'note'], summary: ['totalRecords', 'totalQuantity', 'totalAmount'], table: 'stockOut', relatedTable: 'stock_out_ledger' },
 }
@@ -1985,6 +2111,23 @@ const formSections: Record<string, FormSectionSpec[]> = {
     { titleKey: 'formSectionAmount', fields: [{ key: 'amount_out', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
+  customerReturn: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'customer_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  supplierPayable: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
+    { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount_in', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
+  supplierPayment: [
+    { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }] },
+    { titleKey: 'formSectionAmount', fields: [{ key: 'amount_out', span: 'half' }] },
+    { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
+  ],
   stockIn: [
     { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'category', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
     { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
@@ -2005,6 +2148,7 @@ const ledgerDialogWidths: Record<string, number> = {
   bank: 680,
   bills: 680,
   customer: 880,
+  supplier: 880,
   stockIn: 880,
   stockOut: 880,
 }
@@ -2020,6 +2164,7 @@ const LedgerPage = defineComponent({
     const keyword = ref('')
     const loading = ref(false)
     const exporting = ref(false)
+    const batchDeleting = ref(false)
     const summary = ref<any>({})
     const selected = ref<number[]>([])
     const dialog = ref(false)
@@ -2031,6 +2176,7 @@ const LedgerPage = defineComponent({
     const startDate = ref('')
     const endDate = ref('')
     const filterOptions = ref<string[]>([])
+    const profileOptions = ref<string[]>([])
     const inventoryOptions = ref<any[]>([])
     const productOptions = ref<any[]>([])
     const attachmentDialog = ref(false)
@@ -2078,26 +2224,50 @@ const LedgerPage = defineComponent({
     })
     const printForm = reactive({ customerPhone: '', customerAddress: '', paymentReceived: '' })
     const customerProfileDialog = ref(false)
-    const customerProfileForm = reactive({ opening_balance: 0, note: '' })
+    const customerProfileForm = reactive({ contact_person: '', phone: '', address: '', opening_balance: 0, note: '' })
     const customerEntryMode = ref<'sale' | 'return' | 'payment'>('sale')
-    const customerPaymentRows = ref<any[]>([])
-    const customerPaymentTotal = ref(0)
-    const customerPaymentPage = ref(1)
-    const customerPaymentPageSize = 10
+    const linkedReceivableRow = ref<any>(null)
+    const customerLedgerFinancialLocked = ref(false)
     const customerDetailDialog = ref(false)
     const customerDetailName = ref('')
-    const customerDetailTab = ref<'sale' | 'payment'>('sale')
     const customerDetailSummary = ref<any>({})
     const customerPickDialog = ref(false)
     const customerPickMode = ref<'sale' | 'return' | 'payment'>('sale')
     const customerPickName = ref('')
     const customerCreateDialog = ref(false)
-    const customerCreateForm = reactive({ customer_name: '', opening_balance: 0, note: '' })
-    const customerSaleColumnKeys = ['biz_kind', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'note']
-    const customerPaymentColumnKeys = ['date', 'amount_out', 'note']
+    const customerCreateForm = reactive({
+      customer_name: '',
+      contact_person: '',
+      phone: '',
+      address: '',
+      opening_balance: 0,
+      note: '',
+    })
+    const supplierDetailDialog = ref(false)
+    const supplierDetailName = ref('')
+    const supplierDetailSummary = ref<any>({})
+    const supplierEntryMode = ref<'payable' | 'payment'>('payable')
+    const linkedPayableRow = ref<any>(null)
+    const supplierCreateDialog = ref(false)
+    const supplierProfileDialog = ref(false)
+    const supplierProfileForm = reactive({ contact_person: '', phone: '', address: '', opening_balance: 0, note: '' })
+    const supplierCreateForm = reactive({
+      supplier_name: '',
+      contact_person: '',
+      phone: '',
+      address: '',
+      opening_balance: 0,
+      note: '',
+    })
+    const customerLedgerColumnKeys = ['biz_kind', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'remaining_receivable', 'amount_out', 'note']
+    const supplierLedgerColumnKeys = ['biz_kind', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'note']
+    let loadGeneration = 0
     const displayColumns = computed(() => {
       if (props.page === 'customer' && customerDetailDialog.value) {
-        return [...customerSaleColumnKeys, 'attachments']
+        return [...customerLedgerColumnKeys, 'attachments']
+      }
+      if (props.page === 'supplier' && supplierDetailDialog.value) {
+        return [...supplierLedgerColumnKeys, 'attachments']
       }
       return [...config.value.columns, 'attachments']
     })
@@ -2105,11 +2275,13 @@ const LedgerPage = defineComponent({
     const years = yearOptions()
     const months = monthOptions()
 
-    const buildLedgerFilters = (customerName = '') => {
+    const buildLedgerFilters = (partyName = '') => {
       const params: any = { keyword: keyword.value }
       if (config.value.filterField) {
-        params[config.value.filterField] = customerName
-          || (props.page === 'customer' && customerDetailDialog.value ? customerDetailName.value : filterValue.value)
+        params[config.value.filterField] = partyName
+          || (props.page === 'customer' && customerDetailDialog.value ? customerDetailName.value : '')
+          || (props.page === 'supplier' && supplierDetailDialog.value ? supplierDetailName.value : '')
+          || filterValue.value
       }
       if (yearFilter.value) params.year = yearFilter.value
       if (monthFilter.value) params.month = monthFilter.value
@@ -2118,60 +2290,111 @@ const LedgerPage = defineComponent({
       return params
     }
 
-    const fetchCustomerDetailData = async () => {
+    const fetchCustomerDetailData = async (gen: number) => {
       if (!customerDetailName.value) return
-      const filters = buildLedgerFilters(customerDetailName.value)
-      const saleParams = { ...filters, entryType: 'sale', page: currentPage.value, pageSize: config.value.pageSize }
-      const payParams = { ...filters, entryType: 'payment', page: customerPaymentPage.value, pageSize: customerPaymentPageSize }
-      const [res, payRes, sum] = await Promise.all([
-        config.value.api.list(saleParams),
-        config.value.api.list(payParams),
-        config.value.api.summary(filters),
+      const name = customerDetailName.value
+      const listParams = {
+        customerName: name,
+        entryType: 'all',
+        page: currentPage.value,
+        pageSize: config.value.pageSize,
+      }
+      const [res, sum] = await Promise.all([
+        config.value.api.list(listParams),
+        config.value.api.summary({ customerName: name }),
       ])
-      rows.value = res.rows
+      if (gen !== loadGeneration) return
+      rows.value = sortCustomerLedgerGrouped(res.rows || [])
       total.value = res.total
-      customerPaymentRows.value = payRes.rows
-      customerPaymentTotal.value = payRes.total
       customerDetailSummary.value = sum
     }
 
-    const fetchCustomerOverview = async () => {
+    const fetchCustomerOverview = async (gen: number) => {
+      const names = await config.value.api.names()
+      if (gen !== loadGeneration) return
+      filterOptions.value = names.map((x: any) => x[config.value.filterKey])
+      const overview = await config.value.api.summary(buildLedgerFilters())
+      if (gen !== loadGeneration) return
       rows.value = []
       total.value = 0
       selected.value = []
+      summary.value = overview
+    }
+
+    const fetchSupplierDetailData = async (gen: number) => {
+      if (!supplierDetailName.value) return
+      const name = supplierDetailName.value
+      const listParams = { supplierName: name, entryType: 'all', page: currentPage.value, pageSize: config.value.pageSize }
+      const [res, sum] = await Promise.all([
+        config.value.api.list(listParams),
+        config.value.api.summary({ supplierName: name }),
+      ])
+      if (gen !== loadGeneration) return
+      rows.value = res.rows
+      total.value = res.total
+      supplierDetailSummary.value = sum
+    }
+
+    const fetchSupplierOverview = async (gen: number) => {
       const names = await config.value.api.names()
+      if (gen !== loadGeneration) return
       filterOptions.value = names.map((x: any) => x[config.value.filterKey])
-      summary.value = await config.value.api.summary(buildLedgerFilters())
+      const overview = await config.value.api.summary(buildLedgerFilters())
+      if (gen !== loadGeneration) return
+      rows.value = []
+      total.value = 0
+      selected.value = []
+      summary.value = overview
     }
 
     const load = async () => {
+      const gen = ++loadGeneration
       loading.value = true
-      if (props.page === 'customer') {
-        if (customerDetailDialog.value && customerDetailName.value) {
-          await fetchCustomerDetailData()
-        } else {
-          await fetchCustomerOverview()
+      try {
+        if (props.page === 'customer') {
+          if (customerDetailDialog.value && customerDetailName.value) {
+            await fetchCustomerDetailData(gen)
+          } else {
+            await fetchCustomerOverview(gen)
+          }
+          return
         }
-        loading.value = false
-        return
+        if (props.page === 'supplier') {
+          if (supplierDetailDialog.value && supplierDetailName.value) {
+            await fetchSupplierDetailData(gen)
+          } else {
+            await fetchSupplierOverview(gen)
+          }
+          return
+        }
+        const params: any = { ...buildLedgerFilters(), page: currentPage.value, pageSize: config.value.pageSize }
+        const res = await config.value.api.list(params)
+        if (gen !== loadGeneration) return
+        rows.value = res.rows
+        total.value = res.total
+        if (props.page !== 'stockIn' && props.page !== 'stockOut') {
+          if (config.value.filterField) {
+            const names = await config.value.api.names()
+            if (gen !== loadGeneration) return
+            filterOptions.value = names.map((x: any) => x[config.value.filterKey])
+            summary.value = await config.value.api.summary(buildLedgerFilters())
+          } else {
+            summary.value = await config.value.api.summary(buildLedgerFilters())
+          }
+        } else {
+          summary.value = {}
+          if (config.value.filterField) {
+            const names = await config.value.api.names()
+            if (gen !== loadGeneration) return
+            filterOptions.value = names.map((x: any) => x[config.value.filterKey])
+          }
+        }
+      } finally {
+        if (gen === loadGeneration) loading.value = false
       }
-      const params: any = { ...buildLedgerFilters(), page: currentPage.value, pageSize: config.value.pageSize }
-      const res = await config.value.api.list(params)
-      rows.value = res.rows
-      total.value = res.total
-      customerPaymentRows.value = []
-      customerPaymentTotal.value = 0
-      if (config.value.filterField) {
-        const names = await config.value.api.names()
-        filterOptions.value = names.map((x: any) => x[config.value.filterKey])
-        summary.value = await config.value.api.summary(buildLedgerFilters())
-      } else {
-        summary.value = await config.value.api.summary(buildLedgerFilters())
-      }
-      loading.value = false
     }
 
-    const resetSelection = () => { selected.value = []; currentPage.value = 1; customerPaymentPage.value = 1 }
+    const resetSelection = () => { selected.value = []; currentPage.value = 1 }
     const resetFilters = () => {
       keyword.value = ''
       filterValue.value = ''
@@ -2186,16 +2409,33 @@ const LedgerPage = defineComponent({
       if (props.page === 'stockOut') inventoryOptions.value = await inventoryAPI.options()
     }
     const loadProductOptions = async () => {
-      if (props.page !== 'stockIn' && props.page !== 'customer') return
+      if (props.page !== 'stockIn' && props.page !== 'customer' && props.page !== 'supplier') return
       const res = await productAPI.list({ page: 1, pageSize: 500, keyword: '' })
       productOptions.value = res.rows || []
     }
-    const loadRecordOptions = async () => {
-      await Promise.all([loadInventoryOptions(), loadProductOptions()])
+    const loadProfileOptions = async () => {
+      if (props.page === 'stockOut') {
+        const names = await customerAPI.profileNames()
+        profileOptions.value = names.map((x: any) => x.customer_name).filter(Boolean)
+        return
+      }
+      if (props.page === 'stockIn') {
+        const names = await supplierAPI.profileNames()
+        profileOptions.value = names.map((x: any) => x.supplier_name).filter(Boolean)
+        return
+      }
+      profileOptions.value = []
     }
-    const openAdd = async (mode: 'sale' | 'return' | 'payment' = 'sale') => {
+    const loadRecordOptions = async () => {
+      await Promise.all([loadInventoryOptions(), loadProductOptions(), loadProfileOptions()])
+    }
+    const openAdd = async (mode: 'sale' | 'return' | 'payment' | 'payable' = 'sale') => {
       if (props.page === 'customer' && !customerDetailName.value && !filterValue.value) {
-        openCustomerPickAndAdd(mode)
+        openCustomerPickAndAdd(mode as 'sale' | 'return' | 'payment')
+        return
+      }
+      if (props.page === 'supplier' && !supplierDetailDialog.value) {
+        emit('notify', props.t('selectSupplierToAdd'), 'warning')
         return
       }
       editing.value = null
@@ -2203,11 +2443,18 @@ const LedgerPage = defineComponent({
       attachments.value = []
       pendingAttachments.value = []
       pendingAttachmentDeletes.value = []
-      if (props.page === 'customer') customerEntryMode.value = mode
-      const activeName = customerDetailName.value || filterValue.value
+      if (props.page === 'customer') customerEntryMode.value = mode as 'sale' | 'return' | 'payment'
+      if (props.page === 'supplier') supplierEntryMode.value = mode === 'payment' ? 'payment' : 'payable'
+      const activeName = props.page === 'supplier'
+        ? (supplierDetailName.value || filterValue.value)
+        : (customerDetailName.value || filterValue.value)
       if (activeName && config.value.filterKey) form[config.value.filterKey] = activeName
-      if (props.page === 'customer') form.date = todayIsoDate()
+      if (props.page === 'customer' || props.page === 'supplier') form.date = todayIsoDate()
       if (props.page === 'customer' && mode === 'payment') {
+        form.product_name = '付款'
+        form.amount_in = 0
+      }
+      if (props.page === 'supplier' && mode === 'payment') {
         form.product_name = '付款'
         form.amount_in = 0
       }
@@ -2218,16 +2465,35 @@ const LedgerPage = defineComponent({
         if (mode === 'return') form.note = '退货'
         autoFillAmountFields(form, 'quantity')
       }
+      if (props.page === 'supplier' && mode !== 'payment') {
+        form.amount_out = 0
+        form.quantity = 1
+        form.unit_price = 0
+        autoFillAmountFields(form, 'quantity')
+      }
       await loadRecordOptions()
       if (customerDetailDialog.value) await nextTick()
+      if (supplierDetailDialog.value) await nextTick()
       dialog.value = true
     }
-    const openCustomerWorkspace = async (customerName: string, tab: 'sale' | 'payment' = 'sale') => {
+    const refreshCustomerWorkspace = async () => {
+      if (!customerDetailName.value) return
+      keyword.value = ''
+      yearFilter.value = ''
+      monthFilter.value = ''
+      startDate.value = ''
+      endDate.value = ''
+      currentPage.value = 1
+      await customerAPI.backfillFromStockOut(customerDetailName.value).catch(() => null)
+      await load()
+    }
+    const openCustomerWorkspace = async (customerName: string) => {
       customerDetailName.value = customerName
-      filterValue.value = customerName
-      customerDetailTab.value = tab
       customerDetailDialog.value = true
+      filterValue.value = customerName
+      keyword.value = ''
       resetSelection()
+      await customerAPI.backfillFromStockOut(customerName).catch(() => null)
       await load()
     }
     const closeCustomerWorkspace = () => {
@@ -2263,6 +2529,9 @@ const LedgerPage = defineComponent({
     }
     const openCustomerCreate = () => {
       customerCreateForm.customer_name = ''
+      customerCreateForm.contact_person = ''
+      customerCreateForm.phone = ''
+      customerCreateForm.address = ''
       customerCreateForm.opening_balance = 0
       customerCreateForm.note = ''
       customerCreateDialog.value = true
@@ -2276,6 +2545,9 @@ const LedgerPage = defineComponent({
       try {
         await customerAPI.create({
           customer_name: name,
+          contact_person: customerCreateForm.contact_person || '',
+          phone: customerCreateForm.phone || '',
+          address: customerCreateForm.address || '',
           opening_balance: Number(customerCreateForm.opening_balance || 0),
           note: customerCreateForm.note || '',
         })
@@ -2314,6 +2586,124 @@ const LedgerPage = defineComponent({
         emit('notify', error?.message || '删除失败', 'error')
       }
     }
+    const openSupplierCreate = () => {
+      supplierCreateForm.supplier_name = ''
+      supplierCreateForm.contact_person = ''
+      supplierCreateForm.phone = ''
+      supplierCreateForm.address = ''
+      supplierCreateForm.opening_balance = 0
+      supplierCreateForm.note = ''
+      supplierCreateDialog.value = true
+    }
+    const saveSupplierCreate = async () => {
+      const name = String(supplierCreateForm.supplier_name || '').trim()
+      if (!name) {
+        emit('notify', props.t('selectSupplierToAdd'), 'warning')
+        return
+      }
+      try {
+        await supplierAPI.create({
+          supplier_name: name,
+          contact_person: supplierCreateForm.contact_person || '',
+          phone: supplierCreateForm.phone || '',
+          address: supplierCreateForm.address || '',
+          opening_balance: Number(supplierCreateForm.opening_balance || 0),
+          note: supplierCreateForm.note || '',
+        })
+        supplierCreateDialog.value = false
+        emit('notify', props.t('supplierCreated'))
+        await load()
+      } catch (error: any) {
+        emit('notify', error?.message || '添加失败', 'error')
+      }
+    }
+    const openSupplierWorkspace = async (supplierName: string) => {
+      supplierDetailName.value = supplierName
+      supplierDetailDialog.value = true
+      filterValue.value = supplierName
+      keyword.value = ''
+      resetSelection()
+      await load()
+    }
+    const closeSupplierWorkspace = () => {
+      supplierDetailDialog.value = false
+      supplierDetailName.value = ''
+      filterValue.value = ''
+      supplierDetailSummary.value = {}
+      resetSelection()
+      load()
+    }
+    const activeSupplierName = () => supplierDetailName.value || filterValue.value
+    const openSupplierProfile = async () => {
+      if (props.page !== 'supplier') return
+      const name = activeSupplierName()
+      if (!name) return
+      const profile = await supplierAPI.profile(name)
+      supplierProfileForm.contact_person = profile.contact_person || ''
+      supplierProfileForm.phone = profile.phone || ''
+      supplierProfileForm.address = profile.address || ''
+      supplierProfileForm.opening_balance = Number(profile.opening_balance || 0)
+      supplierProfileForm.note = profile.note || ''
+      supplierProfileDialog.value = true
+    }
+    const saveSupplierProfile = async () => {
+      const name = activeSupplierName()
+      if (!name) return
+      await supplierAPI.setProfile({
+        supplier_name: name,
+        contact_person: supplierProfileForm.contact_person || '',
+        phone: supplierProfileForm.phone || '',
+        address: supplierProfileForm.address || '',
+        opening_balance: Number(supplierProfileForm.opening_balance || 0),
+        note: supplierProfileForm.note || '',
+      })
+      supplierProfileDialog.value = false
+      emit('notify', props.t('customerProfileSaved'))
+      load()
+    }
+    const removeSupplier = async (supplierName: string) => {
+      const name = String(supplierName || '').trim()
+      if (!name) return
+      try {
+        const preview = await supplierAPI.removePreview(name)
+        if (preview.stockInCount > 0) {
+          emit('notify', t('supplierRemoveBlockedStockIn', { count: preview.stockInCount }), 'error')
+          return
+        }
+        const message = preview.ledgerCount > 0
+          ? t('confirmDeleteSupplierMessage', { name, ledgerCount: preview.ledgerCount })
+          : t('confirmDeleteSupplierProfileOnly', { name })
+        const ok = await askConfirm({
+          title: t('confirmDeleteSupplierTitle'),
+          message,
+          confirmColor: 'error',
+          confirmLabel: t('deleteSupplier'),
+        })
+        if (!ok) return
+        await supplierAPI.remove(name)
+        if (supplierDetailName.value === name) closeSupplierWorkspace()
+        if (filterValue.value === name) filterValue.value = ''
+        emit('notify', props.t('supplierRemoved'))
+        load()
+      } catch (error: any) {
+        emit('notify', error?.message || '删除失败', 'error')
+      }
+    }
+    const openPaymentForPayableRow = async (row: any) => {
+      editing.value = null
+      Object.keys(form).forEach(k => delete form[k])
+      linkedPayableRow.value = row
+      supplierEntryMode.value = 'payment'
+      form.supplier_name = supplierDetailName.value || row.supplier_name
+      form.ref_ledger_id = row.id
+      form.date = todayIsoDate()
+      form.amount_out = Math.abs(Number(row.amount_in || 0))
+      form.product_name = '付款'
+      form.note = `付 ${row.product_name || '应付'}`.trim()
+      await loadRecordOptions()
+      dialog.value = true
+    }
+    const canPaySupplierRow = (row: any) => props.page === 'supplier' && supplierDetailDialog.value && isSupplierPayableRecord(row)
     const renderOverviewActionLink = (label: string, onClick: () => void, options: { danger?: boolean } = {}) => h('button', {
       type: 'button',
       class: ['overview-action-link', options.danger ? 'overview-action-link--danger' : ''],
@@ -2322,21 +2712,129 @@ const LedgerPage = defineComponent({
         onClick()
       },
     }, label)
+    const formatCustomerRemainingCell = (row: any) => {
+      if (!isCustomerReceivableRecord(row)) return '—'
+      const linked = customerLinkedToReceivable(row)
+      const { remaining, overpaid } = calcCustomerReceivableSettlement(row.amount_in, linked)
+      if (remaining > 0.005) return formatCustomerReceivableDisplay(remaining)
+      if (overpaid > 0.005) return `${props.t('customerOverpaid')} ${formatCustomerReceivableDisplay(overpaid)}`
+      return props.t('customerSettledTag')
+    }
+    const openReturnForRow = async (row: any) => {
+      const remaining = customerReceivableRemaining(row)
+      if (remaining <= 0.005) {
+        emit('notify', '该笔已结清，不能退货。若退的是后面一批货，请点对应那笔应收的「退货」。', 'warning')
+        return
+      }
+      editing.value = null
+      Object.keys(form).forEach(k => delete form[k])
+      attachments.value = []
+      pendingAttachments.value = []
+      pendingAttachmentDeletes.value = []
+      linkedReceivableRow.value = row
+      customerEntryMode.value = 'return'
+      form.customer_name = customerDetailName.value || row.customer_name
+      form.ref_ledger_id = row.id
+      form.date = todayIsoDate()
+      form.contract_no = row.contract_no || ''
+      form.product_name = row.product_name || ''
+      form.spec = row.spec || ''
+      form.unit = row.unit || ''
+      form.quantity = Math.abs(Number(row.quantity || 0))
+      form.unit_price = Math.abs(Number(row.unit_price || 0))
+      form.note = '退货'
+      await loadRecordOptions()
+      dialog.value = true
+    }
+    const customerReceivableRemaining = (row: any) => {
+      if (Number(row?.remaining_receivable ?? NaN) >= 0) {
+        return Number(row.remaining_receivable)
+      }
+      const linked = rows.value.filter((item: any) => Number(item.ref_ledger_id || 0) === Number(row.id || 0))
+      return calcCustomerReceivableRemaining(row.amount_in, linked)
+    }
+    const customerLinkedToReceivable = (row: any) => {
+      if (isCustomerReceivableRecord(row)) {
+        return listCustomerLedgerLinkedToReceivable(Number(row.id || 0), rows.value)
+      }
+      const refId = Number(row.ref_ledger_id || 0)
+      return refId ? listCustomerLedgerLinkedToReceivable(refId, rows.value) : []
+    }
+    const customerRowActions = (row: any) => {
+      if (props.page !== 'customer' || !customerDetailDialog.value) {
+        return { showReceive: false, showReturn: false, showEdit: true, showDelete: true }
+      }
+      const linked = customerLinkedToReceivable(row)
+      const remaining = isCustomerReceivableRecord(row) ? customerReceivableRemaining(row) : undefined
+      return getCustomerLedgerRowActions(row, linked, remaining)
+    }
+    const formatLinkedReceivablePaymentHint = (row: any) => {
+      const original = Number(row.amount_in || 0)
+      const remaining = customerReceivableRemaining(row)
+      if (remaining < original - 0.005) {
+        return `${props.t('customerRemainingToReceive')} ${formatCustomerReceivableDisplay(remaining)}（${props.t('customerReceivable')} ${formatCustomerReceivableDisplay(original)}）`
+      }
+      return `${props.t('customerReceivable')} ${formatCustomerReceivableDisplay(original)}`
+    }
+    const openPaymentForRow = async (row: any) => {
+      editing.value = null
+      Object.keys(form).forEach(k => delete form[k])
+      attachments.value = []
+      pendingAttachments.value = []
+      pendingAttachmentDeletes.value = []
+      linkedReceivableRow.value = row
+      customerEntryMode.value = 'payment'
+      form.customer_name = customerDetailName.value || row.customer_name
+      form.ref_ledger_id = row.id
+      form.date = todayIsoDate()
+      form.amount_out = customerReceivableRemaining(row)
+      form.product_name = '付款'
+      form.note = `收 ${row.product_name || '应收'}`.trim()
+      await loadRecordOptions()
+      dialog.value = true
+    }
+    const canReturnRow = (row: any) => customerRowActions(row).showReturn
+    const canReceiveRow = (row: any) => customerRowActions(row).showReceive
     const openEdit = async (row: any) => {
+      const actions = customerRowActions(row)
+      if (!actions.showEdit) {
+        emit('notify', actions.editTip || '不能编辑', 'warning')
+        return
+      }
       editing.value = row
       Object.assign(form, row)
       form.date = normalizeDateValue(form.date)
+      linkedReceivableRow.value = null
+      linkedPayableRow.value = null
+      customerLedgerFinancialLocked.value = false
       if (props.page === 'customer' && (isCustomerPaymentDescription(form.description) || isCustomerPaymentRecord(row))) {
         form.product_name = '付款'
         customerEntryMode.value = 'payment'
+        if (Number(row.ref_ledger_id || 0) > 0) {
+          linkedReceivableRow.value = rows.value.find((item: any) => item.id === Number(row.ref_ledger_id)) || null
+        }
       } else if (props.page === 'customer' && isCustomerReturnRecord(row)) {
         customerEntryMode.value = 'return'
         if (Number(form.quantity) < 0) form.quantity = Math.abs(Number(form.quantity))
+        if (Number(row.ref_ledger_id || 0) > 0) {
+          linkedReceivableRow.value = rows.value.find((item: any) => item.id === Number(row.ref_ledger_id)) || null
+        }
       } else if (props.page === 'customer' && !form.product_name && form.description) {
         Object.assign(form, parseCustomerDescription(form.description))
         customerEntryMode.value = 'sale'
       } else if (props.page === 'customer') {
         customerEntryMode.value = Number(form.amount_out) > 0 && !Number(form.amount_in) ? 'payment' : 'sale'
+      }
+      if (props.page === 'customer') {
+        customerLedgerFinancialLocked.value = customerLedgerFinancialFieldsLocked(row, customerLinkedToReceivable(row))
+      } else if (props.page === 'supplier' && (isSupplierPaymentDescription(form.description) || isSupplierPaymentRecord(row))) {
+        form.product_name = '付款'
+        supplierEntryMode.value = 'payment'
+        if (Number(row.ref_ledger_id || 0) > 0) {
+          linkedPayableRow.value = rows.value.find((item: any) => item.id === Number(row.ref_ledger_id)) || null
+        }
+      } else if (props.page === 'supplier') {
+        supplierEntryMode.value = Number(form.amount_out) > 0 && !Number(form.amount_in) ? 'payment' : 'payable'
       }
       pendingAttachments.value = []
       pendingAttachmentDeletes.value = []
@@ -2366,6 +2864,10 @@ const LedgerPage = defineComponent({
               emit('notify', '请填写收款金额', 'warning')
               return
             }
+            if (!Number(payload.ref_ledger_id || 0) && !editing.value) {
+              emit('notify', props.t('selectSaleRowToReceive'), 'warning')
+              return
+            }
           } else {
             if (!String(payload.product_name || '').trim()) {
               emit('notify', '请选择或填写产品', 'warning')
@@ -2374,26 +2876,73 @@ const LedgerPage = defineComponent({
             let qty = Number(payload.quantity || 0)
             const price = Number(payload.unit_price || 0)
             if (customerEntryMode.value === 'return') {
+              if (!Number(payload.ref_ledger_id || 0)) {
+                emit('notify', props.t('selectSaleRowToReturn'), 'warning')
+                return
+              }
               if (qty <= 0 || price <= 0) {
                 emit('notify', '请填写退货数量与单价（正数）', 'warning')
                 return
               }
-              qty = -Math.abs(qty)
-              payload.quantity = qty
+              payload.quantity = Math.abs(qty)
               payload.unit_price = Math.abs(price)
               if (!String(payload.note || '').includes('退货')) {
                 payload.note = payload.note ? `${payload.note} 退货` : '退货'
               }
-            } else if (qty <= 0 || price <= 0) {
-              emit('notify', '请填写数量与单价', 'warning')
-              return
+              payload.description = buildCustomerDescription(payload)
+              payload.amount_out = 0
+              payload.amount_in = 0
+            } else {
+              if (qty <= 0 || price <= 0) {
+                emit('notify', '请填写数量与单价', 'warning')
+                return
+              }
+              payload.description = buildCustomerDescription(payload)
+              payload.amount_out = 0
+              payload.amount_in = roundMoneyValue(qty * Math.abs(price))
             }
-            payload.description = buildCustomerDescription(payload)
-            payload.amount_out = 0
-            const amount = roundMoneyValue(qty * Math.abs(price))
-            payload.amount_in = amount
           }
           normalizeCustomerLedgerPayload(payload)
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.date)) {
+            emit('notify', '请填写日期', 'warning')
+            return
+          }
+        }
+        if (props.page === 'supplier') {
+          if (!String(payload.supplier_name || '').trim()) {
+            emit('notify', props.t('selectSupplierToAdd'), 'warning')
+            return
+          }
+          if (supplierEntryMode.value === 'payment' || isSupplierPaymentRecord(payload)) {
+            payload.description = '付款'
+            payload.product_name = '付款'
+            payload.contract_no = ''
+            payload.spec = ''
+            payload.unit = ''
+            payload.quantity = 0
+            payload.unit_price = 0
+            payload.amount_in = 0
+            if (Number(payload.amount_out || 0) <= 0) {
+              emit('notify', '请填写付款金额', 'warning')
+              return
+            }
+            if (!Number(payload.ref_ledger_id || 0) && !editing.value) {
+              emit('notify', props.t('selectPayableRowToPay'), 'warning')
+              return
+            }
+          } else {
+            const qty = Number(payload.quantity || 0)
+            const price = Number(payload.unit_price || 0)
+            if (qty > 0 && price > 0) {
+              payload.amount_in = roundMoneyValue(qty * Math.abs(price))
+            }
+            if (Number(payload.amount_in || 0) <= 0) {
+              emit('notify', '请填写应付金额，或填写数量与单价', 'warning')
+              return
+            }
+            payload.amount_out = 0
+            payload.description = buildSupplierDescription(payload)
+          }
           if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.date)) {
             emit('notify', '请填写日期', 'warning')
             return
@@ -2412,10 +2961,11 @@ const LedgerPage = defineComponent({
         pendingAttachments.value = []
         dialog.value = false
         emit('notify', editing.value ? '已更新' : '已添加')
-        if (customerDetailDialog.value) {
+        if (customerDetailDialog.value || supplierDetailDialog.value) {
           load()
         } else {
           customerDetailName.value = ''
+          supplierDetailName.value = ''
           filterValue.value = ''
           load()
         }
@@ -2424,6 +2974,14 @@ const LedgerPage = defineComponent({
       }
     }
     const remove = async (id: number) => {
+      const row = rows.value.find((item: any) => item.id === id)
+      if (row && props.page === 'customer' && customerDetailDialog.value) {
+        const actions = customerRowActions(row)
+        if (!actions.showDelete) {
+          emit('notify', actions.deleteTip || '不能删除', 'warning')
+          return
+        }
+      }
       const ok = await askConfirm({
         title: t('confirmDeleteTitle'),
         message: t('confirmDeleteMessage'),
@@ -2431,10 +2989,45 @@ const LedgerPage = defineComponent({
         confirmLabel: t('delete'),
       })
       if (!ok) return
-      await config.value.api.delete(id)
-      emit('notify', '已移入回收站')
-      load()
+      try {
+        await config.value.api.delete(id)
+        emit('notify', '已移入回收站')
+        load()
+      } catch (error: any) {
+        emit('notify', error?.message || '删除失败', 'error')
+      }
     }
+    const removeSelected = async () => {
+      if (!selected.value.length) {
+        emit('notify', props.t('selectRowsToDelete'), 'warning')
+        return
+      }
+      const count = selected.value.length
+      const ok = await askConfirm({
+        title: props.t('batchDeleteTitle'),
+        message: props.t('batchDeleteMessage', { count }),
+        confirmColor: 'error',
+        confirmLabel: props.t('batchDelete'),
+      })
+      if (!ok) return
+      batchDeleting.value = true
+      try {
+        const ids = [...selected.value]
+        if (typeof config.value.api.deleteMany === 'function') {
+          await config.value.api.deleteMany(ids)
+        } else {
+          for (const id of ids) await config.value.api.delete(id)
+        }
+        selected.value = []
+        emit('notify', props.t('batchDeleteDone', { count }))
+        load()
+      } catch (error: any) {
+        emit('notify', error?.message || '删除失败', 'error')
+      } finally {
+        batchDeleting.value = false
+      }
+    }
+    const showBatchDelete = computed(() => props.page === 'stockIn' || props.page === 'stockOut')
     const loadAttachments = async (row: any) => {
       if (!row?.id) return
       attachmentLoading.value = true
@@ -2490,6 +3083,8 @@ const LedgerPage = defineComponent({
     const closeRecordDialog = () => {
       dialog.value = false
       pendingAttachmentDeletes.value = []
+      linkedReceivableRow.value = null
+      linkedPayableRow.value = null
     }
     const closeAttachmentDialog = () => {
       attachmentDialog.value = false
@@ -2578,6 +3173,14 @@ const LedgerPage = defineComponent({
       }
       printLoading.value = true
       try {
+        const customerName = filterValue.value
+          || rows.value.find((row: any) => selected.value.includes(row.id))?.customer_name
+          || ''
+        if (customerName) {
+          const profile = await customerAPI.profile(customerName)
+          printForm.customerPhone = profile.phone || ''
+          printForm.customerAddress = profile.address || ''
+        }
         await loadSlipSettings()
         const result = await printAPI.preview(buildPreviewParams())
         if (!result.ok) {
@@ -2663,6 +3266,9 @@ const LedgerPage = defineComponent({
       }
       filterValue.value = name
       const profile = await customerAPI.profile(name)
+      customerProfileForm.contact_person = profile.contact_person || ''
+      customerProfileForm.phone = profile.phone || ''
+      customerProfileForm.address = profile.address || ''
       customerProfileForm.opening_balance = Number(profile.opening_balance || 0)
       customerProfileForm.note = profile.note || ''
       customerProfileDialog.value = true
@@ -2672,6 +3278,9 @@ const LedgerPage = defineComponent({
       if (!name) return
       await customerAPI.setProfile({
         customer_name: name,
+        contact_person: customerProfileForm.contact_person || '',
+        phone: customerProfileForm.phone || '',
+        address: customerProfileForm.address || '',
         opening_balance: Number(customerProfileForm.opening_balance || 0),
         note: customerProfileForm.note || '',
       })
@@ -2679,19 +3288,25 @@ const LedgerPage = defineComponent({
       emit('notify', props.t('customerProfileSaved'))
       load()
     }
-    const toggleAll = (value: boolean) => selected.value = value ? Array.from(new Set([...selected.value, ...rows.value.map(r => r.id)])) : selected.value.filter(id => !rows.value.some(r => r.id === id))
+    const toggleAll = (value: boolean, pageRows = rows.value) => {
+      selected.value = value
+        ? Array.from(new Set([...selected.value, ...pageRows.map(r => r.id)]))
+        : selected.value.filter(id => !pageRows.some(r => r.id === id))
+    }
     const toggleRowSelection = (id: number) => {
       selected.value = selected.value.includes(id)
         ? selected.value.filter(item => item !== id)
         : Array.from(new Set([...selected.value, id]))
     }
-    const isPageAllSelected = computed(() => rows.value.length > 0 && rows.value.every(r => selected.value.includes(r.id)))
+    const isPageAllSelected = (pageRows = rows.value) => pageRows.length > 0 && pageRows.every(r => selected.value.includes(r.id))
 
     watch(() => props.page, () => {
       keyword.value = ''
       filterValue.value = ''
       customerDetailDialog.value = false
       customerDetailName.value = ''
+      supplierDetailDialog.value = false
+      supplierDetailName.value = ''
       yearFilter.value = ''
       monthFilter.value = ''
       startDate.value = ''
@@ -2705,14 +3320,55 @@ const LedgerPage = defineComponent({
       if (currentPage.value !== 1) currentPage.value = 1
       else load()
     })
-    watch([currentPage, customerPaymentPage, filterValue, yearFilter, monthFilter, startDate, endDate], () => { selected.value = []; load() })
+    watch([currentPage, filterValue, yearFilter, monthFilter, startDate, endDate], () => {
+      selected.value = []
+      if (props.page === 'customer' && customerDetailDialog.value) {
+        if (filterValue.value && filterValue.value !== customerDetailName.value) {
+          openCustomerWorkspace(String(filterValue.value))
+        } else {
+          load()
+        }
+        return
+      }
+      if (props.page === 'supplier' && supplierDetailDialog.value) {
+        if (filterValue.value && filterValue.value !== supplierDetailName.value) {
+          openSupplierWorkspace(String(filterValue.value))
+        } else {
+          load()
+        }
+        return
+      }
+      load()
+    })
 
     const formatLedgerCell = (col: string, value: any, row?: any) => {
       if (props.page === 'customer') {
         if (col === 'biz_kind' && row) return renderCustomerBizKindLabel(row, props.t)
+        if (col === 'amount_in') {
+          if (row && isCustomerPaymentRecord(row)) return '—'
+          return formatCustomerReceivableDisplay(value)
+        }
+        if (col === 'amount_out') return formatCustomerReceivedDisplay(value)
+        if (col === 'remaining_receivable' && row) return formatCustomerRemainingCell(row)
+        if (col === 'quantity' && row && isCustomerPaymentRecord(row)) return '—'
+        if (col === 'balance') return formatCustomerBalanceDisplay(value).text
+        if (col === 'note' && row) {
+          const parts = [String(value || '').trim()]
+          if (row.payment_for) parts.push(`${props.t('customerLinkedPaymentFor')}：${row.payment_for}`)
+          if (row.return_for) parts.push(`${props.t('customerLinkedReceivable')}：${row.return_for}`)
+          return parts.filter(Boolean).join(' · ')
+        }
+      }
+      if (props.page === 'supplier') {
+        if (col === 'biz_kind' && row) return renderSupplierBizKindLabel(row, props.t)
         if (col === 'amount_in') return formatCustomerReceivableDisplay(value)
         if (col === 'amount_out') return formatCustomerReceivedDisplay(value)
-        if (col === 'balance') return formatCustomerBalanceDisplay(value).text
+        if (col === 'balance') return formatSupplierBalanceDisplay(value).text
+        if (col === 'note' && row) {
+          const parts = [String(value || '').trim()]
+          if (row.payment_for) parts.push(`${props.t('supplierLinkedPaymentFor')}：${row.payment_for}`)
+          return parts.filter(Boolean).join(' · ')
+        }
       }
       return formatCell(col, value)
     }
@@ -2730,10 +3386,43 @@ const LedgerPage = defineComponent({
         ? h('td', formatLedgerCell(c, row[c], row))
         : h('td', { class: amountClass(c) }, formatLedgerCell(c, row[c], row)))
 
-    const renderActionCell = (row: any) => h('td', { class: 'action-cell sticky-action-col' }, [
-      h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit')),
-      h(VBtn, { size: 'small', variant: 'text', color: 'error', onClick: (event: MouseEvent) => { event.stopPropagation(); remove(row.id) } }, () => props.t('delete')),
-    ])
+    const renderActionCell = (row: any) => {
+      const actions = props.page === 'customer' && customerDetailDialog.value
+        ? customerRowActions(row)
+        : { showReceive: canReceiveRow(row), showReturn: canReturnRow(row), showEdit: true, showDelete: true }
+      return h('td', { class: 'action-cell sticky-action-col' }, [
+        ...(actions.showReceive
+          ? [h(VBtn, {
+            size: 'small',
+            variant: 'text',
+            color: 'success',
+            onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentForRow(row) },
+          }, () => props.t('customerReceiveRow'))]
+          : []),
+        ...(actions.showReturn
+          ? [h(VBtn, {
+            size: 'small',
+            variant: 'text',
+            color: 'warning',
+            onClick: (event: MouseEvent) => { event.stopPropagation(); openReturnForRow(row) },
+          }, () => props.t('customerReturnRow'))]
+          : []),
+        ...(canPaySupplierRow(row)
+          ? [h(VBtn, {
+            size: 'small',
+            variant: 'text',
+            color: 'success',
+            onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentForPayableRow(row) },
+          }, () => props.t('supplierPaymentRow'))]
+          : []),
+        ...(actions.showEdit
+          ? [h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit'))]
+          : []),
+        ...(actions.showDelete
+          ? [h(VBtn, { size: 'small', variant: 'text', color: 'error', onClick: (event: MouseEvent) => { event.stopPropagation(); remove(row.id) } }, () => props.t('delete'))]
+          : []),
+      ])
+    }
 
     const renderLedgerTableCard = (options: {
       title: string
@@ -2747,6 +3436,7 @@ const LedgerPage = defineComponent({
       onPageChange: (v: number) => void
       withSelect?: boolean
       emptyAction?: () => any
+      emptyHint?: string
     }) => h(VCard, { class: ['data-card', 'table-card', options.title ? '' : 'table-card--flat'], style: options.title ? 'margin-bottom: 12px' : 'margin-bottom: 0; box-shadow: none !important; border: 0 !important' }, () => [
       options.title || options.subtitle || options.headerAction
         ? h('div', { class: 'page-header page-header--compact', style: 'padding: 10px 12px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px' }, [
@@ -2761,7 +3451,7 @@ const LedgerPage = defineComponent({
         h(VTable, { class: 'ledger-table', hover: true }, () => [
           h('thead', [h('tr', [
             options.withSelect
-              ? h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected.value }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected.value) } }, isPageAllSelected.value ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)])
+              ? h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected(options.tableRows) }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected(options.tableRows), options.tableRows) } }, isPageAllSelected(options.tableRows) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)])
               : null,
             ...options.columnKeys.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))),
             h('th', { class: 'sticky-action-col' }, props.t('action')),
@@ -2771,7 +3461,12 @@ const LedgerPage = defineComponent({
             : options.tableRows.length
               ? options.tableRows.map(row => h('tr', {
                 key: row.id,
-                class: options.withSelect ? ['selectable-row', { selected: selected.value.includes(row.id) }] : undefined,
+                class: [
+                  options.withSelect ? ['selectable-row', { selected: selected.value.includes(row.id) }] : undefined,
+                  props.page === 'customer' && customerDetailDialog.value && Number(row.ref_ledger_id || 0) > 0
+                    ? 'ledger-row--linked'
+                    : undefined,
+                ],
                 onClick: options.withSelect ? () => toggleRowSelection(row.id) : undefined,
               }, [
                 options.withSelect
@@ -2789,7 +3484,7 @@ const LedgerPage = defineComponent({
                 renderActionCell(row),
               ]))
               : [h('tr', [h('td', { colspan: options.columnKeys.length + (options.withSelect ? 2 : 1), class: 'empty-cell ledger-empty-cell' }, [
-                h('span', '暂无记录'),
+                h('span', options.emptyHint || '暂无记录'),
                 options.emptyAction ? h('div', { class: 'ledger-empty-cell__action' }, options.emptyAction()) : null,
               ])])]),
         ]),
@@ -2811,11 +3506,20 @@ const LedgerPage = defineComponent({
       h(PageHeader, { title: props.t(config.value.title), subtitle: props.t(`${config.value.title}Sub`) }, {
         actions: () => h('div', { class: 'header-toolbar' }, [
           config.value.filterField ? h(VSelect, {
-            modelValue: props.page === 'customer' ? (customerDetailDialog.value ? customerDetailName.value : null) : filterValue.value,
+            modelValue: props.page === 'customer'
+              ? (customerDetailDialog.value ? customerDetailName.value : null)
+              : props.page === 'supplier'
+                ? (supplierDetailDialog.value ? supplierDetailName.value : null)
+                : filterValue.value,
             'onUpdate:modelValue': (v: string) => {
               if (props.page === 'customer') {
                 if (v) openCustomerWorkspace(v)
                 else closeCustomerWorkspace()
+                return
+              }
+              if (props.page === 'supplier') {
+                if (v) openSupplierWorkspace(v)
+                else closeSupplierWorkspace()
                 return
               }
               filterValue.value = v || ''
@@ -2836,6 +3540,16 @@ const LedgerPage = defineComponent({
           h(VTextField, { modelValue: keyword.value, 'onUpdate:modelValue': (v: string) => { keyword.value = v; resetSelection() }, label: props.t(config.value.search), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
           h(VBtn, { variant: 'tonal', size: 'small', loading: exporting.value, onClick: exportRows }, () => props.t('export')),
+          showBatchDelete.value
+            ? h(VBtn, {
+              variant: 'tonal',
+              size: 'small',
+              color: 'error',
+              loading: batchDeleting.value,
+              disabled: !selected.value.length,
+              onClick: removeSelected,
+            }, () => selected.value.length ? `${props.t('batchDelete')}(${selected.value.length})` : props.t('batchDelete'))
+            : null,
           props.page === 'stockOut'
             ? h(VBtn, {
               variant: 'tonal',
@@ -2846,9 +3560,11 @@ const LedgerPage = defineComponent({
             }, () => selected.value.length ? `${props.t('printSlip')}(${selected.value.length})` : props.t('printSlip'))
             : null,
           props.page === 'customer'
-            ? h(VBtn, { variant: 'tonal', size: 'small', onClick: openCustomerCreate }, () => props.t('addCustomer'))
-            : null,
-          props.page === 'customer'
+            ? h(VBtn, { color: 'primary', size: 'small', onClick: openCustomerCreate }, () => props.t('addCustomer'))
+            : props.page === 'supplier'
+              ? h(VBtn, { color: 'primary', size: 'small', onClick: openSupplierCreate }, () => props.t('addSupplier'))
+              : null,
+          props.page === 'customer' || props.page === 'supplier'
             ? null
             : props.page === 'cash'
               ? h(VBtn, { color: 'primary', size: 'small', onClick: () => openAdd() }, () => props.t('addRecord'))
@@ -2859,18 +3575,15 @@ const LedgerPage = defineComponent({
         const stats = renderLedgerStats(props.page, summary.value, props.t, {
           onOpeningBalanceClick: openCustomerProfile,
         })
-        if (stats.length && props.page !== 'customer') {
+        if (stats.length && props.page !== 'customer' && props.page !== 'supplier') {
           return h('div', { class: 'stat-grid' }, stats)
         }
-        if (props.page === 'customer' && Array.isArray(summary.value) && summary.value.length) {
+        if (props.page === 'customer' && Array.isArray(summary.value)) {
           return h(VCard, { class: 'data-card table-card', style: 'margin-bottom: 12px' }, () => [
             h('div', { class: 'page-header page-header--compact customer-overview-head', style: 'padding: 12px 16px 0' }, [
               h('div', [
                 h('div', { class: 'drawer-title' }, props.t('customerOverview')),
                 h('div', { class: 'muted tiny' }, props.t('customerOverviewSub')),
-              ]),
-              h('div', { class: 'customer-overview-head__actions' }, [
-                h(VBtn, { size: 'x-small', variant: 'tonal', onClick: openCustomerCreate }, () => props.t('addCustomer')),
               ]),
             ]),
             h('div', { class: 'table-scroll' }, [
@@ -2880,48 +3593,87 @@ const LedgerPage = defineComponent({
                   h('th', props.t('openingBalance')),
                   h('th', props.t('customerReceivable')),
                   h('th', props.t('customerReceived')),
-                  h('th', { class: 'customer-balance-col' }, [
-                    h('div', { class: 'customer-balance-col-head' }, props.t('customerBalanceColumn')),
-                    h('div', { class: 'customer-balance-col-legend' }, [
-                      h('span', { class: 'customer-balance-tag customer-balance-tag--debt' }, props.t('customerDebtTag')),
-                      h('span', { class: 'customer-balance-tag customer-balance-tag--credit' }, props.t('customerOverpaidTag')),
-                    ]),
-                  ]),
+                  h('th', props.t('customerBalanceColumn')),
                   h('th', { class: 'sticky-action-col customer-overview-action-col' }, props.t('action')),
                 ])]),
-                h('tbody', summary.value.map((row: any) => h('tr', {
-                  key: row.customer_name,
-                  class: 'customer-overview-row',
-                  onClick: () => openCustomerWorkspace(row.customer_name),
-                }, [
-                  h('td', { class: 'customer-name-cell customer-overview-name' }, row.customer_name),
-                  h('td', { class: customerOverviewAmountClass('opening', row.openingBalance) }, formatCell('amount_in', row.openingBalance)),
-                  h('td', { class: customerOverviewAmountClass('in', row.totalIn) }, formatCustomerReceivableDisplay(row.totalIn)),
-                  h('td', { class: customerOverviewAmountClass('out', row.totalOut) }, formatCustomerReceivedDisplay(row.totalOut)),
-                  h('td', { class: customerOverviewAmountClass('balance', row.currentBalance) }, renderCustomerBalanceCell(row.currentBalance, props.t)),
-                  h('td', {
-                    class: 'action-cell customer-overview-actions sticky-action-col customer-overview-action-col',
-                    onClick: (event: MouseEvent) => event.stopPropagation(),
-                  }, [
-                    renderOverviewActionLink('台账', () => openCustomerWorkspace(row.customer_name)),
-                    renderOverviewActionLink(props.t('deleteCustomer'), () => removeCustomer(row.customer_name), { danger: true }),
-                  ]),
-                ]))),
+                h('tbody', loading.value
+                  ? [h('tr', [h('td', { colspan: 6, class: 'empty-cell' }, '加载中...')])]
+                  : summary.value.length
+                    ? summary.value.map((row: any) => h('tr', {
+                      key: row.customer_name,
+                      class: 'customer-overview-row',
+                    }, [
+                      h('td', { class: 'customer-name-cell customer-overview-name' }, row.customer_name),
+                      h('td', { class: customerOverviewAmountClass('opening', row.openingBalance) }, formatCell('amount_in', row.openingBalance)),
+                      h('td', { class: customerOverviewAmountClass('in', row.totalIn) }, formatCustomerReceivableDisplay(row.totalIn)),
+                      h('td', { class: customerOverviewAmountClass('out', row.totalOut) }, formatCustomerReceivedDisplay(row.totalOut)),
+                      h('td', { class: customerOverviewAmountClass('balance', row.currentBalance) }, renderCustomerBalanceCell(row.currentBalance, props.t)),
+                      h('td', {
+                        class: 'action-cell customer-overview-actions sticky-action-col customer-overview-action-col',
+                        onClick: (event: MouseEvent) => event.stopPropagation(),
+                      }, [
+                        renderOverviewActionLink('台账', () => openCustomerWorkspace(row.customer_name)),
+                        renderOverviewActionLink(props.t('deleteCustomer'), () => removeCustomer(row.customer_name), { danger: true }),
+                      ]),
+                    ]))
+                    : [h('tr', [h('td', { colspan: 6, class: 'empty-cell ledger-empty-cell' }, [
+                      h('span', '暂无客户，点击右上角「新增客户」开始'),
+                    ])])]),
               ]),
             ]),
           ])
         }
-        if (props.page === 'customer' && Array.isArray(summary.value) && !summary.value.length && !loading.value) {
-          return h(VCard, { class: 'data-card table-card' }, () => [
-            h('div', { class: 'empty-cell', style: 'padding: 48px 24px' }, '暂无客户往来数据'),
+        if (props.page === 'supplier' && Array.isArray(summary.value)) {
+          return h(VCard, { class: 'data-card table-card', style: 'margin-bottom: 12px' }, () => [
+            h('div', { class: 'page-header page-header--compact customer-overview-head', style: 'padding: 12px 16px 0' }, [
+              h('div', [
+                h('div', { class: 'drawer-title' }, props.t('supplierOverview')),
+                h('div', { class: 'muted tiny' }, props.t('supplierOverviewSub')),
+              ]),
+            ]),
+            h('div', { class: 'table-scroll' }, [
+              h(VTable, { class: 'ledger-table customer-overview-table', hover: true }, () => [
+                h('thead', [h('tr', [
+                  h('th', props.t('supplierName')),
+                  h('th', props.t('supplierOpeningBalance')),
+                  h('th', props.t('supplierPayable')),
+                  h('th', props.t('supplierPaid')),
+                  h('th', props.t('supplierBalanceColumn')),
+                  h('th', { class: 'sticky-action-col customer-overview-action-col' }, props.t('action')),
+                ])]),
+                h('tbody', loading.value
+                  ? [h('tr', [h('td', { colspan: 6, class: 'empty-cell' }, '加载中...')])]
+                  : summary.value.length
+                    ? summary.value.map((row: any) => h('tr', {
+                      key: row.supplier_name,
+                      class: 'customer-overview-row',
+                    }, [
+                      h('td', { class: 'customer-name-cell customer-overview-name' }, row.supplier_name),
+                      h('td', { class: customerOverviewAmountClass('opening', row.openingBalance) }, formatCell('amount_in', row.openingBalance)),
+                      h('td', { class: customerOverviewAmountClass('in', row.totalIn) }, formatCustomerReceivableDisplay(row.totalIn)),
+                      h('td', { class: customerOverviewAmountClass('out', row.totalOut) }, formatCustomerReceivedDisplay(row.totalOut)),
+                      h('td', { class: customerOverviewAmountClass('balance', row.currentBalance) }, renderSupplierBalanceCell(row.currentBalance, props.t)),
+                      h('td', {
+                        class: 'action-cell customer-overview-actions sticky-action-col customer-overview-action-col',
+                        onClick: (event: MouseEvent) => event.stopPropagation(),
+                      }, [
+                        renderOverviewActionLink('台账', () => openSupplierWorkspace(row.supplier_name)),
+                        renderOverviewActionLink(props.t('deleteSupplier'), () => removeSupplier(row.supplier_name), { danger: true }),
+                      ]),
+                    ]))
+                    : [h('tr', [h('td', { colspan: 6, class: 'empty-cell ledger-empty-cell' }, [
+                      h('span', '暂无供应商，点击右上角「新增供应商」开始'),
+                    ])])]),
+              ]),
+            ]),
           ])
         }
         return null
       })(),
-      props.page !== 'customer' ? h(VCard, { class: 'data-card table-card' }, () => [
+      props.page !== 'customer' && props.page !== 'supplier' ? h(VCard, { class: 'data-card table-card' }, () => [
         h('div', { class: 'table-scroll' }, [
           h(VTable, { class: 'ledger-table', hover: true }, () => [
-            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected.value }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected.value) } }, isPageAllSelected.value ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
+            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected(rows.value) }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected(rows.value), rows.value) } }, isPageAllSelected(rows.value) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
             h('tbody', loading.value ? [h('tr', [h('td', { colspan: displayColumns.value.length + 2, class: 'empty-cell' }, '加载中...')])] : rows.value.map(row => h('tr', {
               key: row.id,
               class: ['selectable-row', { selected: selected.value.includes(row.id) }],
@@ -2948,7 +3700,7 @@ const LedgerPage = defineComponent({
       ]) : null,
       RecordDialogShell({
         show: customerCreateDialog.value,
-        maxWidth: 480,
+        maxWidth: 560,
         title: props.t('addCustomer'),
         subtitle: props.t('addCustomerSub'),
         cancelLabel: props.t('cancel'),
@@ -2967,7 +3719,31 @@ const LedgerPage = defineComponent({
                   autofocus: true,
                 }),
               ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerCreateForm.contact_person,
+                  'onUpdate:modelValue': (v: string) => { customerCreateForm.contact_person = v },
+                  label: props.t('contactPerson'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerCreateForm.phone,
+                  'onUpdate:modelValue': (v: string) => { customerCreateForm.phone = v },
+                  label: props.t('customerPhone'),
+                }),
+              ]),
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerCreateForm.address,
+                  'onUpdate:modelValue': (v: string) => { customerCreateForm.address = v },
+                  label: props.t('customerAddress'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
                 h(VTextField, {
                   ...commonFormFieldProps(),
                   modelValue: customerCreateForm.opening_balance,
@@ -2982,6 +3758,73 @@ const LedgerPage = defineComponent({
                   ...commonFormFieldProps(),
                   modelValue: customerCreateForm.note,
                   'onUpdate:modelValue': (v: string) => { customerCreateForm.note = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
+        ],
+      }),
+      RecordDialogShell({
+        show: supplierCreateDialog.value,
+        maxWidth: 560,
+        title: props.t('addSupplier'),
+        subtitle: props.t('addSupplierSub'),
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { supplierCreateDialog.value = false },
+        onSave: saveSupplierCreate,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.supplier_name,
+                  'onUpdate:modelValue': (v: string) => { supplierCreateForm.supplier_name = v },
+                  label: props.t('supplierName'),
+                  autofocus: true,
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.contact_person,
+                  'onUpdate:modelValue': (v: string) => { supplierCreateForm.contact_person = v },
+                  label: props.t('contactPerson'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.phone,
+                  'onUpdate:modelValue': (v: string) => { supplierCreateForm.phone = v },
+                  label: props.t('customerPhone'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.address,
+                  'onUpdate:modelValue': (v: string) => { supplierCreateForm.address = v },
+                  label: props.t('customerAddress'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.opening_balance,
+                  'onUpdate:modelValue': (v: any) => { supplierCreateForm.opening_balance = Number(v || 0) },
+                  label: props.t('supplierOpeningBalance'),
+                  type: 'number',
+                  step: 'any',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierCreateForm.note,
+                  'onUpdate:modelValue': (v: string) => { supplierCreateForm.note = v },
                   label: props.t('note'),
                 }),
               ]),
@@ -3023,7 +3866,6 @@ const LedgerPage = defineComponent({
         h('div', { class: 'customer-workspace-dialog__head' }, [
           h('div', { class: 'drawer-title' }, `${props.t('customerWorkspaceTitle')} · ${customerDetailName.value}`),
           h('div', { class: 'customer-workspace-dialog__actions' }, [
-            h(VBtn, { size: 'small', variant: 'tonal', color: 'error', onClick: () => removeCustomer(customerDetailName.value) }, () => props.t('deleteCustomer')),
             h(VBtn, { size: 'small', variant: 'text', onClick: closeCustomerWorkspace }, () => props.t('cancel')),
           ]),
         ]),
@@ -3031,91 +3873,139 @@ const LedgerPage = defineComponent({
           renderCustomerWorkspaceSummary(customerDetailSummary.value, props.t, {
             onOpeningBalanceClick: openCustomerProfile,
           }),
-          customerPaymentRows.value.some((row: any) => !String(row.date || '').trim())
-            ? h(VAlert, { type: 'info', variant: 'tonal', density: 'compact' }, () => props.t('customerPaymentMissingDateHint', {
-              count: customerPaymentRows.value.filter((row: any) => !String(row.date || '').trim()).length,
+          h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t('customerLedgerDetailSub')),
+          rows.value.some((row: any) => isCustomerPaymentRecord(row) && !String(row.date || '').trim())
+            ? h(VAlert, { type: 'info', variant: 'tonal', density: 'compact', style: 'margin-bottom: 8px' }, () => props.t('customerPaymentMissingDateHint', {
+              count: rows.value.filter((row: any) => isCustomerPaymentRecord(row) && !String(row.date || '').trim()).length,
             }))
             : null,
-          h('div', { class: 'customer-workspace-tabs', role: 'tablist' }, [
-            h('button', {
-              type: 'button',
-              role: 'tab',
-              class: ['customer-workspace-tab', { active: customerDetailTab.value === 'sale' }],
-              'aria-selected': customerDetailTab.value === 'sale',
-              onClick: () => { customerDetailTab.value = 'sale' },
-            }, `${props.t('customerSaleDetail')} (${total.value})`),
-            h('button', {
-              type: 'button',
-              role: 'tab',
-              class: ['customer-workspace-tab', { active: customerDetailTab.value === 'payment' }],
-              'aria-selected': customerDetailTab.value === 'payment',
-              onClick: () => { customerDetailTab.value = 'payment' },
-            }, `${props.t('customerPaymentDetail')} (${customerPaymentTotal.value})`),
-          ]),
-          customerDetailTab.value === 'sale'
-            ? renderLedgerTableCard({
-              title: '',
-              tableRows: rows.value,
-              columnKeys: [...customerSaleColumnKeys, 'attachments'],
-              totalCount: total.value,
-              page: currentPage.value,
-              pageSize: config.value.pageSize,
-              onPageChange: (v: number) => { currentPage.value = v },
-              withSelect: true,
-              emptyAction: () => h('div', { class: 'customer-workspace-empty-actions' }, [
-                h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
-                h(VBtn, { size: 'small', variant: 'tonal', color: 'warning', onClick: () => openAdd('return') }, () => props.t('addCustomerReturn')),
-              ]),
-            })
-            : renderLedgerTableCard({
-              title: '',
-              subtitle: props.t('customerPaymentDetailSub'),
-              tableRows: customerPaymentRows.value,
-              columnKeys: customerPaymentColumnKeys,
-              totalCount: customerPaymentTotal.value,
-              page: customerPaymentPage.value,
-              pageSize: customerPaymentPageSize,
-              onPageChange: (v: number) => { customerPaymentPage.value = v },
-              emptyAction: () => h(VBtn, { size: 'small', color: 'primary', onClick: () => openAdd('payment') }, () => props.t('addCustomerPayment')),
-            }),
+          renderLedgerTableCard({
+            title: props.t('customerLedgerDetail'),
+            tableRows: rows.value,
+            columnKeys: [...customerLedgerColumnKeys, 'attachments'],
+            totalCount: total.value,
+            page: currentPage.value,
+            pageSize: config.value.pageSize,
+            onPageChange: (v: number) => { currentPage.value = v },
+            emptyAction: () => h(VBtn, {
+              size: 'small',
+              variant: 'tonal',
+              color: 'primary',
+              onClick: refreshCustomerWorkspace,
+            }, () => props.t('customerRefreshLedger')),
+            emptyHint: props.t('customerLedgerEmptyHint'),
+          }),
         ]),
-        h('div', { class: 'customer-workspace-dialog__footer' }, [
-          h(VBtn, { size: 'small', variant: 'tonal', onClick: () => openAdd('sale') }, () => props.t('addCustomerSale')),
-          h(VBtn, { size: 'small', variant: 'tonal', color: 'warning', onClick: () => openAdd('return') }, () => props.t('addCustomerReturn')),
-          h(VBtn, { size: 'small', color: 'primary', onClick: () => openAdd('payment') }, () => props.t('addCustomerPayment')),
+      ])),
+      h(VDialog, {
+        modelValue: supplierDetailDialog.value,
+        'onUpdate:modelValue': (v: boolean) => { if (!v) closeSupplierWorkspace() },
+        maxWidth: 1180,
+        class: 'customer-workspace-dialog-wrap',
+      }, () => h(VCard, { class: 'customer-workspace-dialog' }, [
+        h('div', { class: 'customer-workspace-dialog__head' }, [
+          h('div', { class: 'drawer-title' }, `${props.t('supplierWorkspaceTitle')} · ${supplierDetailName.value}`),
+          h('div', { class: 'customer-workspace-dialog__actions' }, [
+            h(VBtn, { size: 'small', variant: 'text', onClick: closeSupplierWorkspace }, () => props.t('cancel')),
+          ]),
+        ]),
+        h(VCardText, { class: 'customer-workspace-dialog__body' }, [
+          renderSupplierWorkspaceSummary(supplierDetailSummary.value, props.t, {
+            onOpeningBalanceClick: openSupplierProfile,
+          }),
+          h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t('supplierLedgerDetailSub')),
+          renderLedgerTableCard({
+            title: props.t('supplierLedgerDetail'),
+            headerAction: h(VBtn, {
+              size: 'small',
+              variant: 'tonal',
+              color: 'primary',
+              onClick: () => openAdd('payable'),
+            }, () => props.t('addSupplierPayable')),
+            tableRows: rows.value,
+            columnKeys: [...supplierLedgerColumnKeys, 'attachments'],
+            totalCount: total.value,
+            page: currentPage.value,
+            pageSize: config.value.pageSize,
+            onPageChange: (v: number) => { currentPage.value = v },
+            emptyHint: props.t('supplierLedgerEmptyHint'),
+          }),
         ]),
       ])),
       RecordDialogShell({
         show: dialog.value,
         maxWidth: ledgerDialogWidths[props.page] || 720,
-        zIndex: customerDetailDialog.value ? 2800 : 2400,
+        zIndex: (customerDetailDialog.value || supplierDetailDialog.value) ? 2800 : 2400,
         title: editing.value
           ? props.t('edit')
           : props.page === 'customer'
             ? props.t(customerEntryMode.value === 'payment' ? 'addCustomerPayment' : customerEntryMode.value === 'return' ? 'addCustomerReturn' : 'addCustomerSale')
-            : (props.page === 'cash' ? props.t('addRecord') : props.t('add')),
+            : props.page === 'supplier'
+              ? props.t(supplierEntryMode.value === 'payment' ? 'addSupplierPayment' : 'addSupplierPayable')
+              : (props.page === 'cash' ? props.t('addRecord') : props.t('add')),
         subtitle: editing.value
           ? props.t('formEditHint')
           : (props.page === 'customer' && customerEntryMode.value === 'payment'
-            ? props.t('customerPaymentFormHint')
+            ? (linkedReceivableRow.value ? props.t('customerPaymentLinkedHint') : props.t('customerPaymentFormHint'))
             : props.page === 'customer' && customerEntryMode.value === 'return'
-              ? props.t('customerReturnFormHint')
-              : props.t('formAddHint')),
+              ? (linkedReceivableRow.value
+                ? props.t('customerReturnBatchHint', {
+                  date: linkedReceivableRow.value.date || '—',
+                  qty: Math.abs(Number(linkedReceivableRow.value.quantity || 0)),
+                  unit: linkedReceivableRow.value.unit || '',
+                  remaining: formatCustomerReceivableDisplay(customerReceivableRemaining(linkedReceivableRow.value)),
+                })
+                : props.t('customerReturnFormHint'))
+              : props.page === 'supplier' && supplierEntryMode.value === 'payment'
+                ? (linkedPayableRow.value ? props.t('supplierPaymentLinkedHint') : props.t('supplierPaymentFormHint'))
+                : props.page === 'supplier'
+                  ? props.t('supplierPayableFormHint')
+                  : props.t('formAddHint')),
         cancelLabel: props.t('cancel'),
         saveLabel: props.t('save'),
         onClose: closeRecordDialog,
         onSave: save,
         default: () => [
-          ...getFormSections(props.page, config.value.fields, customerEntryMode.value).map(section => h('div', { class: 'record-dialog__section', key: section.titleKey }, [
+          linkedReceivableRow.value && (customerEntryMode.value === 'return' || customerEntryMode.value === 'payment')
+            ? h('div', { class: 'record-dialog__section' }, [
+              h('div', { class: 'record-dialog__section-title' }, props.t('customerLinkedReceivable')),
+              h('div', { class: 'muted' }, [
+                linkedReceivableRow.value.product_name,
+                linkedReceivableRow.value.spec ? ` / ${linkedReceivableRow.value.spec}` : '',
+                linkedReceivableRow.value.unit ? ` ${linkedReceivableRow.value.unit}` : '',
+                ` · ${formatLinkedReceivablePaymentHint(linkedReceivableRow.value)}`,
+              ]),
+            ])
+            : null,
+          linkedPayableRow.value && supplierEntryMode.value === 'payment'
+            ? h('div', { class: 'record-dialog__section' }, [
+              h('div', { class: 'record-dialog__section-title' }, props.t('supplierLinkedPayable')),
+              h('div', { class: 'muted' }, [
+                linkedPayableRow.value.product_name,
+                linkedPayableRow.value.spec ? ` / ${linkedPayableRow.value.spec}` : '',
+                linkedPayableRow.value.unit ? ` ${linkedPayableRow.value.unit}` : '',
+                ` · ${props.t('supplierPayable')} ${formatCustomerReceivableDisplay(linkedPayableRow.value.amount_in)}`,
+              ]),
+            ])
+            : null,
+          ...getFormSections(
+            props.page,
+            config.value.fields,
+            props.page === 'supplier' ? supplierEntryMode.value : customerEntryMode.value,
+          ).map(section => h('div', { class: 'record-dialog__section', key: section.titleKey }, [
             h('div', { class: 'record-dialog__section-title' }, props.t(section.titleKey)),
             h('div', { class: 'record-dialog__grid' }, section.fields.map(field => renderRecordFormField(field, {
               form,
               config: config.value,
               filterOptions: filterOptions.value,
+              profileOptions: profileOptions.value,
               inventoryOptions: inventoryOptions.value,
               productOptions: productOptions.value,
               lockedCustomerName: customerDetailName.value || filterValue.value,
+              lockedSupplierName: supplierDetailName.value || filterValue.value,
               customerEntryMode: customerEntryMode.value,
+              supplierEntryMode: supplierEntryMode.value,
+              customerLedgerFinancialLocked: customerLedgerFinancialLocked.value,
               t: props.t,
             }))),
           ])),
@@ -3168,7 +4058,7 @@ const LedgerPage = defineComponent({
       }),
       RecordDialogShell({
         show: customerProfileDialog.value,
-        maxWidth: 520,
+        maxWidth: 560,
         title: `${props.t('customerProfile')} · ${activeCustomerName() || ''}`,
         subtitle: props.t('customerProfileSub'),
         cancelLabel: props.t('cancel'),
@@ -3178,7 +4068,31 @@ const LedgerPage = defineComponent({
         default: () => [
           h('div', { class: 'record-dialog__section' }, [
             h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerProfileForm.contact_person,
+                  'onUpdate:modelValue': (v: string) => { customerProfileForm.contact_person = v },
+                  label: props.t('contactPerson'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerProfileForm.phone,
+                  'onUpdate:modelValue': (v: string) => { customerProfileForm.phone = v },
+                  label: props.t('customerPhone'),
+                }),
+              ]),
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: customerProfileForm.address,
+                  'onUpdate:modelValue': (v: string) => { customerProfileForm.address = v },
+                  label: props.t('customerAddress'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
                 h(VTextField, {
                   ...commonFormFieldProps(),
                   modelValue: customerProfileForm.opening_balance,
@@ -3193,6 +4107,64 @@ const LedgerPage = defineComponent({
                   ...commonFormFieldProps(),
                   modelValue: customerProfileForm.note,
                   'onUpdate:modelValue': (v: string) => { customerProfileForm.note = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
+        ],
+      }),
+      RecordDialogShell({
+        show: supplierProfileDialog.value,
+        maxWidth: 560,
+        title: `${props.t('supplierProfile')} · ${activeSupplierName() || ''}`,
+        subtitle: props.t('supplierProfileSub'),
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { supplierProfileDialog.value = false },
+        onSave: saveSupplierProfile,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierProfileForm.contact_person,
+                  'onUpdate:modelValue': (v: string) => { supplierProfileForm.contact_person = v },
+                  label: props.t('contactPerson'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierProfileForm.phone,
+                  'onUpdate:modelValue': (v: string) => { supplierProfileForm.phone = v },
+                  label: props.t('customerPhone'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierProfileForm.address,
+                  'onUpdate:modelValue': (v: string) => { supplierProfileForm.address = v },
+                  label: props.t('customerAddress'),
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierProfileForm.opening_balance,
+                  'onUpdate:modelValue': (v: any) => { supplierProfileForm.opening_balance = Number(v || 0) },
+                  label: props.t('supplierOpeningBalance'),
+                  type: 'number',
+                  step: 'any',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: supplierProfileForm.note,
+                  'onUpdate:modelValue': (v: string) => { supplierProfileForm.note = v },
                   label: props.t('note'),
                 }),
               ]),
@@ -3369,11 +4341,7 @@ function renderLedgerStats(pageKey: string, summary: any, tFn: any, hooks: { onO
       }),
     ]
   }
-  if (pageKey === 'stockIn' || pageKey === 'stockOut') return [
-    h(StatCard, { title: tFn('totalRecords'), value: summary.totalRecords || 0, color: 'primary' }),
-    h(StatCard, { title: tFn('totalQuantity'), value: summary.totalQuantity || 0, color: 'success' }),
-    h(StatCard, { title: tFn('totalAmount'), value: summary.totalAmount || 0, color: 'warning' }),
-  ]
+  if (pageKey === 'stockIn' || pageKey === 'stockOut') return []
   return [h(StatCard, { title: tFn('totalIn'), value: summary.totalIn || 0, color: 'success' }), h(StatCard, { title: tFn('totalOut'), value: summary.totalOut || 0, color: 'error' }), h(StatCard, { title: tFn('netAmount'), value: (summary.totalIn || 0) - (summary.totalOut || 0), color: 'primary' })]
 }
 
@@ -3411,6 +4379,40 @@ function renderCustomerWorkspaceSummary(
   ])
 }
 
+function renderSupplierWorkspaceSummary(
+  summary: any,
+  tFn: (key: string, params?: any) => string,
+  hooks: { onOpeningBalanceClick?: () => void } = {},
+) {
+  if (!summary?.supplier_name) return null
+  const balanceInfo = formatSupplierBalanceDisplay(summary.currentBalance || 0)
+  const items = [
+    { labelKey: 'supplierOpeningBalance', text: formatCell('amount_in', summary.openingBalance || 0), color: 'secondary', clickable: Boolean(hooks.onOpeningBalanceClick), onClick: hooks.onOpeningBalanceClick },
+    { labelKey: 'supplierPayable', text: formatCustomerReceivableDisplay(summary.totalIn || 0), color: 'error' },
+    { labelKey: 'supplierPaid', text: formatCustomerReceivedDisplay(summary.totalOut || 0), color: 'success' },
+    { labelKey: balanceInfo.labelKey, text: balanceInfo.text, color: balanceInfo.color },
+  ]
+  const summaryEl = h('div', { class: 'customer-workspace-summary' }, items.map(item => {
+    const inner = [
+      h('span', { class: 'customer-workspace-summary__label' }, tFn(item.labelKey)),
+      h('span', { class: `customer-workspace-summary__value text-${item.color}` }, item.text),
+    ]
+    if (item.clickable && item.onClick) {
+      return h('button', {
+        type: 'button',
+        class: 'customer-workspace-summary__item customer-workspace-summary__item--clickable',
+        key: item.labelKey,
+        onClick: item.onClick,
+      }, inner)
+    }
+    return h('div', { class: 'customer-workspace-summary__item', key: item.labelKey }, inner)
+  }))
+  return h('div', { class: 'customer-workspace-summary-wrap' }, [
+    summaryEl,
+    h('div', { class: 'customer-workspace-summary-hint muted tiny' }, tFn('supplierWorkspaceSummaryHint')),
+  ])
+}
+
 function columnLabel(col: string) {
   return ({
     amount_in: 'amountIn', amount_out: 'amountOut', customer_name: 'customerName', supplier_name: 'supplierName',
@@ -3432,12 +4434,31 @@ function renderCustomerBizKindLabel(row: Record<string, any>, t: (key: string) =
   return h('span', { class: 'customer-biz-tag customer-biz-tag--sale' }, t('customerBizSale'))
 }
 
+function renderSupplierBizKindLabel(row: Record<string, any>, t: (key: string) => string) {
+  if (isSupplierPaymentRecord(row) || isSupplierPaymentDescription(String(row.description || ''))) {
+    return h('span', { class: 'customer-biz-tag customer-biz-tag--payment' }, t('supplierBizPayment'))
+  }
+  return h('span', { class: 'customer-biz-tag customer-biz-tag--sale' }, t('supplierBizPayable'))
+}
+
+function formFieldLabel(key: string, config: any, t: (key: string) => string) {
+  if (key === 'contract_no') return t('contractNoOptional')
+  return t(ledgerColumnLabel(key, config.table))
+}
+
 function ledgerColumnLabel(col: string, table?: string) {
   if (table === 'customer') {
     if (col === 'biz_kind') return 'customerBizKind'
     if (col === 'amount_in') return 'customerReceivable'
+    if (col === 'remaining_receivable') return 'customerRemainingColumn'
     if (col === 'amount_out') return 'customerReceived'
     if (col === 'balance') return 'customerBalance'
+  }
+  if (table === 'supplier') {
+    if (col === 'biz_kind') return 'supplierBizKind'
+    if (col === 'amount_in') return 'supplierPayable'
+    if (col === 'amount_out') return 'supplierPaid'
+    if (col === 'balance') return 'supplierBalance'
   }
   return columnLabel(col)
 }
@@ -3533,6 +4554,34 @@ function formatCustomerBalanceDisplay(value: any) {
   return { labelKey: 'customerOverpaid', text: money(Math.abs(balance)), color: 'success' }
 }
 
+function formatSupplierBalanceDisplay(value: any) {
+  const balance = Number(value || 0)
+  if (Math.abs(balance) < 0.005) {
+    return { labelKey: 'supplierBalance', text: money(0), color: 'secondary' }
+  }
+  if (balance > 0) {
+    return { labelKey: 'supplierBalance', text: money(balance), color: 'error' }
+  }
+  return { labelKey: 'supplierOverpaidTag', text: money(Math.abs(balance)), color: 'success' }
+}
+
+function renderSupplierBalanceCell(balance: any, t: (key: string) => string) {
+  const amount = Number(balance || 0)
+  if (Math.abs(amount) < 0.005) {
+    return h('span', { class: 'customer-balance-cell customer-balance-cell--zero' }, money(0))
+  }
+  const isDebt = amount > 0
+  const info = formatSupplierBalanceDisplay(balance)
+  return h('span', { class: 'customer-balance-cell' }, [
+    h('span', {
+      class: isDebt ? 'customer-balance-tag customer-balance-tag--debt' : 'customer-balance-tag customer-balance-tag--credit',
+    }, t(isDebt ? 'supplierDebtTag' : 'supplierOverpaidTag')),
+    h('span', {
+      class: isDebt ? 'customer-balance-amount customer-balance-amount--debt' : 'customer-balance-amount customer-balance-amount--credit',
+    }, info.text),
+  ])
+}
+
 function renderCustomerBalanceCell(balance: any, t: (key: string) => string) {
   const amount = Number(balance || 0)
   if (Math.abs(amount) < 0.005) {
@@ -3572,8 +4621,19 @@ function normalizeFormField(field: FormFieldSpec) {
   return typeof field === 'string' ? { key: field, span: (field === 'note' || field === 'description') ? 'full' as const : 'half' as const } : { key: field.key, span: field.span || ((field.key === 'note' || field.key === 'description') ? 'full' as const : 'half' as const) }
 }
 
-function getFormSections(pageKey: string, fields: string[], customerEntryMode: 'sale' | 'return' | 'payment' = 'sale'): FormSectionSpec[] {
-  if (pageKey === 'customer') return formSections[customerEntryMode === 'payment' ? 'customerPayment' : 'customer'] || formSections.customer
+function getFormSections(
+  pageKey: string,
+  fields: string[],
+  entryMode: 'sale' | 'return' | 'payment' | 'payable' = 'sale',
+): FormSectionSpec[] {
+  if (pageKey === 'customer') {
+    if (entryMode === 'payment') return formSections.customerPayment
+    if (entryMode === 'return') return formSections.customerReturn || formSections.customer
+  }
+  if (pageKey === 'supplier') {
+    if (entryMode === 'payment') return formSections.supplierPayment
+    return formSections.supplierPayable
+  }
   if (formSections[pageKey]) return formSections[pageKey]
   return [{ titleKey: 'formSectionBasic', fields: fields.map(key => ({ key, span: (key === 'note' || key === 'description') ? 'full' : 'half' })) }]
 }
@@ -3584,10 +4644,14 @@ function renderRecordFormField(
     form: any
     config: any
     filterOptions: string[]
+    profileOptions?: string[]
     inventoryOptions?: any[]
     productOptions?: any[]
     lockedCustomerName?: string
+    lockedSupplierName?: string
     customerEntryMode?: 'sale' | 'return' | 'payment'
+    supplierEntryMode?: 'payable' | 'payment'
+    customerLedgerFinancialLocked?: boolean
     t: (key: string, params?: any) => string
   },
 ) {
@@ -3596,22 +4660,51 @@ function renderRecordFormField(
     form,
     config,
     filterOptions,
+    profileOptions = [],
     inventoryOptions = [],
     productOptions = [],
     lockedCustomerName = '',
+    lockedSupplierName = '',
     customerEntryMode = 'sale',
+    supplierEntryMode = 'payable',
+    customerLedgerFinancialLocked = false,
     t,
   } = ctx
   const wrapClass = `record-dialog__field record-dialog__field--${span === 'full' ? 'full' : 'half'}`
   const base = commonFormFieldProps()
+  const lockedPartyName = lockedCustomerName || lockedSupplierName
 
-  if (config.filterKey && key === config.filterKey && lockedCustomerName) {
+  if (config.filterKey && key === config.filterKey && lockedPartyName) {
     return h('div', { class: wrapClass, key }, [
       h(VTextField, {
         ...base,
-        modelValue: lockedCustomerName,
-        label: t(ledgerColumnLabel(key, config.table)),
+        modelValue: lockedPartyName,
+        label: formFieldLabel(key, config, t),
         readonly: true,
+      }),
+    ])
+  }
+
+  if (config.filterKey && key === config.filterKey && (config.table === 'stockIn' || config.table === 'stockOut')) {
+    const current = String(form[key] || '').trim()
+    const partyItems = current && !profileOptions.includes(current)
+      ? [current, ...profileOptions]
+      : profileOptions
+    return h('div', { class: wrapClass, key }, [
+      h(VSelect, {
+        ...base,
+        modelValue: form[key] || null,
+        'onUpdate:modelValue': (v: string | null) => { form[key] = v || '' },
+        items: partyItems,
+        label: formFieldLabel(key, config, t),
+        placeholder: t(key === 'supplier_name' ? 'selectSupplier' : 'selectCustomerToAdd'),
+        hint: key === 'supplier_name'
+          ? t('supplierOptionalHint')
+          : (partyItems.length ? undefined : t('partySelectOnlyHint')),
+        persistentHint: key === 'supplier_name' || !partyItems.length,
+        clearable: true,
+        hideNoData: false,
+        noDataText: t('partySelectOnlyHint'),
       }),
     ])
   }
@@ -3623,7 +4716,7 @@ function renderRecordFormField(
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
         items: filterOptions,
-        label: t(ledgerColumnLabel(key, config.table)),
+        label: formFieldLabel(key, config, t),
         placeholder: t(key === 'supplier_name' ? 'typeSupplierName' : 'typeCustomerName'),
         clearable: true,
         hideNoData: true,
@@ -3631,7 +4724,7 @@ function renderRecordFormField(
     ])
   }
 
-  if ((config.table === 'stockIn' || config.table === 'customer') && key === 'product_name') {
+  if ((config.table === 'stockIn' || config.table === 'customer' || config.table === 'supplier') && key === 'product_name') {
     const selected = productOptions.find(item =>
       item.product_name === form.product_name &&
       (item.spec || '') === (form.spec || '') &&
@@ -3658,7 +4751,7 @@ function renderRecordFormField(
         items: productOptions,
         itemTitle: 'product_name',
         customFilter: productComboboxFilter(productOptionTitle),
-        label: t(ledgerColumnLabel(key, config.table)),
+        label: formFieldLabel(key, config, t),
         placeholder: t('typeProductName'),
         returnObject: true,
         clearable: true,
@@ -3689,7 +4782,7 @@ function renderRecordFormField(
         items: inventoryOptions,
         itemTitle: 'product_name',
         customFilter: productComboboxFilter(inventoryOptionTitle),
-        label: t(ledgerColumnLabel(key, config.table)),
+        label: formFieldLabel(key, config, t),
         placeholder: t('selectInventoryProduct'),
         returnObject: true,
         clearable: true,
@@ -3704,7 +4797,7 @@ function renderRecordFormField(
         ...base,
         modelValue: form[key],
         'onUpdate:modelValue': (v: any) => { form[key] = v },
-        label: t(ledgerColumnLabel(key, config.table)),
+        label: formFieldLabel(key, config, t),
         rows: key === 'note' ? 3 : 2,
         autoGrow: true,
       }),
@@ -3719,13 +4812,13 @@ function renderRecordFormField(
         'onUpdate:modelValue': (v: any) => {
           form[key] = normalizeDateValue(v)
         },
-        label: t(ledgerColumnLabel(key, config.table)),
+        label: formFieldLabel(key, config, t),
         type: 'date',
       }),
     ])
   }
 
-  const isAutoCalcAmount = (key === 'amount_in' && config.table === 'customer')
+  const isAutoCalcAmount = (key === 'amount_in' && (config.table === 'customer' || config.table === 'supplier'))
     || (key === 'amount' && (config.table === 'stockIn' || config.table === 'stockOut'))
   if (isAutoCalcAmount) {
     let calcValue = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
@@ -3737,7 +4830,7 @@ function renderRecordFormField(
       h(VTextField, {
         ...base,
         modelValue: calcValue ? displayValue : '',
-        label: t(ledgerColumnLabel(key, config.table)),
+        label: formFieldLabel(key, config, t),
         readonly: true,
         hint: t('amountAutoCalc'),
         persistentHint: true,
@@ -3753,9 +4846,10 @@ function renderRecordFormField(
         form[key] = numericField(key) ? Number(v || 0) : v
         autoFillAmountFields(form, key)
       },
-      label: t(ledgerColumnLabel(key, config.table)),
+      label: formFieldLabel(key, config, t),
       type: numericField(key) ? 'number' : 'text',
-      readonly: key === 'month_label',
+      readonly: key === 'month_label'
+        || (config.table === 'customer' && customerLedgerFinancialLocked && ['quantity', 'unit_price', 'amount_out'].includes(key)),
       ...(numericField(key) ? { step: 'any' } : {}),
     }),
   ])
@@ -3826,7 +4920,7 @@ function formatBackupTime(name: string, time?: string) {
 const ImportPage = defineComponent({
   name: 'ImportPage',
   props: { t: { type: Function, required: true } },
-  emits: ['notify', 'cloud-config-changed'],
+  emits: ['notify'],
   setup(props, { emit }) {
     const loading = ref(false)
     const stockLoading = ref(false)
@@ -3864,8 +4958,15 @@ const ImportPage = defineComponent({
     let offCloudProgress: (() => void) | null = null
     const cloudProgressPercent = computed(() => {
       if (cloudProgress.phase === 'done') return 100
+      if (cloudProgress.phase === 'applying') return 0
       if (!cloudProgress.total) return 0
       return Math.min(100, Math.round((cloudProgress.current / cloudProgress.total) * 100))
+    })
+    const cloudProgressIndeterminate = computed(() => {
+      if (cloudProgress.phase === 'preparing' || cloudProgress.phase === 'applying') return true
+      return cloudProgress.phase === 'transferring'
+        && cloudProgress.total === 1
+        && cloudProgress.current === 0
     })
     const beginCloudProgress = (mode: 'upload' | 'download') => {
       if (cloudProgressTimer) {
@@ -3965,7 +5066,6 @@ const ImportPage = defineComponent({
         cloudConfig.secretKey = ''
         cloudStatus.value = await cloudAPI.status()
         emit('notify', props.t('cloudConfigSaved'))
-        emit('cloud-config-changed')
       } finally {
         cloudSaving.value = false
       }
@@ -4000,16 +5100,17 @@ const ImportPage = defineComponent({
       }
     }
     const cloudSyncUpload = async () => {
-      const ok = await askConfirm({
-        message: props.t('confirmCloudUpload'),
+      const password = await askPasswordConfirm({
+        title: props.t('confirmCloudUploadTitle'),
+        message: props.t('confirmCloudUploadMessage'),
         confirmColor: 'warning',
         confirmLabel: props.t('cloudSyncUpload'),
       })
-      if (!ok) return
+      if (!password) return
       beginCloudProgress('upload')
       cloudUploading.value = true
       try {
-        const result = await cloudAPI.syncUpload()
+        const result = await cloudAPI.syncUpload(password)
         notifyCloudSyncResult(result, 'upload')
         cloudStatus.value = await cloudAPI.status()
       } finally {
@@ -4383,7 +5484,8 @@ const ImportPage = defineComponent({
         h(VCardText, { class: 'record-dialog__body' }, [
           cloudProgress.total > 0 && cloudProgress.phase !== 'preparing'
             ? h(VProgressLinear, {
-              modelValue: cloudProgressPercent.value,
+              modelValue: cloudProgressIndeterminate.value ? undefined : cloudProgressPercent.value,
+              indeterminate: cloudProgressIndeterminate.value,
               color: 'primary',
               height: 8,
               rounded: true,
@@ -4444,6 +5546,27 @@ const TrashPage = defineComponent({
       emit('notify', props.t('restored'))
       load()
     }
+    const clearing = ref(false)
+    const clearTrash = async () => {
+      const password = await askPasswordConfirm({
+        title: props.t('confirmClearTrashTitle'),
+        message: props.t('confirmClearTrashMessage'),
+        confirmLabel: props.t('clearTrash'),
+      })
+      if (!password) return
+      clearing.value = true
+      try {
+        const result = await systemAPI.clearTrash(password)
+        if (!result?.ok) {
+          emit('notify', result?.error || '清空失败', 'error')
+          return
+        }
+        emit('notify', props.t('clearTrashDone', { count: result.count || 0 }))
+        load()
+      } finally {
+        clearing.value = false
+      }
+    }
     watch([keyword, startDate, endDate, deletedStartDate, deletedEndDate], load)
     onMounted(load)
     const tabs = [{ key: 'cash_ledger', label: 'cash' }, { key: 'bank_ledger', label: 'bank' }, { key: 'acceptance_bills', label: 'bills' }, { key: 'customer_ledger', label: 'customer' }, { key: 'stock_in_ledger', label: 'stockIn' }, { key: 'stock_out_ledger', label: 'stockOut' }]
@@ -4456,6 +5579,7 @@ const TrashPage = defineComponent({
           h(VTextField, { modelValue: deletedEndDate.value, 'onUpdate:modelValue': (v: string) => { deletedEndDate.value = v || '' }, label: props.t('filterDeletedEndDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VTextField, { modelValue: keyword.value, 'onUpdate:modelValue': (v: string) => { keyword.value = v }, label: props.t('search'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
+          h(VBtn, { variant: 'tonal', size: 'small', color: 'error', loading: clearing.value, onClick: clearTrash }, () => props.t('clearTrash')),
         ]),
       }),
       h(VTabs, { modelValue: tab.value, 'onUpdate:modelValue': (v: string) => tab.value = v }, () => tabs.map(x => h(VTab, { value: x.key }, () => `${props.t(x.label)} (${(data.value[x.key] || []).length})`))),
@@ -4478,7 +5602,8 @@ const TrashPage = defineComponent({
 
 const LogsPage = defineComponent({
   props: { t: { type: Function, required: true } },
-  setup(props) {
+  emits: ['notify'],
+  setup(props, { emit }) {
     const rows = ref<any[]>([])
     const total = ref(0)
     const currentPage = ref(1)
@@ -4531,6 +5656,28 @@ const LogsPage = defineComponent({
       else load()
     })
     watch(currentPage, load, { immediate: true })
+    const clearing = ref(false)
+    const clearLogs = async () => {
+      const password = await askPasswordConfirm({
+        title: props.t('confirmClearLogsTitle'),
+        message: props.t('confirmClearLogsMessage'),
+        confirmLabel: props.t('clearLogs'),
+      })
+      if (!password) return
+      clearing.value = true
+      try {
+        const result = await systemAPI.clearLogs(password)
+        if (!result?.ok) {
+          emit('notify', result?.error || '清空失败', 'error')
+          return
+        }
+        emit('notify', props.t('clearLogsDone', { count: result.count || 0 }))
+        currentPage.value = 1
+        await load()
+      } finally {
+        clearing.value = false
+      }
+    }
     return () => h('div', { class: 'page-wrap ledger-page' }, [
       h(PageHeader, { title: props.t('logsTitle'), subtitle: props.t('logsPageSub') }, {
         actions: () => h('div', { class: 'header-toolbar' }, [
@@ -4540,6 +5687,7 @@ const LogsPage = defineComponent({
           h(VTextField, { modelValue: endDate.value, 'onUpdate:modelValue': (v: string) => { endDate.value = v || '' }, label: props.t('filterEndDate'), type: 'date', density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VTextField, { modelValue: keyword.value, 'onUpdate:modelValue': (v: string) => { keyword.value = v }, label: props.t('search'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
+          h(VBtn, { variant: 'tonal', size: 'small', color: 'error', loading: clearing.value, onClick: clearLogs }, () => props.t('clearLogs')),
         ]),
       }),
       h(VCard, { class: 'data-card table-card utility-table-card' }, () => [

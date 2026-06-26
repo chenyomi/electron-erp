@@ -3,6 +3,7 @@ import { registerCashHandlers } from './cash'
 import { registerBankHandlers } from './bank'
 import { registerBillsHandlers } from './bills'
 import { registerCustomerHandlers } from './customer'
+import { registerSupplierHandlers } from './supplier'
 import { registerStockInHandlers } from './stock-in'
 import { registerStockOutHandlers } from './stock-out'
 import { registerInventoryHandlers } from './inventory'
@@ -22,6 +23,7 @@ export function registerIpcHandlers(): void {
   registerBankHandlers()
   registerBillsHandlers()
   registerCustomerHandlers()
+  registerSupplierHandlers()
   registerStockInHandlers()
   registerStockOutHandlers()
   registerInventoryHandlers()

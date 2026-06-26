@@ -1,9 +1,15 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
-import { listAllCustomerNames } from './customer-profile'
+import { listCustomerProfileNames } from './customer-profile'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
-import { attachmentPreviewSql, withAttachmentPreviews } from './attachments'
-import { ensureProductCatalog, generateDocNo, recalcInventoryForRows } from './stock-business'
+import { attachmentPreviewSql, cleanupOrphanAttachments, withAttachmentPreviews } from './attachments'
+import { ensureProductCatalog, generateDocNo, recalcInventoryForRows, sumCustomerReturnQty, syncProductCatalogWithLedger } from './stock-business'
+import {
+  assertStockOutCustomerExists,
+  createReceivableFromStockOut,
+  deleteReceivableForStockOut,
+  syncReceivableFromStockOut,
+} from './stock-customer-link'
 
 function productKey(row: any) {
   return {
@@ -50,13 +56,15 @@ function availableStock(row: any, excludeId?: number) {
       AND COALESCE(unit, '') = ?
       AND (? IS NULL OR id != ?)
   `).get(key.productName, key.spec, key.unit, excludeId ?? null, excludeId ?? null) as { qty: number }
-  return Number(stockIn?.qty || 0) - Number(stockOut?.qty || 0)
+  const returnQty = sumCustomerReturnQty(db, key.productName, key.spec, key.unit)
+  return Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - returnQty)
 }
 
 function validateStockOut(row: any, excludeId?: number) {
+  const db = getDb()
   const key = productKey(row)
   const quantity = Number(row?.quantity || 0)
-  if (!String(row?.customer_name || '').trim()) throw new Error('请填写客户')
+  assertStockOutCustomerExists(db, row?.customer_name)
   if (!String(row?.date || '').trim()) throw new Error('请填写日期')
   if (!key.productName) throw new Error('请选择库存产品')
   if (quantity <= 0) throw new Error('出库数量必须大于 0')
@@ -65,9 +73,18 @@ function validateStockOut(row: any, excludeId?: number) {
   if (quantity > available) throw new Error(`库存不足，当前可出库 ${available}`)
 }
 
+function deleteStockOutById(id: number) {
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any> | undefined
+  if (!row || row.deleted_at) return
+  deleteReceivableForStockOut(db, row)
+  softDelete('stock_out_ledger', id)
+  recalcInventoryForRows(row)
+}
+
 export function registerStockOutHandlers(): void {
   ipcMain.handle('stockOut:names', () => {
-    return listAllCustomerNames(getDb()).map(customer_name => ({ customer_name }))
+    return listCustomerProfileNames(getDb()).map(customer_name => ({ customer_name }))
   })
 
   ipcMain.handle('stockOut:list', (_e, params = {}) => {
@@ -128,19 +145,26 @@ export function registerStockOutHandlers(): void {
     if (!payload.doc_no) payload.doc_no = generateDocNo('CK', 'stock_out_ledger', payload.date)
     validateStockOut(payload)
     ensureProductCatalog(payload)
-    const result = db.prepare(`
-      INSERT INTO stock_out_ledger (
-        doc_no, customer_name, category, date, contract_no, product_name, spec, unit,
-        quantity, unit_price, amount, note
-      ) VALUES (
-        @doc_no, @customer_name, @category, @date, @contract_no, @product_name, @spec, @unit,
-        @quantity, @unit_price, @amount, @note
-      )
-    `).run(payload)
-    const newRow = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(result.lastInsertRowid)
-    logOperation('stock_out_ledger', result.lastInsertRowid as number, 'INSERT', null, newRow as object)
+
+    const newRow = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO stock_out_ledger (
+          doc_no, customer_name, category, date, contract_no, product_name, spec, unit,
+          quantity, unit_price, amount, note
+        ) VALUES (
+          @doc_no, @customer_name, @category, @date, @contract_no, @product_name, @spec, @unit,
+          @quantity, @unit_price, @amount, @note
+        )
+      `).run(payload)
+      const stockOutId = Number(result.lastInsertRowid)
+      const inserted = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(stockOutId) as Record<string, any>
+      createReceivableFromStockOut(db, inserted)
+      return inserted
+    })()
+
+    logOperation('stock_out_ledger', Number(newRow.id), 'INSERT', null, newRow)
     recalcInventoryForRows(newRow)
-    return newRow
+    return db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(newRow.id)
   })
 
   ipcMain.handle('stockOut:update', (_e, { id, ...row }) => {
@@ -158,18 +182,28 @@ export function registerStockOutHandlers(): void {
         note=@note, updated_at=datetime('now','localtime')
       WHERE id=@id
     `).run({ ...payload, id })
-    const newRow = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id)
+    const newRow = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any>
     logOperation('stock_out_ledger', id, 'UPDATE', oldRow as object, newRow as object)
     recalcInventoryForRows(oldRow, newRow)
+    syncReceivableFromStockOut(db, newRow)
     return newRow
   })
 
   ipcMain.handle('stockOut:delete', (_e, id) => {
-    const row = getDb().prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id)
-    softDelete('stock_out_ledger', id)
-    recalcInventoryForRows(row)
+    deleteStockOutById(id)
+    cleanupOrphanAttachments()
+    syncProductCatalogWithLedger()
     return { ok: true }
   })
+
+  ipcMain.handle('stockOut:deleteMany', (_e, ids: number[] = []) => {
+    const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
+    for (const id of uniqueIds) deleteStockOutById(id)
+    cleanupOrphanAttachments()
+    syncProductCatalogWithLedger()
+    return { ok: true, count: uniqueIds.length }
+  })
+
   ipcMain.handle('stockOut:trash', () => {
     return getDb().prepare(`SELECT * FROM stock_out_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
   })
@@ -178,6 +212,8 @@ export function registerStockOutHandlers(): void {
     validateStockOut(row, id)
     restore('stock_out_ledger', id)
     recalcInventoryForRows(row)
+    const restored = getDb().prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any>
+    syncReceivableFromStockOut(getDb(), restored)
     return { ok: true }
   })
 }

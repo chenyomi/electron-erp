@@ -2,12 +2,16 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
-import { buildCustomerRowRepair, isLikelyAmountNotDate } from '../common/customer-anomaly'
-import { parseCustomerDescription } from '../common/customer-ledger'
 import { parseLedgerDate } from '../common/ledger-date'
+import { isCustomerPaymentDescription, parseCustomerDescription } from '../common/customer-ledger'
 import { ensureCustomerProfilesTable, recalculateCustomerBalances } from './ipc/customer-profile'
+import { ensureSupplierProfilesTable, ensureSupplierLedgerTable, syncSupplierProfilesFromLedger, cleanupAutoReturnSupplierProfiles, recalculateSupplierBalances } from './ipc/supplier-profile'
+import { cleanupCustomerReturnStockInRows } from './ipc/stock-customer-link'
 import { recalculateAllLedgerBalances } from './ipc/ledger-balance'
-import { repairCustomerAnomalies } from './ipc/customer-anomaly'
+import { cleanupOrphanAttachments } from './ipc/attachments'
+import { recompressLegacyStoredImages } from './image-compress'
+import { rebuildInventoryBusinessTables } from './ipc/stock-business'
+import { backfillReceivablesFromStockOut } from './ipc/stock-customer-link'
 
 let db: Database.Database | undefined
 
@@ -40,7 +44,6 @@ export function initDatabase(): void {
 
   createTables()
   migrateSchema()
-  rebuildInventoryBusinessTables()
 }
 
 function columnExists(tableName: string, columnName: string) {
@@ -52,20 +55,72 @@ function addColumnIfMissing(tableName: string, columnSql: string) {
   if (!columnExists(tableName, columnName)) db!.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnSql}`)
 }
 
+function dropLegacyImportUniqueIndexes(): void {
+  db!.exec(`
+    DROP INDEX IF EXISTS uq_stock_in_import;
+    DROP INDEX IF EXISTS uq_stock_out_import;
+    DROP INDEX IF EXISTS uq_customer_import;
+  `)
+}
+
 function migrateSchema(): void {
   addColumnIfMissing('operation_logs', "description TEXT DEFAULT ''")
   addColumnIfMissing('operation_logs', "client_ip TEXT DEFAULT ''")
   addColumnIfMissing('operation_logs', "device_info TEXT DEFAULT ''")
   addColumnIfMissing('stock_in_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('stock_out_ledger', "doc_no TEXT DEFAULT ''")
-  migrateCustomerLedgerFields()
+  addColumnIfMissing('stock_out_ledger', 'ledger_id INTEGER')
+  addColumnIfMissing('customer_ledger', 'stock_out_id INTEGER')
+  addColumnIfMissing('customer_ledger', 'ref_ledger_id INTEGER')
+  addColumnIfMissing('customer_ledger', 'return_stock_in_id INTEGER')
+  addColumnIfMissing('customer_ledger', "contract_no TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', "product_name TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', "spec TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', "unit TEXT DEFAULT ''")
+  addColumnIfMissing('customer_ledger', 'quantity REAL DEFAULT 0')
+  addColumnIfMissing('customer_ledger', 'unit_price REAL DEFAULT 0')
+  addColumnIfMissing('customer_profiles', "contact_person TEXT DEFAULT ''")
+  addColumnIfMissing('customer_profiles', "phone TEXT DEFAULT ''")
+  addColumnIfMissing('customer_profiles', "address TEXT DEFAULT ''")
+  addColumnIfMissing('supplier_profiles', "opening_balance REAL DEFAULT 0")
+  addColumnIfMissing('stock_in_ledger', 'ledger_id INTEGER')
+  addColumnIfMissing('supplier_ledger', 'ref_ledger_id INTEGER')
   migrateLedgerDates()
-  migrateCustomerPaymentMisalignment()
-  repairCustomerAnomalies(db!)
+  backfillCustomerLedgerStructuredFields()
+  dropLegacyImportUniqueIndexes()
   recalculateAllCustomerBalances()
+  backfillReceivablesFromStockOut(db!)
   recalculateAllLedgerBalances(db!)
   ensureCustomerProfilesTable(db!)
+  ensureSupplierProfilesTable(db!)
+  ensureSupplierLedgerTable(db!)
+  cleanupAutoReturnSupplierProfiles(db!)
+  cleanupCustomerReturnStockInRows(db!)
+  syncSupplierProfilesFromLedger(db!)
+  recalculateAllSupplierBalances()
+  purgeDeprecatedLedgerData()
+  cleanupOrphanAttachments(db!)
+  rebuildInventoryBusinessTables()
+  void recompressLegacyStoredImages(db!).then(result => {
+    if (result.converted > 0) {
+      console.log(`Recompressed ${result.converted} image(s), saved ${result.savedBytes} bytes`)
+    }
+  }).catch(error => {
+    console.error('Legacy image recompress failed:', error)
+  })
 }
+
+function recalculateAllSupplierBalances(): void {
+  const names = db!.prepare(`
+    SELECT supplier_name FROM supplier_profiles
+    UNION
+    SELECT DISTINCT supplier_name FROM supplier_ledger WHERE deleted_at IS NULL
+  `).all() as Array<{ supplier_name: string }>
+  for (const { supplier_name } of names) {
+    if (supplier_name) recalculateSupplierBalances(db!, supplier_name)
+  }
+}
+
 
 function recalculateAllCustomerBalances(): void {
   const names = db!.prepare(`
@@ -78,61 +133,41 @@ function recalculateAllCustomerBalances(): void {
   }
 }
 
-/** 付款行把金额填进日期/备注列（如 40455），启动时自动纠正收款金额并重算余额 */
-function migrateCustomerPaymentMisalignment(): void {
+
+function backfillCustomerLedgerStructuredFields(): void {
   const rows = db!.prepare(`
-    SELECT *
+    SELECT id, description, contract_no, product_name, spec, unit, quantity, unit_price
     FROM customer_ledger
     WHERE deleted_at IS NULL
-      AND (TRIM(COALESCE(product_name, '')) = '付款' OR TRIM(COALESCE(description, '')) = '付款')
-      AND (
-        date GLOB '[0-9]*'
-        OR note GLOB '[0-9]*'
-      )
+      AND TRIM(COALESCE(product_name, '')) = ''
+      AND TRIM(COALESCE(description, '')) != ''
   `).all() as Array<Record<string, any>>
+  if (!rows.length) return
 
   const update = db!.prepare(`
     UPDATE customer_ledger SET
-      date = @date,
-      description = @description,
       contract_no = @contract_no,
       product_name = @product_name,
       spec = @spec,
       unit = @unit,
       quantity = @quantity,
       unit_price = @unit_price,
-      amount_in = @amount_in,
-      amount_out = @amount_out,
-      note = @note,
       updated_at = datetime('now','localtime')
     WHERE id = @id
   `)
-
-  const customers = new Set<string>()
   for (const row of rows) {
-    if (!isLikelyAmountNotDate(row.date) && !isLikelyAmountNotDate(row.note)) continue
-    const patch = buildCustomerRowRepair(row)
-    if (!patch) continue
-    const next = { ...row, ...patch }
+    if (isCustomerPaymentDescription(String(row.description || ''))) continue
+    const parsed = parseCustomerDescription(String(row.description || ''))
+    if (!parsed.product_name && !Number(parsed.quantity) && !Number(parsed.unit_price)) continue
     update.run({
       id: row.id,
-      date: next.date ?? row.date ?? '',
-      description: next.description ?? row.description,
-      contract_no: next.contract_no ?? row.contract_no ?? '',
-      product_name: next.product_name ?? row.product_name ?? '',
-      spec: next.spec ?? row.spec ?? '',
-      unit: next.unit ?? row.unit ?? '',
-      quantity: next.quantity ?? row.quantity ?? 0,
-      unit_price: next.unit_price ?? row.unit_price ?? 0,
-      amount_in: next.amount_in ?? row.amount_in ?? 0,
-      amount_out: next.amount_out ?? row.amount_out ?? 0,
-      note: next.note ?? row.note ?? '',
+      contract_no: String(row.contract_no || parsed.contract_no || '').trim(),
+      product_name: String(parsed.product_name || '').trim(),
+      spec: String(parsed.spec || '').trim(),
+      unit: String(parsed.unit || '').trim(),
+      quantity: Number(row.quantity || parsed.quantity || 0),
+      unit_price: Number(row.unit_price || parsed.unit_price || 0),
     })
-    customers.add(row.customer_name)
-  }
-
-  for (const name of customers) {
-    recalculateCustomerBalances(db!, name)
   }
 }
 
@@ -165,76 +200,15 @@ function migrateLedgerDates(): void {
   }
 }
 
-function migrateCustomerLedgerFields(): void {
-  addColumnIfMissing('customer_ledger', "contract_no TEXT DEFAULT ''")
-  addColumnIfMissing('customer_ledger', "product_name TEXT DEFAULT ''")
-  addColumnIfMissing('customer_ledger', "spec TEXT DEFAULT ''")
-  addColumnIfMissing('customer_ledger', "unit TEXT DEFAULT ''")
-  addColumnIfMissing('customer_ledger', 'quantity REAL DEFAULT 0')
-  addColumnIfMissing('customer_ledger', 'unit_price REAL DEFAULT 0')
 
-  const rows = db!.prepare(`
-    SELECT id, description
-    FROM customer_ledger
-    WHERE COALESCE(product_name, '') = ''
-      AND COALESCE(contract_no, '') = ''
-      AND COALESCE(quantity, 0) = 0
-      AND COALESCE(unit_price, 0) = 0
-      AND TRIM(COALESCE(description, '')) NOT IN ('', '付款')
-  `).all() as Array<{ id: number; description: string }>
-
-  if (!rows.length) return
-
-  const update = db!.prepare(`
-    UPDATE customer_ledger
-    SET contract_no = ?, product_name = ?, spec = ?, unit = ?, quantity = ?, unit_price = ?
-    WHERE id = ?
-  `)
-
-  for (const row of rows) {
-    const parsed = parseCustomerDescription(row.description)
-    if (!parsed.product_name && !parsed.contract_no && !parsed.quantity) continue
-    update.run(parsed.contract_no, parsed.product_name, parsed.spec, parsed.unit, parsed.quantity, parsed.unit_price, row.id)
+/** 废弃表 other_ledger 已无业务读写，启动时清空残留数据 */
+function purgeDeprecatedLedgerData(): void {
+  const result = db!.prepare(`DELETE FROM other_ledger`).run()
+  if (result.changes > 0) {
+    console.log(`Purged ${result.changes} deprecated other_ledger row(s)`)
   }
 }
 
-function rebuildInventoryBusinessTables(): void {
-  db!.exec(`
-    INSERT OR IGNORE INTO product_catalog (product_name, spec, unit, category, default_price)
-    SELECT
-      product_name,
-      COALESCE(spec, ''),
-      COALESCE(unit, ''),
-      COALESCE(category, ''),
-      COALESCE(MAX(NULLIF(unit_price, 0)), 0)
-    FROM (
-      SELECT product_name, spec, unit, category, unit_price FROM stock_in_ledger WHERE deleted_at IS NULL
-      UNION ALL
-      SELECT product_name, spec, unit, category, unit_price FROM stock_out_ledger WHERE deleted_at IS NULL
-    )
-    WHERE product_name IS NOT NULL AND product_name != ''
-    GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '');
-
-    DELETE FROM inventory_balances;
-
-    INSERT INTO inventory_balances (product_name, spec, unit, stock_qty, available_qty)
-    SELECT product_name, spec, unit, stock_qty, stock_qty
-    FROM (
-      SELECT
-        product_name,
-        COALESCE(spec, '') AS spec,
-        COALESCE(unit, '') AS unit,
-        SUM(in_qty) - SUM(out_qty) AS stock_qty
-      FROM (
-        SELECT product_name, spec, unit, quantity AS in_qty, 0 AS out_qty FROM stock_in_ledger WHERE deleted_at IS NULL
-        UNION ALL
-        SELECT product_name, spec, unit, 0 AS in_qty, quantity AS out_qty FROM stock_out_ledger WHERE deleted_at IS NULL
-      )
-      WHERE product_name IS NOT NULL AND product_name != ''
-      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
-    );
-  `)
-}
 
 function createTables(): void {
   db.exec(`
@@ -281,7 +255,7 @@ function createTables(): void {
       updated_at  TEXT    DEFAULT (datetime('now','localtime'))
     );
 
-    -- 其他账（T列往后的黄勇收入等）
+    -- 其他账（已废弃，仅保留表结构兼容旧库；启动时会清空数据）
     CREATE TABLE IF NOT EXISTS other_ledger (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       date        TEXT    NOT NULL,
@@ -293,11 +267,11 @@ function createTables(): void {
       created_at  TEXT    DEFAULT (datetime('now','localtime'))
     );
 
-    -- 材料/产品入库
+    -- 产品入库
     CREATE TABLE IF NOT EXISTS stock_in_ledger (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       doc_no          TEXT    DEFAULT '',
-      supplier_name   TEXT    NOT NULL,
+      supplier_name   TEXT    NOT NULL DEFAULT '', -- 关联 supplier_profiles.supplier_name
       category        TEXT    DEFAULT '',
       date            TEXT    NOT NULL,
       contract_no     TEXT    DEFAULT '',
@@ -311,6 +285,7 @@ function createTables(): void {
       tax_amount      REAL    DEFAULT 0,
       invoice_amount  REAL    DEFAULT 0,
       note            TEXT    DEFAULT '',
+      ledger_id       INTEGER, -- 关联 supplier_ledger 应付 id
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
@@ -331,12 +306,13 @@ function createTables(): void {
       unit_price      REAL    DEFAULT 0,
       amount          REAL    DEFAULT 0,
       note            TEXT    DEFAULT '',
+      ledger_id       INTEGER, -- 关联 customer_ledger 应收 id
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
     );
 
-    -- 产品/物料档案
+    -- 产品档案缓存（入库选品、默认单价；非独立产品档案页）
     CREATE TABLE IF NOT EXISTS product_catalog (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       product_name    TEXT    NOT NULL DEFAULT '',
@@ -344,53 +320,92 @@ function createTables(): void {
       unit            TEXT    DEFAULT '',
       category        TEXT    DEFAULT '',
       default_price   REAL    DEFAULT 0,
-      status          TEXT    NOT NULL DEFAULT 'active',
-      note            TEXT    DEFAULT '',
+      status          TEXT    NOT NULL DEFAULT 'active', -- 预留：启用/停用
+      note            TEXT    DEFAULT '',               -- 预留：产品备注
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
     );
 
-    -- 库存余额
+    -- 库存余额（由出入库汇总维护）
     CREATE TABLE IF NOT EXISTS inventory_balances (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       product_name    TEXT    NOT NULL DEFAULT '',
       spec            TEXT    DEFAULT '',
       unit            TEXT    DEFAULT '',
       stock_qty       REAL    DEFAULT 0,
-      available_qty   REAL    DEFAULT 0,
-      locked_qty      REAL    DEFAULT 0,
+      available_qty   REAL    DEFAULT 0, -- 预留：stock_qty - locked_qty
+      locked_qty      REAL    DEFAULT 0, -- 预留：订单占用库存
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
     );
 
-    -- 客户往来账（每个工作表一套）
+    -- 客户往来账
     CREATE TABLE IF NOT EXISTS customer_ledger (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      customer_name TEXT    NOT NULL,
-      date          TEXT    NOT NULL,
-      description   TEXT    NOT NULL DEFAULT '',
-      contract_no   TEXT    DEFAULT '',
-      product_name  TEXT    DEFAULT '',
-      spec          TEXT    DEFAULT '',
-      unit          TEXT    DEFAULT '',
-      quantity      REAL    DEFAULT 0,
-      unit_price    REAL    DEFAULT 0,
-      amount_in     REAL    DEFAULT 0,
-      amount_out    REAL    DEFAULT 0,
-      balance       REAL    DEFAULT 0,
-      note          TEXT    DEFAULT '',
-      month_label   TEXT    DEFAULT '',
-      deleted_at    TEXT    DEFAULT NULL,
-      created_at    TEXT    DEFAULT (datetime('now','localtime')),
-      updated_at    TEXT    DEFAULT (datetime('now','localtime'))
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_name       TEXT    NOT NULL,
+      date                TEXT    NOT NULL,
+      description         TEXT    NOT NULL DEFAULT '',
+      contract_no         TEXT    DEFAULT '',
+      product_name        TEXT    DEFAULT '',
+      spec                TEXT    DEFAULT '',
+      unit                TEXT    DEFAULT '',
+      quantity            REAL    DEFAULT 0,
+      unit_price          REAL    DEFAULT 0,
+      amount_in           REAL    DEFAULT 0,
+      amount_out          REAL    DEFAULT 0,
+      balance             REAL    DEFAULT 0,
+      note                TEXT    DEFAULT '',
+      month_label         TEXT    DEFAULT '', -- Excel 导入月份兼容
+      stock_out_id        INTEGER, -- 关联 stock_out_ledger
+      ref_ledger_id       INTEGER, -- 退货关联原应收
+      return_stock_in_id  INTEGER, -- 退货自动入库 id
+      deleted_at          TEXT    DEFAULT NULL,
+      created_at          TEXT    DEFAULT (datetime('now','localtime')),
+      updated_at          TEXT    DEFAULT (datetime('now','localtime'))
     );
 
-    -- 客户期初/汇总设置
+    -- 客户档案（期初欠款、联系方式）
     CREATE TABLE IF NOT EXISTS customer_profiles (
       customer_name   TEXT PRIMARY KEY,
+      contact_person  TEXT DEFAULT '',
+      phone           TEXT DEFAULT '',
+      address         TEXT DEFAULT '',
       opening_balance REAL DEFAULT 0,
       note            TEXT DEFAULT '',
       updated_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 供应商档案（期初应付、联系方式；入库单通过 supplier_name 关联）
+    CREATE TABLE IF NOT EXISTS supplier_profiles (
+      supplier_name   TEXT PRIMARY KEY,
+      contact_person  TEXT DEFAULT '',
+      phone           TEXT DEFAULT '',
+      address         TEXT DEFAULT '',
+      opening_balance REAL DEFAULT 0,
+      note            TEXT DEFAULT '',
+      updated_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 供应商往来账（应付 / 付款）
+    CREATE TABLE IF NOT EXISTS supplier_ledger (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_name   TEXT    NOT NULL,
+      date            TEXT    NOT NULL,
+      description     TEXT    NOT NULL DEFAULT '',
+      contract_no     TEXT    DEFAULT '',
+      product_name    TEXT    DEFAULT '',
+      spec            TEXT    DEFAULT '',
+      unit            TEXT    DEFAULT '',
+      quantity        REAL    DEFAULT 0,
+      unit_price      REAL    DEFAULT 0,
+      amount_in       REAL    DEFAULT 0,
+      amount_out      REAL    DEFAULT 0,
+      balance         REAL    DEFAULT 0,
+      note            TEXT    DEFAULT '',
+      stock_in_id     INTEGER,
+      deleted_at      TEXT    DEFAULT NULL,
+      created_at      TEXT    DEFAULT (datetime('now','localtime')),
+      updated_at      TEXT    DEFAULT (datetime('now','localtime'))
     );
 
     -- 登录用户
@@ -455,6 +470,9 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_customer_name   ON customer_ledger(customer_name);
     CREATE INDEX IF NOT EXISTS idx_customer_date   ON customer_ledger(date);
     CREATE INDEX IF NOT EXISTS idx_customer_del    ON customer_ledger(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_supplier_name   ON supplier_ledger(supplier_name);
+    CREATE INDEX IF NOT EXISTS idx_supplier_date   ON supplier_ledger(date);
+    CREATE INDEX IF NOT EXISTS idx_supplier_del    ON supplier_ledger(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_users_username  ON users(username);
     CREATE INDEX IF NOT EXISTS idx_logs_table      ON operation_logs(table_name, record_id);
     CREATE INDEX IF NOT EXISTS idx_attach          ON attachments(related_table, related_id);
@@ -465,12 +483,6 @@ function createTables(): void {
       ON bank_ledger(date,description,amount_in,amount_out,balance,note);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_bills_import
       ON acceptance_bills(date,description,amount_in,amount_out,balance,note);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_import
-      ON customer_ledger(customer_name,date,description,amount_in,amount_out,balance,note);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_in_import
-      ON stock_in_ledger(supplier_name,date,contract_no,product_name,spec,quantity,unit_price,amount,note);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_out_import
-      ON stock_out_ledger(customer_name,date,contract_no,product_name,spec,quantity,unit_price,amount,note);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_product_catalog_key
       ON product_catalog(product_name,spec,unit);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_balance_key

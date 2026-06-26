@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron'
+import { verifyCurrentUserPassword } from './auth'
 import {
   checkCloudPendingDownload,
   evaluateCloudStartupSync,
@@ -78,16 +79,25 @@ export function registerCloudHandlers(): void {
     }
   })
 
-  ipcMain.handle('cloud:sync-upload', async (event) => syncCloudUpload((progress) => {
-    if (!event.sender.isDestroyed()) event.sender.send('cloud:sync-progress', progress)
-  }))
-
-  ipcMain.handle('cloud:sync-download', async (event) => {
-    const result = await syncCloudDownload((progress) => {
+  ipcMain.handle('cloud:sync-upload', async (event, payload?: { password?: string }) => {
+    const verified = verifyCurrentUserPassword(String(payload?.password || ''))
+    if (!verified.ok) return { ok: false, error: verified.error || '密码错误' }
+    const result = await syncCloudUpload((progress) => {
       if (!event.sender.isDestroyed()) event.sender.send('cloud:sync-progress', progress)
     })
-    if (result.ok) {
-      BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
+    return result
+  })
+
+  ipcMain.handle('cloud:sync-download', async (event, options?: { includeMedia?: boolean }) => {
+    const result = await syncCloudDownload((progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send('cloud:sync-progress', progress)
+    }, {
+      includeMedia: options?.includeMedia !== false,
+    })
+    if (result.ok && result.replacedLedger) {
+      setImmediate(() => {
+        BrowserWindow.getAllWindows().forEach(win => win.webContents.reload())
+      })
     }
     return result
   })

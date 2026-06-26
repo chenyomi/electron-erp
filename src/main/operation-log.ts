@@ -9,6 +9,8 @@ const MODULE_LABELS: Record<string, string> = {
   acceptance_bills: '承兑票',
   customer_ledger: '客户往来',
   customer_profiles: '客户资料',
+  supplier_profiles: '供应商资料',
+  supplier_ledger: '供应商往来',
   other_ledger: '其他账',
   stock_in_ledger: '产品入库',
   stock_out_ledger: '产品出库',
@@ -65,7 +67,33 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
   },
   customer_profiles: {
     customer_name: '客户',
+    contact_person: '联系人',
+    phone: '电话',
+    address: '地址',
     opening_balance: '期初余额',
+    note: '备注',
+  },
+  supplier_profiles: {
+    supplier_name: '供应商',
+    contact_person: '联系人',
+    phone: '电话',
+    address: '地址',
+    opening_balance: '期初应付',
+    note: '备注',
+  },
+  supplier_ledger: {
+    supplier_name: '供应商',
+    date: '日期',
+    description: '摘要',
+    contract_no: '合同号',
+    product_name: '品名',
+    spec: '规格',
+    unit: '单位',
+    quantity: '数量',
+    unit_price: '单价',
+    amount_in: '应付',
+    amount_out: '付款',
+    balance: '余额',
     note: '备注',
   },
   stock_in_ledger: {
@@ -184,6 +212,21 @@ function summarizeRow(tableName: string, row: Record<string, unknown> | null): s
       return name
         ? `客户「${name}」，期初余额 ¥${fmtMoney(opening)}`
         : '客户资料'
+    }
+    case 'supplier_profiles': {
+      const name = String(row.supplier_name || '').trim()
+      const opening = Number(row.opening_balance || 0)
+      return name
+        ? `供应商「${name}」，期初应付 ¥${fmtMoney(opening)}`
+        : '供应商资料'
+    }
+    case 'supplier_ledger': {
+      const head = [row.supplier_name, row.date, row.description || row.product_name].filter(Boolean).join(' ')
+      const amounts: string[] = []
+      if (Number(row.amount_in)) amounts.push(`应付 ¥${fmtMoney(row.amount_in)}`)
+      if (Number(row.amount_out)) amounts.push(`付款 ¥${fmtMoney(row.amount_out)}`)
+      const amountText = amounts.length ? `，${amounts.join('，')}` : ''
+      return [id, head].filter(Boolean).join('：') + amountText
     }
     case 'stock_in_ledger': {
       const head = [row.supplier_name, row.date, row.product_name, row.spec].filter(Boolean).join(' ')

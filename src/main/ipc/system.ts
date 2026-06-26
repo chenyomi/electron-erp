@@ -8,6 +8,24 @@ import { buildExportWorkbook, timestampForFile, type ExportParams, type ExportTa
 import { buildDateFilterClause } from './helpers'
 import { enrichOperationLogRow } from '../operation-log'
 import { getLastLedgerBalance } from './ledger-balance'
+import { verifyCurrentUserPassword } from './auth'
+import { cleanupOrphanAttachments, deleteAttachmentsForRecord } from './attachments'
+import { rebuildInventoryBusinessTables, syncProductCatalogWithLedger } from './stock-business'
+
+const TRASH_TABLES = [
+  'cash_ledger',
+  'bank_ledger',
+  'acceptance_bills',
+  'customer_ledger',
+  'stock_in_ledger',
+  'stock_out_ledger',
+] as const
+
+function requirePassword(password: unknown): { ok: true } | { ok: false; error: string } {
+  const verified = verifyCurrentUserPassword(String(password || ''))
+  if (!verified.ok) return { ok: false, error: verified.error || '密码错误' }
+  return { ok: true }
+}
 
 async function confirmRestore(parent: BrowserWindow | null): Promise<boolean> {
   const options = {
@@ -153,6 +171,42 @@ export function registerSystemHandlers(): void {
       `).all(...t.search.map(() => like), ...rowDateWhere.params, ...deletedDateWhere.params)
     }
     return result
+  })
+
+  ipcMain.handle('system:clear-logs', (_e, { password } = {}) => {
+    const auth = requirePassword(password)
+    if (!auth.ok) return { ok: false, error: auth.error }
+    try {
+      const db = getDb()
+      const { total } = db.prepare(`SELECT COUNT(*) as total FROM operation_logs`).get() as { total: number }
+      db.prepare(`DELETE FROM operation_logs`).run()
+      return { ok: true, count: total }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '清空操作日志失败' }
+    }
+  })
+
+  ipcMain.handle('system:clear-trash', (_e, { password } = {}) => {
+    const auth = requirePassword(password)
+    if (!auth.ok) return { ok: false, error: auth.error }
+    try {
+      const db = getDb()
+      let count = 0
+      for (const tableName of TRASH_TABLES) {
+        const rows = db.prepare(`SELECT id FROM ${tableName} WHERE deleted_at IS NOT NULL`).all() as Array<{ id: number }>
+        for (const row of rows) {
+          deleteAttachmentsForRecord(tableName, row.id, db)
+        }
+        const result = db.prepare(`DELETE FROM ${tableName} WHERE deleted_at IS NOT NULL`).run()
+        count += Number(result.changes || 0)
+      }
+      rebuildInventoryBusinessTables()
+      syncProductCatalogWithLedger()
+      cleanupOrphanAttachments(db)
+      return { ok: true, count }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '清空回收站失败' }
+    }
   })
 
   ipcMain.handle('system:backup', () => autoBackup())

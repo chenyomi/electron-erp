@@ -1248,6 +1248,14 @@ body {
   background: color-mix(in srgb, var(--app-primary) 12%, var(--app-surface-2));
 }
 
+.ledger-table tbody tr.ledger-row--linked td:first-of-type {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--app-primary) 35%, transparent);
+}
+
+.ledger-table tbody tr.ledger-row--linked td {
+  background: color-mix(in srgb, var(--app-surface-2) 42%, transparent);
+}
+
 .logs-table .logs-description {
   min-width: 280px;
   max-width: 520px;
@@ -2189,22 +2197,6 @@ body {
   justify-content: flex-end;
   gap: 10px;
   pointer-events: auto;
-}
-
-.cloud-float-button {
-  min-width: 0 !important;
-  height: 50px !important;
-  padding: 0 16px !important;
-  border-radius: 999px !important;
-  box-shadow:
-    0 14px 34px color-mix(in srgb, var(--app-primary) 24%, transparent),
-    0 0 0 1px rgba(255,255,255,.12) inset !important;
-}
-
-.cloud-float-button__icon {
-  margin-right: 6px;
-  font-size: 16px;
-  line-height: 1;
 }
 
 .ai-float.open {

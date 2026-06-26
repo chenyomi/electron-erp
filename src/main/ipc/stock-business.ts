@@ -38,6 +38,39 @@ export function generateDocNo(prefix: 'RK' | 'CK', tableName: 'stock_in_ledger' 
   return `${head}${String(lastNo + 1).padStart(4, '0')}`
 }
 
+export function sumCustomerReturnQty(
+  db: ReturnType<typeof getDb>,
+  productName: string,
+  spec: string,
+  unit: string,
+): number {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+    FROM customer_ledger
+    WHERE deleted_at IS NULL
+      AND product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+      AND COALESCE(quantity, 0) < 0
+  `).get(productName, spec, unit) as { qty?: number }
+  return Number(row?.qty || 0)
+}
+
+/** 库存流水：入库、出库；客户退货冲减出库（净出库 = 出库 − 退货） */
+export const inventoryFlowsSql = `
+  SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+         quantity AS in_qty, 0 AS out_qty
+  FROM stock_in_ledger WHERE deleted_at IS NULL
+  UNION ALL
+  SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+         0, quantity AS out_qty
+  FROM stock_out_ledger WHERE deleted_at IS NULL
+  UNION ALL
+  SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+         0, -ABS(quantity) AS out_qty
+  FROM customer_ledger WHERE deleted_at IS NULL AND COALESCE(quantity, 0) < 0
+`
+
 export function recalcInventoryBalance(row: any) {
   const db = getDb()
   const product = normalizeProductRow(row)
@@ -58,7 +91,8 @@ export function recalcInventoryBalance(row: any) {
       AND COALESCE(spec, '') = ?
       AND COALESCE(unit, '') = ?
   `).get(product.product_name, product.spec, product.unit) as { qty: number }
-  const qty = Number(stockIn?.qty || 0) - Number(stockOut?.qty || 0)
+  const returnQty = sumCustomerReturnQty(db, product.product_name, product.spec, product.unit)
+  const qty = Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - returnQty)
   db.prepare(`
     INSERT INTO inventory_balances (product_name, spec, unit, stock_qty, available_qty)
     VALUES (?, ?, ?, ?, ?)
@@ -73,6 +107,61 @@ export function recalcInventoryForRows(...rows: any[]) {
   for (const row of rows) {
     if (row) recalcInventoryBalance(row)
   }
+}
+
+export function syncProductCatalogWithLedger(db = getDb()): void {
+  const productMatchSql = `
+    s.product_name = product_catalog.product_name
+    AND COALESCE(s.spec, '') = COALESCE(product_catalog.spec, '')
+    AND COALESCE(s.unit, '') = COALESCE(product_catalog.unit, '')
+  `
+  db.prepare(`
+    UPDATE product_catalog
+    SET deleted_at = datetime('now','localtime'),
+        updated_at = datetime('now','localtime')
+    WHERE deleted_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM stock_in_ledger s
+        WHERE s.deleted_at IS NULL AND ${productMatchSql}
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM stock_out_ledger s
+        WHERE s.deleted_at IS NULL AND ${productMatchSql}
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM customer_ledger c
+        WHERE c.deleted_at IS NULL
+          AND COALESCE(c.quantity, 0) < 0
+          AND c.product_name = product_catalog.product_name
+          AND COALESCE(c.spec, '') = COALESCE(product_catalog.spec, '')
+          AND COALESCE(c.unit, '') = COALESCE(product_catalog.unit, '')
+      )
+  `).run()
+
+  db.prepare(`
+    UPDATE product_catalog
+    SET deleted_at = NULL,
+        updated_at = datetime('now','localtime')
+    WHERE deleted_at IS NOT NULL
+      AND (
+        EXISTS (
+          SELECT 1 FROM stock_in_ledger s
+          WHERE s.deleted_at IS NULL AND ${productMatchSql}
+        )
+        OR EXISTS (
+          SELECT 1 FROM stock_out_ledger s
+          WHERE s.deleted_at IS NULL AND ${productMatchSql}
+        )
+        OR EXISTS (
+          SELECT 1 FROM customer_ledger c
+          WHERE c.deleted_at IS NULL
+            AND COALESCE(c.quantity, 0) < 0
+            AND c.product_name = product_catalog.product_name
+            AND COALESCE(c.spec, '') = COALESCE(product_catalog.spec, '')
+            AND COALESCE(c.unit, '') = COALESCE(product_catalog.unit, '')
+        )
+      )
+  `).run()
 }
 
 export function rebuildInventoryBusinessTables() {
@@ -100,16 +189,15 @@ export function rebuildInventoryBusinessTables() {
     FROM (
       SELECT
         product_name,
-        COALESCE(spec, '') AS spec,
-        COALESCE(unit, '') AS unit,
+        spec,
+        unit,
         SUM(in_qty) - SUM(out_qty) AS stock_qty
       FROM (
-        SELECT product_name, spec, unit, quantity AS in_qty, 0 AS out_qty FROM stock_in_ledger WHERE deleted_at IS NULL
-        UNION ALL
-        SELECT product_name, spec, unit, 0 AS in_qty, quantity AS out_qty FROM stock_out_ledger WHERE deleted_at IS NULL
+        ${inventoryFlowsSql}
       )
       WHERE product_name IS NOT NULL AND product_name != ''
-      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
+      GROUP BY product_name, spec, unit
     );
   `)
+  syncProductCatalogWithLedger(db)
 }

@@ -10,6 +10,8 @@ export type TableName =
   | 'acceptance_bills'
   | 'customer_ledger'
   | 'customer_profiles'
+  | 'supplier_profiles'
+  | 'supplier_ledger'
   | 'other_ledger'
   | 'stock_in_ledger'
   | 'stock_out_ledger'

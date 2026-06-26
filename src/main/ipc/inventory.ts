@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb } from '../db'
+import { inventoryFlowsSql } from './stock-business'
 
 export function registerInventoryHandlers(): void {
   ipcMain.handle('inventory:list', (_e, {
@@ -24,15 +25,7 @@ export function registerInventoryHandlers(): void {
         : ''
     const flowSql = `
       FROM (
-        SELECT product_name, spec, unit, quantity AS in_qty, 0 AS out_qty
-        FROM stock_in_ledger
-        WHERE deleted_at IS NULL
-
-        UNION ALL
-
-        SELECT product_name, spec, unit, 0 AS in_qty, quantity AS out_qty
-        FROM stock_out_ledger
-        WHERE deleted_at IS NULL
+        ${inventoryFlowsSql}
       ) flows
     `
     const groupedSql = `
@@ -90,15 +83,7 @@ export function registerInventoryHandlers(): void {
         SUM(out_qty) AS total_out,
         SUM(in_qty) - SUM(out_qty) AS stock_qty
       FROM (
-        SELECT product_name, spec, unit, quantity AS in_qty, 0 AS out_qty
-        FROM stock_in_ledger
-        WHERE deleted_at IS NULL
-
-        UNION ALL
-
-        SELECT product_name, spec, unit, 0 AS in_qty, quantity AS out_qty
-        FROM stock_out_ledger
-        WHERE deleted_at IS NULL
+        ${inventoryFlowsSql}
       ) flows
       WHERE product_name LIKE ? OR spec LIKE ? OR unit LIKE ?
       GROUP BY product_name, spec, unit

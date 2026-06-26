@@ -1,20 +1,38 @@
 import { dialog, ipcMain } from 'electron'
 import { getDataDir, getDb } from '../db'
-import { buildCustomerDescription, enrichCustomerRow, sqlCustomerPaymentWhere } from '../../common/customer-ledger'
+import { buildCustomerDescription, calcCustomerReceivableRemaining, enrichCustomerRow, getCustomerLedgerAmountEditBlockReason, getCustomerLedgerDeleteBlockReason, isCustomerPaymentRecord, isCustomerReceivableRecord, isCustomerReturnRecord, sqlCustomerNetReceivableSum, sqlCustomerPaymentWhere, validateCustomerPaymentAmount, validateCustomerReturnAgainstPayments } from '../../common/customer-ledger'
 import {
   customerNameExists,
   getCustomerProfile,
   getCustomerRemovePreview,
   listAllCustomerNames,
+  listCustomerProfileNames,
   recalculateCustomerBalances,
+  repairCustomerPaymentRows,
   setCustomerProfile,
 } from './customer-profile'
-import { issueLabel as getCustomerIssueLabel } from '../../common/customer-anomaly'
-import { repairCustomerAnomalies, scanCustomerAnomalies } from './customer-anomaly'
 import { buildDateFilterClause, buildDateOrderBy, logOperation, normalizeLedgerFilters, softDelete, restore } from './helpers'
+import { cleanupOrphanAttachments, saveAttachments } from './attachments'
+import { imagePickerExtensions, imagePreviewDataUrl, storedImageDataUrl } from '../image-compress'
 import * as fs from 'fs'
 import * as path from 'path'
-import sharp from 'sharp'
+import {
+  applyCustomerReturnSideEffects,
+  backfillReceivablesFromStockOut,
+  deleteLegacyReturnStockIn,
+  deleteReceivableForStockOut,
+  listCustomerSaleOptions,
+  resolveReceivableReference,
+  resolveReturnReference,
+} from './stock-customer-link'
+import { recalcInventoryForRows, syncProductCatalogWithLedger } from './stock-business'
+
+function listLinkedCustomerLedgerRows(db: ReturnType<typeof getDb>, receivableId: number) {
+  return db.prepare(`
+    SELECT * FROM customer_ledger
+    WHERE deleted_at IS NULL AND ref_ledger_id = ?
+  `).all(receivableId) as Array<Record<string, any>>
+}
 
 export function registerCustomerHandlers(): void {
   // 所有客户名
@@ -22,18 +40,33 @@ export function registerCustomerHandlers(): void {
     return listAllCustomerNames(getDb()).map(customer_name => ({ customer_name }))
   })
 
-  ipcMain.handle('customer:create', (_e, profile: { customer_name: string; opening_balance?: number; note?: string }) => {
+  ipcMain.handle('customer:profile-names', () => {
+    return listCustomerProfileNames(getDb()).map(customer_name => ({ customer_name }))
+  })
+
+  ipcMain.handle('customer:sale-options', (_e, customerName: string) => {
+    return listCustomerSaleOptions(getDb(), customerName || '')
+  })
+
+  ipcMain.handle('customer:backfill-from-stock-out', (_e, customerName = '') => {
+    return { ok: true, ...backfillReceivablesFromStockOut(getDb(), String(customerName || '')) }
+  })
+
+  ipcMain.handle('customer:create', (_e, profile: {
+    customer_name: string
+    contact_person?: string
+    phone?: string
+    address?: string
+    opening_balance?: number
+    note?: string
+  }) => {
     const name = String(profile?.customer_name || '').trim()
     if (!name) throw new Error('请填写客户名称')
     const db = getDb()
     if (customerNameExists(db, name)) {
       throw new Error(`客户「${name}」已存在，请直接打开台账`)
     }
-    const saved = setCustomerProfile(db, {
-      customer_name: name,
-      opening_balance: Number(profile.opening_balance || 0),
-      note: String(profile.note || ''),
-    })
+    const saved = setCustomerProfile(db, profile)
     logOperation('customer_profiles', 0, 'INSERT', null, saved as object)
     return saved
   })
@@ -70,6 +103,37 @@ export function registerCustomerHandlers(): void {
       ORDER BY customer_name ASC, ${buildDateOrderBy('customer_ledger.date')}
       LIMIT ? OFFSET ?
     `).all(customerName || '', customerName || '', like, like, like, like, like, like, ...dateWhere.params, pageSize, offset) as any[]
+    const enrichedRows = rows.map(row => {
+      const enriched = { ...enrichCustomerRow(row), attachment_thumb: storedImageDataUrl(row.attachment_thumb_path) }
+      if (isCustomerPaymentRecord(enriched) && Number(enriched.ref_ledger_id || 0) > 0) {
+        const ref = db.prepare(`
+          SELECT product_name, contract_no, date FROM customer_ledger
+          WHERE id = ? AND deleted_at IS NULL
+        `).get(Number(enriched.ref_ledger_id)) as { product_name?: string; contract_no?: string; date?: string } | undefined
+        if (ref?.product_name) {
+          enriched.payment_for = ref.product_name
+          enriched.payment_for_contract = ref.contract_no || ''
+        }
+      }
+      if (isCustomerReturnRecord(enriched) && Number(enriched.ref_ledger_id || 0) > 0) {
+        const ref = db.prepare(`
+          SELECT product_name, contract_no FROM customer_ledger
+          WHERE id = ? AND deleted_at IS NULL
+        `).get(Number(enriched.ref_ledger_id)) as { product_name?: string; contract_no?: string } | undefined
+        if (ref?.product_name) {
+          enriched.return_for = ref.product_name
+        }
+      }
+      if (isCustomerReceivableRecord(enriched)) {
+        const linked = db.prepare(`
+          SELECT amount_in, amount_out, description, product_name, quantity, note
+          FROM customer_ledger
+          WHERE deleted_at IS NULL AND ref_ledger_id = ?
+        `).all(enriched.id) as Array<Record<string, any>>
+        enriched.remaining_receivable = calcCustomerReceivableRemaining(enriched.amount_in, linked)
+      }
+      return enriched
+    })
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM customer_ledger
       WHERE deleted_at IS NULL
@@ -79,7 +143,7 @@ export function registerCustomerHandlers(): void {
         ${dateWhere.sql}
         ${entryWhere}
     `).get(customerName || '', customerName || '', like, like, like, like, like, like, ...dateWhere.params) as { total: number }
-    return { rows: rows.map(row => ({ ...enrichCustomerRow(row), attachment_thumb: imageDataUrl(row.attachment_thumb_path) })), total }
+    return { rows: enrichedRows, total }
   })
 
   ipcMain.handle('customer:payment-audit', (_e, customerName = '') => {
@@ -96,15 +160,12 @@ export function registerCustomerHandlers(): void {
       WHERE deleted_at IS NULL ${nameFilter} AND ${paymentWhere}
     `).get(...params) as { total: number; missingDate: number; missingAmount: number }
 
-    const anomalies = scanCustomerAnomalies(db, customerName || '')
-      .filter(item => item.issue.startsWith('payment_') || item.issue === 'balance_mismatch')
-
     return {
       total: Number(row?.total || 0),
       missingDate: Number(row?.missingDate || 0),
       missingAmount: Number(row?.missingAmount || 0),
-      anomalyCount: anomalies.length,
-      autoFixableCount: anomalies.filter(item => item.autoFixable).length,
+      anomalyCount: 0,
+      autoFixableCount: 0,
     }
   })
 
@@ -113,6 +174,7 @@ export function registerCustomerHandlers(): void {
     const customerName = filters.customerName || ''
     const dateWhere = buildDateFilterClause(filters)
     const db = getDb()
+    repairCustomerPaymentRows(db, customerName)
 
     if (!customerName) {
       const rows = db.prepare(`
@@ -123,7 +185,7 @@ export function registerCustomerHandlers(): void {
         ),
         totals AS (
           SELECT customer_name,
-            COALESCE(SUM(amount_in), 0) AS totalIn,
+            ${sqlCustomerNetReceivableSum()} AS totalIn,
             COALESCE(SUM(amount_out), 0) AS totalOut
           FROM customer_ledger
           WHERE deleted_at IS NULL ${dateWhere.sql}
@@ -152,7 +214,7 @@ export function registerCustomerHandlers(): void {
 
     const allTime = db.prepare(`
       SELECT
-        COALESCE(SUM(amount_in), 0) AS totalIn,
+        ${sqlCustomerNetReceivableSum()} AS totalIn,
         COALESCE(SUM(amount_out), 0) AS totalOut
       FROM customer_ledger
       WHERE deleted_at IS NULL AND customer_name = ?
@@ -176,13 +238,16 @@ export function registerCustomerHandlers(): void {
     return getCustomerProfile(getDb(), customerName || '')
   })
 
-  ipcMain.handle('customer:set-profile', (_e, profile: { customer_name: string; opening_balance?: number; note?: string }) => {
+  ipcMain.handle('customer:set-profile', (_e, profile: {
+    customer_name: string
+    contact_person?: string
+    phone?: string
+    address?: string
+    opening_balance?: number
+    note?: string
+  }) => {
     const db = getDb()
-    const saved = setCustomerProfile(db, {
-      customer_name: profile.customer_name,
-      opening_balance: Number(profile.opening_balance || 0),
-      note: String(profile.note || ''),
-    })
+    const saved = setCustomerProfile(db, profile)
     const currentBalance = recalculateCustomerBalances(db, profile.customer_name)
     return { ...saved, currentBalance }
   })
@@ -218,76 +283,260 @@ export function registerCustomerHandlers(): void {
       logOperation('customer_profiles', 0, 'DELETE', profile as object, null)
     }
 
+    cleanupOrphanAttachments()
+    syncProductCatalogWithLedger(db)
     return { ok: true, ledgerCount: ledgerRows.length }
-  })
-
-  ipcMain.handle('customer:anomalies', (_e, customerName = '') => {
-    const items = scanCustomerAnomalies(getDb(), customerName || '')
-    return items.map(item => ({ ...item, issueLabel: getCustomerIssueLabel(item.issue) }))
-  })
-
-  ipcMain.handle('customer:repair', (_e, customerName = '') => {
-    return repairCustomerAnomalies(getDb(), customerName || '')
   })
 
   ipcMain.handle('customer:add', (_e, row) => {
     const db = getDb()
-    const payload = {
-      customer_name: String(row.customer_name || ''),
-      date: String(row.date || ''),
+    const customerName = String(row.customer_name || '').trim()
+    const isPayment = isCustomerPaymentRecord(row)
+    const isReturn = !isPayment && Number(row.ref_ledger_id || 0) > 0
+    const stockOutId = Number(row.stock_out_id || 0)
+
+    if (!isPayment && !isReturn && !stockOutId) {
+      throw new Error('应收由产品出库自动生成，请先在「产品出库」中登记')
+    }
+
+    let payload: Record<string, any> = {
+      customer_name: customerName,
+      date: String(row.date || '').trim(),
       description: buildCustomerDescription(row),
-      contract_no: String(row.contract_no || ''),
-      product_name: String(row.product_name || ''),
-      spec: String(row.spec || ''),
-      unit: String(row.unit || ''),
+      contract_no: String(row.contract_no || '').trim(),
+      product_name: String(row.product_name || '').trim(),
+      spec: String(row.spec || '').trim(),
+      unit: String(row.unit || '').trim(),
       quantity: Number(row.quantity || 0),
       unit_price: Number(row.unit_price || 0),
       amount_in: Number(row.amount_in || 0),
       amount_out: Number(row.amount_out || 0),
-      balance: Number(row.balance || 0),
-      note: String(row.note || ''),
+      balance: 0,
+      note: String(row.note || '').trim(),
       month_label: String(row.month_label || ''),
+      stock_out_id: stockOutId || null,
+      ref_ledger_id: Number(row.ref_ledger_id || 0) || null,
+      return_stock_in_id: null,
     }
+
+    if (isReturn) {
+      const refId = Number(row.ref_ledger_id || 0)
+      if (!refId) throw new Error('请选择要退货的应收台账')
+      const ref = resolveReturnReference(db, customerName, refId)
+      payload.ref_ledger_id = refId
+      payload.contract_no = payload.contract_no || ref.contract_no || ''
+      payload.product_name = payload.product_name || ref.product_name || ''
+      payload.spec = payload.spec || ref.spec || ''
+      payload.unit = payload.unit || ref.unit || ''
+      const qty = Math.abs(Number(payload.quantity || ref.quantity || 0))
+      const price = Math.abs(Number(payload.unit_price || ref.unit_price || 0))
+      if (qty <= 0 || price <= 0) throw new Error('请填写退货数量与单价')
+      payload.quantity = -qty
+      payload.unit_price = price
+      payload.amount_in = -Math.round(qty * price * 100) / 100
+      payload.description = buildCustomerDescription(payload)
+      if (!String(payload.note || '').includes('退货')) {
+        payload.note = payload.note ? `${payload.note} 退货` : '退货'
+      }
+      const linked = listLinkedCustomerLedgerRows(db, refId)
+      const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linked, payload.amount_in)
+      if (returnErr) throw new Error(returnErr)
+    } else if (isPayment) {
+      const refId = Number(row.ref_ledger_id || 0)
+      if (refId) {
+        const ref = resolveReceivableReference(db, customerName, refId)
+        payload.ref_ledger_id = refId
+        if (!String(payload.note || '').trim()) {
+          payload.note = `收 ${ref.product_name || '应收'}`.trim()
+        }
+        if (Number(payload.amount_out || 0) <= 0) throw new Error('请填写收款金额')
+        const linked = listLinkedCustomerLedgerRows(db, refId)
+        const paymentErr = validateCustomerPaymentAmount(Number(ref.amount_in || 0), linked, Number(payload.amount_out || 0))
+        if (paymentErr) throw new Error(paymentErr)
+      }
+      payload.description = '付款'
+      payload.product_name = '付款'
+      payload.contract_no = ''
+      payload.spec = ''
+      payload.unit = ''
+      payload.quantity = 0
+      payload.unit_price = 0
+      payload.amount_in = 0
+      if (Number(payload.amount_out || 0) <= 0) throw new Error('请填写收款金额')
+    }
+
     const r = db.prepare(`
       INSERT INTO customer_ledger (
         customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
-        amount_in, amount_out, balance, note, month_label
+        amount_in, amount_out, balance, note, month_label, stock_out_id, ref_ledger_id, return_stock_in_id
       )
       VALUES (
         @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
-        @amount_in, @amount_out, @balance, @note, @month_label
+        @amount_in, @amount_out, @balance, @note, @month_label, @stock_out_id, @ref_ledger_id, @return_stock_in_id
       )
     `).run(payload)
+    const ledgerId = Number(r.lastInsertRowid)
     recalculateCustomerBalances(db, payload.customer_name)
-    const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(r.lastInsertRowid)
-    logOperation('customer_ledger', r.lastInsertRowid as number, 'INSERT', null, newRow as object)
+    let newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(ledgerId) as Record<string, any>
+    if (isReturn && !isPayment) {
+      applyCustomerReturnSideEffects(db, newRow)
+      newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(ledgerId) as Record<string, any>
+    }
+    logOperation('customer_ledger', ledgerId, 'INSERT', null, newRow as object)
     return newRow
   })
 
   ipcMain.handle('customer:update', (_e, { id, ...row }) => {
     const db = getDb()
-    const old = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id)
-    const payload = { ...row, id, description: buildCustomerDescription(row) }
+    const old = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+    if (!old) throw new Error('记录不存在')
+
+    const isPayment = isCustomerPaymentRecord({ ...old, ...row })
+    const isReturn = !isPayment && (
+      Number(row.ref_ledger_id || old.ref_ledger_id || 0) > 0
+      || Number(old.return_stock_in_id || 0) > 0
+      || String(row.note || old.note || '').includes('退货')
+    )
+
+    if (Number(old.stock_out_id || 0) > 0 && !isReturn && !isPayment) {
+      throw new Error('出库生成的应收请在「产品出库」中修改')
+    }
+
+    const payload: Record<string, any> = {
+      ...row,
+      id,
+      customer_name: String(row.customer_name || old.customer_name || '').trim(),
+      date: String(row.date || old.date || '').trim(),
+      description: buildCustomerDescription({ ...old, ...row }),
+      contract_no: String(row.contract_no ?? old.contract_no ?? '').trim(),
+      product_name: String(row.product_name ?? old.product_name ?? '').trim(),
+      spec: String(row.spec ?? old.spec ?? '').trim(),
+      unit: String(row.unit ?? old.unit ?? '').trim(),
+      quantity: Number(row.quantity ?? old.quantity ?? 0),
+      unit_price: Number(row.unit_price ?? old.unit_price ?? 0),
+      amount_in: Number(row.amount_in ?? old.amount_in ?? 0),
+      amount_out: Number(row.amount_out ?? old.amount_out ?? 0),
+      balance: Number(row.balance ?? old.balance ?? 0),
+      note: String(row.note ?? old.note ?? '').trim(),
+      month_label: String(row.month_label ?? old.month_label ?? '').trim(),
+      ref_ledger_id: Number(row.ref_ledger_id ?? old.ref_ledger_id ?? 0) || null,
+      stock_out_id: Number(old.stock_out_id || 0) || null,
+      return_stock_in_id: Number(old.return_stock_in_id || 0) || null,
+    }
+
+    const receivableIdForGuard = isCustomerReceivableRecord(old) ? id : Number(payload.ref_ledger_id || 0)
+    const linkedToReceivable = receivableIdForGuard
+      ? listLinkedCustomerLedgerRows(db, receivableIdForGuard)
+      : []
+    const amountEditBlock = getCustomerLedgerAmountEditBlockReason(old, linkedToReceivable, payload)
+    if (amountEditBlock) throw new Error(amountEditBlock)
+
+    if (isReturn) {
+      const refId = Number(payload.ref_ledger_id || 0)
+      if (!refId) throw new Error('请选择要退货的应收台账')
+      const ref = resolveReturnReference(db, payload.customer_name, refId)
+      const qty = Math.abs(Number(payload.quantity || 0))
+      const price = Math.abs(Number(payload.unit_price || 0))
+      payload.quantity = -qty
+      payload.unit_price = price
+      payload.amount_in = -Math.round(qty * price * 100) / 100
+      payload.description = buildCustomerDescription(payload)
+      const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linkedToReceivable, payload.amount_in, id)
+      if (returnErr) throw new Error(returnErr)
+    } else if (isPayment) {
+      const refId = Number(payload.ref_ledger_id || 0)
+      if (refId) {
+        const ref = resolveReceivableReference(db, payload.customer_name, refId)
+        const paymentErr = validateCustomerPaymentAmount(Number(ref.amount_in || 0), linkedToReceivable, Number(payload.amount_out || 0), id)
+        if (paymentErr) throw new Error(paymentErr)
+      }
+      payload.description = '付款'
+      payload.product_name = '付款'
+      payload.contract_no = ''
+      payload.spec = ''
+      payload.unit = ''
+      payload.quantity = 0
+      payload.unit_price = 0
+      payload.amount_in = 0
+      if (Number(payload.amount_out || 0) <= 0) throw new Error('请填写收款金额')
+    }
+
     db.prepare(`
       UPDATE customer_ledger SET customer_name=@customer_name, date=@date,
         description=@description, contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
         quantity=@quantity, unit_price=@unit_price,
         amount_in=@amount_in, amount_out=@amount_out,
         balance=@balance, note=@note, month_label=@month_label,
+        ref_ledger_id=@ref_ledger_id,
         updated_at=datetime('now','localtime') WHERE id=@id
     `).run(payload)
     recalculateCustomerBalances(db, payload.customer_name)
-    const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id)
+    if (old.customer_name !== payload.customer_name) {
+      recalculateCustomerBalances(db, old.customer_name)
+    }
+    let newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+    if (isReturn) {
+      applyCustomerReturnSideEffects(db, newRow, {
+        previousReturnStockInId: Number(old.return_stock_in_id || 0),
+        previousProduct: {
+          product_name: String(old.product_name || ''),
+          spec: String(old.spec || ''),
+          unit: String(old.unit || ''),
+        },
+      })
+      newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+    }
     logOperation('customer_ledger', id, 'UPDATE', old as object, newRow as object)
     return newRow
   })
 
-  ipcMain.handle('customer:delete', (_e, id) => {
+  function deleteCustomerLedgerById(id: number) {
     const db = getDb()
-    const row = db.prepare('SELECT customer_name FROM customer_ledger WHERE id = ?').get(id) as { customer_name?: string } | undefined
+    const row = db.prepare('SELECT * FROM customer_ledger WHERE id = ? AND deleted_at IS NULL').get(id) as Record<string, any> | undefined
+    if (!row) return
+
+    const linkedToReceivable = isCustomerReceivableRecord(row)
+      ? listLinkedCustomerLedgerRows(db, id)
+      : Number(row.ref_ledger_id || 0) > 0
+        ? listLinkedCustomerLedgerRows(db, Number(row.ref_ledger_id))
+        : []
+    const deleteBlock = getCustomerLedgerDeleteBlockReason(row, linkedToReceivable)
+    if (deleteBlock) throw new Error(deleteBlock)
+
+    if (Number(row.return_stock_in_id || 0) > 0) {
+      deleteLegacyReturnStockIn(db, Number(row.return_stock_in_id))
+    }
+    const returnProduct = isCustomerReturnRecord(row)
+      ? { product_name: row.product_name, spec: row.spec, unit: row.unit }
+      : null
+
+    const stockOutId = Number(row.stock_out_id || 0)
+    if (stockOutId) {
+      const stockOut = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ? AND deleted_at IS NULL').get(stockOutId) as Record<string, any> | undefined
+      if (stockOut) {
+        db.prepare(`UPDATE stock_out_ledger SET ledger_id = NULL WHERE id = ?`).run(stockOutId)
+        softDelete('stock_out_ledger', stockOutId)
+        recalcInventoryForRows(stockOut)
+      }
+    }
+
     softDelete('customer_ledger', id)
-    if (row?.customer_name) recalculateCustomerBalances(db, row.customer_name)
+    if (returnProduct) recalcInventoryForRows(returnProduct)
+    recalculateCustomerBalances(db, row.customer_name)
+    syncProductCatalogWithLedger(db)
+  }
+
+  ipcMain.handle('customer:delete', (_e, id) => {
+    deleteCustomerLedgerById(id)
+    cleanupOrphanAttachments()
     return { ok: true }
+  })
+
+  ipcMain.handle('customer:deleteMany', (_e, ids: number[] = []) => {
+    const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
+    for (const id of uniqueIds) deleteCustomerLedgerById(id)
+    cleanupOrphanAttachments()
+    return { ok: true, count: uniqueIds.length }
   })
   ipcMain.handle('customer:trash', () => {
     return getDb().prepare(`SELECT * FROM customer_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
@@ -304,71 +553,34 @@ export function registerCustomerHandlers(): void {
 
     return rows
       .filter(row => fs.existsSync(row.file_path))
-      .map(row => {
-        const ext = path.extname(row.file_path).toLowerCase()
-        const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/webp'
-        const data = fs.readFileSync(row.file_path).toString('base64')
-        return { id: row.id, fileName: row.file_name, dataUrl: `data:${mime};base64,${data}` }
-      })
+      .map(row => ({
+        id: row.id,
+        fileName: row.file_name,
+        dataUrl: storedImageDataUrl(row.file_path),
+      }))
   })
 
   ipcMain.handle('customer:pick-attachments', async () => {
     const filePaths = await pickImageFiles()
-    return filePaths.map(filePath => ({
+    return Promise.all(filePaths.map(async filePath => ({
       filePath,
       fileName: path.basename(filePath),
-      dataUrl: imageDataUrl(filePath)
-    }))
+      dataUrl: await imagePreviewDataUrl(filePath),
+    })))
   })
 
   ipcMain.handle('customer:add-attachment', async (_e, id: number, filePaths?: string[]) => {
     const paths = filePaths?.length ? filePaths : await pickImageFiles()
     if (!paths.length) return { ok: false, canceled: true }
-    const db = getDb()
-    const outputDir = path.join(getDataDir(), 'attachments', 'customer')
-    fs.mkdirSync(outputDir, { recursive: true })
-    const insert = db.prepare(`
-      INSERT INTO attachments (related_table, related_id, file_path, file_name)
-      VALUES (?, ?, ?, ?)
-    `)
-    let count = 0
-
-    for (const sourcePath of paths) {
-      if (!fs.existsSync(sourcePath)) continue
-      const fileName = `${id}_${Date.now()}_${count + 1}.webp`
-      const targetPath = path.join(outputDir, fileName)
-      fs.writeFileSync(targetPath, await compressImage(fs.readFileSync(sourcePath)))
-      insert.run('customer_ledger', id, targetPath, fileName)
-      count++
-    }
-
+    const count = await saveAttachments('customer_ledger', id, paths)
     return { ok: true, count }
   })
 }
 
 async function pickImageFiles(): Promise<string[]> {
   const result = await dialog.showOpenDialog({
-    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-    properties: ['openFile', 'multiSelections']
+    filters: [{ name: 'Images', extensions: imagePickerExtensions() }],
+    properties: ['openFile', 'multiSelections'],
   })
   return result.canceled ? [] : result.filePaths
-}
-
-function imageDataUrl(filePath?: string): string {
-  if (!filePath || !fs.existsSync(filePath)) return ''
-  const ext = path.extname(filePath).toLowerCase()
-  const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/webp'
-  return `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`
-}
-
-async function compressImage(raw: Buffer): Promise<Buffer> {
-  try {
-    return await sharp(raw)
-      .rotate()
-      .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 82, effort: 4 })
-      .toBuffer()
-  } catch {
-    return raw
-  }
 }

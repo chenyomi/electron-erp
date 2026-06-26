@@ -6,6 +6,7 @@ import { join, dirname } from 'path'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { getDataDir } from './db'
+import { cleanupOrphanAttachments } from './ipc/attachments'
 import {
   acknowledgeRemoteManifest,
   getCloudSyncPrefs,
@@ -21,6 +22,7 @@ import {
   localFileMatchesRemoteEntry,
   type SyncFileEntry,
   type SyncManifest,
+  isCloudMediaSyncPath,
 } from './backup'
 
 export interface QiniuCloudConfig {
@@ -52,8 +54,10 @@ export interface CloudSyncResult {
   uploaded?: number
   downloaded?: number
   skipped?: number
+  prunedRemote?: number
   bytes?: number
   totalFiles?: number
+  replacedLedger?: boolean
   error?: string
 }
 
@@ -464,6 +468,10 @@ function reportSyncProgress(onProgress: CloudSyncProgressReporter | undefined, p
   onProgress?.(progress)
 }
 
+function flushSyncProgress(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
 const DOWNLOAD_CONCURRENCY = 6
 
 async function runConcurrent<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
@@ -522,7 +530,75 @@ async function uploadObjectBuffer(config: QiniuCloudConfig, key: string, buffer:
   }
 }
 
-async function downloadCloudFile(config: QiniuCloudConfig, key: string, destPath: string): Promise<void> {
+type DownloadBytesReporter = (received: number, total?: number) => void
+
+function downloadCloudFileOnce(
+  url: string,
+  destPath: string,
+  onBytes?: DownloadBytesReporter,
+): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const target = new URL(url)
+    const client = target.protocol === 'https:' ? https : http
+    const req = client.request(target, { method: 'GET' }, (res) => {
+      const statusCode = res.statusCode || 0
+      if (statusCode >= 400) {
+        const chunks: Buffer[] = []
+        res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+        res.on('end', () => {
+          resolve({
+            ok: false,
+            error: formatDownloadError(Buffer.concat(chunks), statusCode, target.host),
+          })
+        })
+        return
+      }
+
+      const contentLength = Number(res.headers['content-length']) || undefined
+      let received = 0
+      fs.mkdirSync(dirname(destPath), { recursive: true })
+      const fileStream = fs.createWriteStream(destPath)
+      res.on('data', (chunk: Buffer) => {
+        received += chunk.length
+        onBytes?.(received, contentLength)
+        if (!fileStream.write(chunk)) {
+          res.pause()
+          fileStream.once('drain', () => res.resume())
+        }
+      })
+      res.on('end', () => {
+        fileStream.end()
+      })
+      fileStream.on('finish', () => {
+        if (received === 0) {
+          fs.rmSync(destPath, { force: true })
+          resolve({ ok: false, error: '下载内容为空' })
+          return
+        }
+        resolve({ ok: true })
+      })
+      fileStream.on('error', (error) => {
+        fileStream.close()
+        fs.rmSync(destPath, { force: true })
+        resolve({ ok: false, error: error?.message || '写入本地文件失败' })
+      })
+      res.on('error', (error) => {
+        fileStream.close()
+        fs.rmSync(destPath, { force: true })
+        resolve({ ok: false, error: error?.message || '下载失败' })
+      })
+    })
+    req.on('error', (error) => resolve({ ok: false, error: error?.message || '下载失败' }))
+    req.end()
+  })
+}
+
+async function downloadCloudFile(
+  config: QiniuCloudConfig,
+  key: string,
+  destPath: string,
+  onBytes?: DownloadBytesReporter,
+): Promise<void> {
   const deadline = Math.floor(Date.now() / 1000) + 3600
   const { downloadDomainBases } = await resolveBucketRegionInfo(config)
   const domains = downloadDomainBases.length
@@ -533,19 +609,45 @@ async function downloadCloudFile(config: QiniuCloudConfig, key: string, destPath
   for (const domain of domains) {
     const url = buildPrivateDownloadUrl(domain, key, deadline, config)
     try {
-      const response = await requestBuffer(url)
-      if (response.statusCode >= 400 || response.body.length === 0) {
-        lastError = formatDownloadError(response.body, response.statusCode || 0, domain)
-        continue
-      }
-      fs.mkdirSync(dirname(destPath), { recursive: true })
-      fs.writeFileSync(destPath, response.body)
-      return
+      const result = await downloadCloudFileOnce(url, destPath, onBytes)
+      if (result.ok) return
+      lastError = result.error || lastError
     } catch (error: any) {
       lastError = error?.message || lastError
     }
   }
   throw new Error(`下载云端文件失败：${lastError}`)
+}
+
+function encodedEntryUri(bucket: string, key: string): string {
+  return urlSafeBase64(`${bucket}:${key}`)
+}
+
+async function deleteCloudObjectKeys(config: QiniuCloudConfig, keys: string[]): Promise<number> {
+  if (!keys.length) return 0
+  const batchPath = '/batch'
+  let deleted = 0
+
+  for (let index = 0; index < keys.length; index += 100) {
+    const chunk = keys.slice(index, index + 100)
+    const body = chunk.map(key => `op=/delete/${encodedEntryUri(config.bucket, key)}`).join('&')
+    const sign = urlSafeBase64(crypto.createHmac('sha1', config.secretKey).update(`${batchPath}\n${body}`).digest())
+    const response = await requestText(`https://rs.qiniu.com${batchPath}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `QBox ${config.accessKey}:${sign}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': String(Buffer.byteLength(body)),
+      },
+      body: Buffer.from(body, 'utf8'),
+    })
+    if (response.statusCode >= 400) {
+      throw new Error(`清理云端无效文件失败：${parseQiniuError(response.body, String(response.statusCode))}`)
+    }
+    deleted += chunk.length
+  }
+
+  return deleted
 }
 
 async function fetchRemoteManifest(config: QiniuCloudConfig): Promise<SyncManifest> {
@@ -590,6 +692,14 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
       phase: 'preparing',
       current: 0,
       total: 0,
+      message: '正在清理无效附件…',
+    })
+    cleanupOrphanAttachments()
+    reportSyncProgress(onProgress, {
+      mode: 'upload',
+      phase: 'preparing',
+      current: 0,
+      total: 0,
       message: '正在扫描本地文件…',
     })
     const localManifest = await buildLiveDataManifest()
@@ -607,39 +717,65 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
     let uploaded = 0
     let skipped = 0
     let bytes = 0
-    let processed = 0
+    let transferCompleted = 0
 
     try {
       for (const [relativePath, entry] of fileEntries) {
-        processed += 1
         if (remoteManifest.files?.[relativePath]?.hash === entry.hash) {
           skipped += 1
           reportSyncProgress(onProgress, {
             mode: 'upload',
             phase: 'transferring',
-            current: processed,
+            current: skipped,
             total,
             file: relativePath,
-            message: `跳过未变化文件 (${processed}/${total})`,
+            message: `跳过未变化文件 (${skipped}/${total})`,
           })
           continue
         }
         reportSyncProgress(onProgress, {
           mode: 'upload',
           phase: 'transferring',
-          current: processed,
+          current: skipped + transferCompleted,
           total,
           file: relativePath,
-          message: `正在上传 (${processed}/${total})`,
+          message: `正在上传 (${transferCompleted + 1}/${total - skipped})`,
         })
+        await flushSyncProgress()
         const tempFile = join(tempRoot, relativePath)
         await exportLiveSyncFile(relativePath, tempFile)
         await uploadObjectFile(config, fileObjectKey(config, relativePath), tempFile)
+        transferCompleted += 1
         uploaded += 1
         bytes += entry.size
+        reportSyncProgress(onProgress, {
+          mode: 'upload',
+          phase: 'transferring',
+          current: skipped + transferCompleted,
+          total,
+          file: relativePath,
+          message: `已完成 (${skipped + transferCompleted}/${total})`,
+        })
       }
 
-      if (uploaded === 0 && manifestsMatch(localManifest, remoteManifest)) {
+      const localPaths = new Set(Object.keys(localManifest.files || {}))
+      const remoteOrphans = Object.keys(remoteManifest.files || {}).filter(relativePath => !localPaths.has(relativePath))
+      let prunedRemote = 0
+      if (remoteOrphans.length) {
+        reportSyncProgress(onProgress, {
+          mode: 'upload',
+          phase: 'transferring',
+          current: total,
+          total,
+          message: `正在清理云端无效文件 (${remoteOrphans.length})…`,
+        })
+        prunedRemote = await deleteCloudObjectKeys(
+          config,
+          remoteOrphans.map(relativePath => fileObjectKey(config, relativePath)),
+        )
+      }
+
+      if (uploaded === 0 && prunedRemote === 0 && manifestsMatch(localManifest, remoteManifest)) {
         reportSyncProgress(onProgress, {
           mode: 'upload',
           phase: 'done',
@@ -651,6 +787,7 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
           ok: true,
           uploaded: 0,
           skipped,
+          prunedRemote: 0,
           bytes: 0,
           totalFiles: total,
         }
@@ -678,13 +815,14 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
         phase: 'done',
         current: total,
         total,
-        message: '上传完成',
+        message: prunedRemote > 0 ? `上传完成，已清理 ${prunedRemote} 个云端无效文件` : '上传完成',
       })
 
       return {
         ok: true,
         uploaded,
         skipped,
+        prunedRemote,
         bytes,
         totalFiles: total,
       }
@@ -696,7 +834,11 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
   }
 }
 
-export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter): Promise<CloudSyncResult> {
+export async function syncCloudDownload(
+  onProgress?: CloudSyncProgressReporter,
+  options: { includeMedia?: boolean } = {},
+): Promise<CloudSyncResult> {
+  const includeMedia = options.includeMedia !== false
   try {
     const config = requireConfig()
     reportSyncProgress(onProgress, {
@@ -745,42 +887,92 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
       toDownload.push({ relativePath, entry })
     }
 
-    if (!toDownload.length) {
+    const filesToApply = includeMedia
+      ? toDownload
+      : toDownload.filter(({ relativePath }) => relativePath === 'ledger.db')
+
+    if (!filesToApply.length) {
       acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
       reportSyncProgress(onProgress, {
         mode: 'download',
         phase: 'done',
         current: total,
         total,
-        message: '本地已与云端一致',
+        message: includeMedia ? '本地已与云端一致' : '账本已与云端一致（图片/附件保留本机）',
       })
-      return { ok: true, downloaded: 0, skipped, bytes: 0, totalFiles: total }
+      return { ok: true, downloaded: 0, skipped, bytes: 0, totalFiles: total, replacedLedger: false }
     }
 
     const tempRoot = mkdtempSync(join(tmpdir(), 'donghao-cloud-down-'))
     const changed: string[] = []
     let downloaded = 0
     let bytes = 0
-    let processed = skipped
+    let transferCompleted = 0
+    const downloadTotal = filesToApply.length
 
     try {
-      await runConcurrent(toDownload, DOWNLOAD_CONCURRENCY, async ({ relativePath, entry }) => {
-        processed += 1
+      await runConcurrent(filesToApply, DOWNLOAD_CONCURRENCY, async ({ relativePath, entry }) => {
         reportSyncProgress(onProgress, {
           mode: 'download',
           phase: 'transferring',
-          current: processed,
+          current: skipped + transferCompleted,
           total,
           file: relativePath,
-          message: `正在下载 (${processed}/${total})`,
+          message: downloadTotal === 1
+            ? `正在下载 ${relativePath}…`
+            : `正在下载 (${transferCompleted + 1}/${downloadTotal})`,
         })
+        await flushSyncProgress()
         const tempFile = join(tempRoot, relativePath)
         fs.mkdirSync(dirname(tempFile), { recursive: true })
-        await downloadCloudFile(config, fileObjectKey(config, relativePath), tempFile)
+        try {
+          await downloadCloudFile(
+            config,
+            fileObjectKey(config, relativePath),
+            tempFile,
+            (received, contentLength) => {
+              if (downloadTotal !== 1 || !onProgress) return
+              const pct = contentLength ? Math.round((received / contentLength) * 100) : undefined
+              reportSyncProgress(onProgress, {
+                mode: 'download',
+                phase: 'transferring',
+                current: skipped,
+                total,
+                file: relativePath,
+                message: pct != null ? `正在下载 ${relativePath} (${pct}%)` : `正在下载 ${relativePath}…`,
+              })
+            },
+          )
+        } catch (error) {
+          if (relativePath === 'ledger.db') throw error
+          console.warn(`Cloud download skipped missing file ${relativePath}:`, error)
+          return
+        }
+        transferCompleted += 1
         changed.push(relativePath)
         downloaded += 1
         bytes += entry.size
+        reportSyncProgress(onProgress, {
+          mode: 'download',
+          phase: 'transferring',
+          current: skipped + transferCompleted,
+          total,
+          file: relativePath,
+          message: `已完成 (${skipped + transferCompleted}/${total})`,
+        })
       })
+
+      if (!changed.length) {
+        acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
+        reportSyncProgress(onProgress, {
+          mode: 'download',
+          phase: 'done',
+          current: total,
+          total,
+          message: '云端清单已对齐（部分图片在云端不存在，已跳过）',
+        })
+        return { ok: true, downloaded: 0, skipped, bytes: 0, totalFiles: total, replacedLedger: false }
+      }
 
       reportSyncProgress(onProgress, {
         mode: 'download',
@@ -789,6 +981,7 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
         total,
         message: '正在合并到本地账本…',
       })
+      await flushSyncProgress()
       const applied = await applyIncrementalSync(changed, tempRoot, { preBackup: 'db-only' })
       if (!applied.ok) return { ok: false, error: applied.error || '应用云端差异失败' }
 
@@ -800,16 +993,7 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
         message: '恢复完成',
       })
 
-      let manifestToAck = remoteManifest
-      if (downloaded > 0) {
-        try {
-          await syncCloudUpload(onProgress)
-          manifestToAck = await fetchRemoteManifest(config)
-        } catch {
-          // upload failed; still acknowledge downloaded snapshot to avoid prompt loop
-        }
-      }
-      acknowledgeRemoteManifest(manifestToAck.updatedAt, manifestToAck.files || {})
+      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
 
       return {
         ok: true,
@@ -817,6 +1001,7 @@ export async function syncCloudDownload(onProgress?: CloudSyncProgressReporter):
         skipped,
         bytes,
         totalFiles: total,
+        replacedLedger: changed.includes('ledger.db'),
       }
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true })
@@ -847,21 +1032,36 @@ export interface CloudStartupPlan {
   remoteHasData: boolean
   action: CloudStartupAction
   pendingFiles: number
+  pendingLedgerFiles?: number
+  pendingMediaFiles?: number
+  /** 启动自动恢复时是否包含图片/附件；默认仅有账本数据时不拉图片 */
+  downloadIncludeMedia?: boolean
   remoteUpdatedAt?: string
   remoteFingerprint?: string
   offline?: boolean
   message?: string
 }
 
+function countPendingRemoteFilesSplit(
+  remoteEntries: Array<[string, SyncFileEntry]>,
+  localLedger?: SyncFileEntry,
+): { total: number; ledger: number; media: number } {
+  let ledger = 0
+  let media = 0
+  for (const [relativePath, entry] of remoteEntries) {
+    if (localFileMatchesRemoteEntry(relativePath, entry, localLedger)) continue
+    if (relativePath === 'ledger.db') ledger += 1
+    else if (isCloudMediaSyncPath(relativePath)) media += 1
+    else ledger += 1
+  }
+  return { total: ledger + media, ledger, media }
+}
+
 function countPendingRemoteFiles(
   remoteEntries: Array<[string, SyncFileEntry]>,
   localLedger?: SyncFileEntry,
 ): number {
-  let pendingFiles = 0
-  for (const [relativePath, entry] of remoteEntries) {
-    if (!localFileMatchesRemoteEntry(relativePath, entry, localLedger)) pendingFiles += 1
-  }
-  return pendingFiles
+  return countPendingRemoteFilesSplit(remoteEntries, localLedger).total
 }
 
 export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
@@ -892,6 +1092,7 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         remoteHasData: true,
         action: 'auto_download',
         pendingFiles: remoteEntries.length,
+        downloadIncludeMedia: true,
         remoteUpdatedAt: remoteManifest.updatedAt || undefined,
         remoteFingerprint,
       }
@@ -933,8 +1134,8 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
 
     const needsLedgerCompare = remoteEntries.some(([path]) => path === 'ledger.db')
     const localLedger = needsLedgerCompare ? await hashLiveLedgerDbEntry() : undefined
-    const pendingFiles = countPendingRemoteFiles(remoteEntries, localLedger)
-    if (!pendingFiles) {
+    const pending = countPendingRemoteFilesSplit(remoteEntries, localLedger)
+    if (!pending.total) {
       acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteFiles)
       return {
         configured: true,
@@ -942,6 +1143,8 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         remoteHasData: true,
         action: 'skip',
         pendingFiles: 0,
+        pendingLedgerFiles: 0,
+        pendingMediaFiles: 0,
         remoteUpdatedAt: remoteManifest.updatedAt || undefined,
         remoteFingerprint,
       }
@@ -954,7 +1157,24 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         localEmpty: false,
         remoteHasData: true,
         action: 'skip',
-        pendingFiles,
+        pendingFiles: pending.total,
+        pendingLedgerFiles: pending.ledger,
+        pendingMediaFiles: pending.media,
+        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteFingerprint,
+      }
+    }
+
+    if (pending.ledger > 0) {
+      return {
+        configured: true,
+        localEmpty: false,
+        remoteHasData: true,
+        action: prefs.startupAutoDownload ? 'auto_download' : 'prompt_download',
+        pendingFiles: pending.total,
+        pendingLedgerFiles: pending.ledger,
+        pendingMediaFiles: pending.media,
+        downloadIncludeMedia: true,
         remoteUpdatedAt: remoteManifest.updatedAt || undefined,
         remoteFingerprint,
       }
@@ -965,9 +1185,13 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
       localEmpty: false,
       remoteHasData: true,
       action: prefs.startupAutoDownload ? 'auto_download' : 'prompt_download',
-      pendingFiles,
+      pendingFiles: pending.media,
+      pendingLedgerFiles: 0,
+      pendingMediaFiles: pending.media,
+      downloadIncludeMedia: false,
       remoteUpdatedAt: remoteManifest.updatedAt || undefined,
       remoteFingerprint,
+      message: '云端图片/附件与本地不一致；启动时仅同步账本，不自动拉回图片',
     }
   } catch (error: any) {
     if (localEmpty) {

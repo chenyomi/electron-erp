@@ -46,19 +46,29 @@ export const billsAPI = {
 
 export const customerAPI = {
   names: () => api.invoke('customer:names'),
+  profileNames: () => api.invoke('customer:profile-names'),
   list: (params?: any) => api.invoke('customer:list', params),
   summary: (params?: any) => api.invoke('customer:summary', params),
   profile: (customerName: string) => api.invoke('customer:profile', customerName),
-  create: (profile: { customer_name: string; opening_balance?: number; note?: string }) => api.invoke('customer:create', profile),
+  create: (profile: {
+    customer_name: string
+    contact_person?: string
+    phone?: string
+    address?: string
+    opening_balance?: number
+    note?: string
+  }) => api.invoke('customer:create', profile),
   removePreview: (customerName: string) => api.invoke('customer:remove-preview', customerName),
   remove: (customerName: string) => api.invoke('customer:remove', customerName),
   setProfile: (profile: any) => api.invoke('customer:set-profile', profile),
   anomalies: (customerName?: string) => api.invoke('customer:anomalies', customerName || ''),
   repair: (customerName?: string) => api.invoke('customer:repair', customerName || ''),
   paymentAudit: (customerName?: string) => api.invoke('customer:payment-audit', customerName || ''),
+  backfillFromStockOut: (customerName?: string) => api.invoke('customer:backfill-from-stock-out', customerName || ''),
   add: (row: any) => api.invoke('customer:add', row),
   update: (row: any) => api.invoke('customer:update', row),
   delete: (id: number) => api.invoke('customer:delete', id),
+  deleteMany: (ids: number[]) => api.invoke('customer:deleteMany', ids),
   trash: () => api.invoke('customer:trash'),
   restore: (id: number) => api.invoke('customer:restore', id),
   attachments: (id: number) => api.invoke('customer:attachments', id),
@@ -77,12 +87,35 @@ export const attachmentAPI = {
 export const stockInAPI = {
   names: () => api.invoke('stockIn:names'),
   list: (params?: any) => api.invoke('stockIn:list', params),
-  summary: (supplierName?: string) => api.invoke('stockIn:summary', supplierName),
+  summary: (params?: any) => api.invoke('stockIn:summary', params),
   add: (row: any) => api.invoke('stockIn:add', row),
   update: (row: any) => api.invoke('stockIn:update', row),
   delete: (id: number) => api.invoke('stockIn:delete', id),
+  deleteMany: (ids: number[]) => api.invoke('stockIn:deleteMany', ids),
   trash: () => api.invoke('stockIn:trash'),
   restore: (id: number) => api.invoke('stockIn:restore', id),
+}
+
+export const supplierAPI = {
+  names: () => api.invoke('supplier:names'),
+  profileNames: () => api.invoke('supplier:profile-names'),
+  list: (params?: any) => api.invoke('supplier:list', params),
+  summary: (params?: any) => api.invoke('supplier:summary', params),
+  profile: (supplierName: string) => api.invoke('supplier:profile', supplierName),
+  create: (profile: {
+    supplier_name: string
+    contact_person?: string
+    phone?: string
+    address?: string
+    opening_balance?: number
+    note?: string
+  }) => api.invoke('supplier:create', profile),
+  setProfile: (profile: any) => api.invoke('supplier:set-profile', profile),
+  removePreview: (supplierName: string) => api.invoke('supplier:remove-preview', supplierName),
+  remove: (supplierName: string) => api.invoke('supplier:remove', supplierName),
+  add: (row: any) => api.invoke('supplier:add', row),
+  update: (row: any) => api.invoke('supplier:update', row),
+  delete: (id: number) => api.invoke('supplier:delete', id),
 }
 
 export const stockOutAPI = {
@@ -92,6 +125,7 @@ export const stockOutAPI = {
   add: (row: any) => api.invoke('stockOut:add', row),
   update: (row: any) => api.invoke('stockOut:update', row),
   delete: (id: number) => api.invoke('stockOut:delete', id),
+  deleteMany: (ids: number[]) => api.invoke('stockOut:deleteMany', ids),
   trash: () => api.invoke('stockOut:trash'),
   restore: (id: number) => api.invoke('stockOut:restore', id),
 }
@@ -132,7 +166,9 @@ export const systemAPI = {
   appVersion: () => api.invoke('system:app-version'),
   summary: () => api.invoke('system:summary'),
   logs: (params?: any) => api.invoke('system:logs', params),
-  trashAll: () => api.invoke('system:trash-all'),
+  trashAll: (params?: any) => api.invoke('system:trash-all', params),
+  clearTrash: (password: string) => api.invoke('system:clear-trash', { password }),
+  clearLogs: (password: string) => api.invoke('system:clear-logs', { password }),
   backup: () => api.invoke('system:backup'),
   exportExcel: (params?: any) => api.invoke('system:export-excel', params),
   backupsList: () => api.invoke('system:backups-list'),
@@ -190,8 +226,8 @@ export const cloudAPI = {
   saveSyncPrefs: (prefs: any) => api.invoke('cloud:save-sync-prefs', prefs),
   acknowledgeRemoteSnapshot: (payload: { updatedAt?: string; fingerprint?: string }) =>
     api.invoke('cloud:ack-remote-snapshot', payload),
-  syncUpload: () => api.invoke('cloud:sync-upload'),
-  syncDownload: () => api.invoke('cloud:sync-download'),
+  syncUpload: (password: string) => api.invoke('cloud:sync-upload', { password }),
+  syncDownload: (options?: { includeMedia?: boolean }) => api.invoke('cloud:sync-download', options),
   onSyncProgress: (listener: (progress: any) => void) => window.electronAPI.on('cloud:sync-progress', listener),
   list: () => api.invoke('cloud:list'),
 }

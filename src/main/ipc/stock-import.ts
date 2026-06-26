@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx'
+import { setSupplierProfile } from './supplier-profile'
 
 export interface StockInImportResult {
   stockIn: number
@@ -80,8 +81,17 @@ export function importStockInExcel(db: any, filePath: string): StockInImportResu
   const wb = XLSX.readFile(filePath, { cellDates: true })
   const result: StockInImportResult = { stockIn: 0, skipped: 0, sheets: 0 }
 
+  const exists = db.prepare(`
+    SELECT 1 FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ? AND date = ? AND contract_no = ?
+      AND product_name = ? AND spec = ? AND unit = ?
+      AND quantity = ? AND unit_price = ? AND amount = ? AND note = ?
+    LIMIT 1
+  `)
+
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO stock_in_ledger (
+    INSERT INTO stock_in_ledger (
       supplier_name, category, date, contract_no, product_name, spec, unit,
       quantity, unit_price, amount, tax_rate, tax_amount, invoice_amount, note
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -89,9 +99,16 @@ export function importStockInExcel(db: any, filePath: string): StockInImportResu
 
   const insertMany = db.transaction((items: any[][]) => {
     for (const values of items) {
-      const r = insert.run(...values)
-      if (r.changes) result.stockIn++
-      else result.skipped++
+      const [
+        supplierName, , date, contractNo, productName, spec, unit,
+        quantity, unitPrice, amount, , , , note,
+      ] = values
+      if (exists.get(supplierName, date, contractNo, productName, spec, unit, quantity, unitPrice, amount, note)) {
+        result.skipped++
+        continue
+      }
+      insert.run(...values)
+      result.stockIn++
     }
   })
 
@@ -108,6 +125,9 @@ export function importStockInExcel(db: any, filePath: string): StockInImportResu
 
     const category = parseCategory(strVal(rows[0]?.[0]))
     const supplierName = parseSupplier(rows, sheetName)
+    if (supplierName) {
+      setSupplierProfile(db, { supplier_name: supplierName })
+    }
     const header = rows[headerIndex].map(strVal)
     const col = (label: string) => header.findIndex(cell => cell.replace(/\s/g, '').includes(label.replace(/\s/g, '')))
 

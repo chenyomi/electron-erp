@@ -60,6 +60,36 @@ function availableStock(row: any, excludeId?: number) {
   return Number(stockIn?.qty || 0) - (Number(stockOut?.qty || 0) - returnQty)
 }
 
+function formatSpecUnitLabel(spec: string, unit: string): string {
+  const specLabel = spec || '无规格'
+  const unitLabel = unit || '无单位'
+  return `${specLabel} / ${unitLabel}`
+}
+
+function buildNoStockError(db: ReturnType<typeof getDb>, key: ReturnType<typeof productKey>, excludeId?: number): string {
+  const variants = db.prepare(`
+    SELECT DISTINCT COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL AND product_name = ?
+  `).all(key.productName) as Array<{ spec: string; unit: string }>
+
+  const availableVariants: string[] = []
+  for (const variant of variants) {
+    const avail = availableStock(
+      { product_name: key.productName, spec: variant.spec, unit: variant.unit },
+      excludeId,
+    )
+    if (avail > 0) {
+      availableVariants.push(`${formatSpecUnitLabel(variant.spec, variant.unit)}（可出库 ${avail}）`)
+    }
+  }
+
+  if (availableVariants.length) {
+    return `「${key.productName}」规格/单位与入库不一致（您填的是 ${formatSpecUnitLabel(key.spec, key.unit)}）。有库存的组合：${availableVariants.join('；')}`
+  }
+  return '该产品当前没有库存，不能出库'
+}
+
 function validateStockOut(row: any, excludeId?: number) {
   const db = getDb()
   const key = productKey(row)
@@ -69,7 +99,7 @@ function validateStockOut(row: any, excludeId?: number) {
   if (!key.productName) throw new Error('请选择库存产品')
   if (quantity <= 0) throw new Error('出库数量必须大于 0')
   const available = availableStock(row, excludeId)
-  if (available <= 0) throw new Error('该产品当前没有库存，不能出库')
+  if (available <= 0) throw new Error(buildNoStockError(db, key, excludeId))
   if (quantity > available) throw new Error(`库存不足，当前可出库 ${available}`)
 }
 

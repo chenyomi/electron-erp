@@ -30,6 +30,8 @@ function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
   const supplierName = String(row?.supplier_name || '').trim()
   if (supplierName) assertSupplierProfileExists(db, supplierName)
   if (!String(row?.product_name || '').trim()) throw new Error('请填写产品名称')
+  if (!String(row?.spec || '').trim()) throw new Error('请填写规格（出库须与入库完全一致，用于库存匹配）')
+  if (!String(row?.unit || '').trim()) throw new Error('请填写单位（出库须与入库完全一致，用于库存匹配）')
   if (Number(row?.quantity || 0) <= 0) throw new Error('入库数量必须大于 0')
 }
 

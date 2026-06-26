@@ -482,6 +482,14 @@ const messages = {
     defaultPrice: '默认单价',
     availableQty: '可用库存',
     selectInventoryProduct: '选择库存产品',
+    inventorySpecEmpty: '无规格',
+    inventoryUnitEmpty: '无单位',
+    inventoryFieldAutoHint: '随产品名称选择自动带出，须与入库一致',
+    stockOutSelectFromList: '请从下拉列表选择有库存的产品（品名/规格/单位须与入库一致）',
+    stockInUnitRequired: '请填写单位（须与出库一致，用于库存匹配）',
+    stockInUnitHint: '必填；出库时按品名+规格+单位匹配库存',
+    stockInSpecRequired: '请填写规格（须与出库一致，用于库存匹配）',
+    stockInSpecHint: '必填；出库时按品名+规格+单位匹配库存',
     supplierCount: '供应商数',
     customerCount: '客户数',
     searchStock: '搜索产品/规格/合同号…',
@@ -926,6 +934,14 @@ const messages = {
     defaultPrice: 'Default Price',
     availableQty: 'Available Qty',
     selectInventoryProduct: 'Select inventory product',
+    inventorySpecEmpty: 'No spec',
+    inventoryUnitEmpty: 'No unit',
+    inventoryFieldAutoHint: 'Filled from product selection; must match stock-in',
+    stockOutSelectFromList: 'Select an in-stock product from the list (name/spec/unit must match stock-in)',
+    stockInUnitRequired: 'Unit is required (must match stock-out for inventory matching)',
+    stockInUnitHint: 'Required; stock-out matches by name + spec + unit',
+    stockInSpecRequired: 'Spec is required (must match stock-out for inventory matching)',
+    stockInSpecHint: 'Required; stock-out matches by name + spec + unit',
     supplierCount: 'Suppliers',
     customerCount: 'Customers',
     searchStock: 'Search product/spec/contract…',
@@ -2057,7 +2073,11 @@ const InventoryPage = defineComponent({
             h('tbody', loading.value
               ? [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '加载中...')])]
               : rows.value.length
-                ? rows.value.map(row => h('tr', { key: `${row.product_name}-${row.spec}-${row.unit}` }, columns.map(c => h('td', { class: amountClass(c) }, formatCell(c, row[c])))))
+                ? rows.value.map(row => h('tr', { key: `${row.product_name}-${row.spec}-${row.unit}` }, columns.map(c => h('td', { class: amountClass(c) }, c === 'spec' && !row[c]
+                  ? props.t('inventorySpecEmpty')
+                  : c === 'unit' && !row[c]
+                    ? props.t('inventoryUnitEmpty')
+                    : formatCell(c, row[c])))))
                 : [h('tr', [h('td', { colspan: columns.length, class: 'empty-cell' }, '暂无库存记录')])]),
           ]),
         ]),
@@ -2948,8 +2968,33 @@ const LedgerPage = defineComponent({
             return
           }
         }
+        if (props.page === 'stockIn') {
+          if (!String(payload.spec || '').trim()) {
+            emit('notify', props.t('stockInSpecRequired'), 'warning')
+            return
+          }
+          if (!String(payload.unit || '').trim()) {
+            emit('notify', props.t('stockInUnitRequired'), 'warning')
+            return
+          }
+        }
         if (props.page === 'stockIn' || props.page === 'stockOut') {
           payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
+        }
+        if (props.page === 'stockOut' && !editing.value) {
+          const matched = inventoryOptions.value.find(item =>
+            item.product_name === payload.product_name &&
+            (item.spec || '') === (payload.spec || '') &&
+            (item.unit || '') === (payload.unit || '')
+          )
+          if (!matched) {
+            emit('notify', props.t('stockOutSelectFromList'), 'warning')
+            return
+          }
+          if (Number(payload.quantity || 0) > Number(matched.stock_qty || 0)) {
+            emit('notify', `库存不足，当前可出库 ${matched.stock_qty}`, 'warning')
+            return
+          }
         }
         const saved = editing.value ? await config.value.api.update({ ...payload, id: editing.value.id }) : await config.value.api.add(payload)
         if (pendingAttachmentDeletes.value.length) {
@@ -4462,11 +4507,16 @@ function ledgerColumnLabel(col: string, table?: string) {
   }
   return columnLabel(col)
 }
-function inventoryOptionTitle(item: any) {
+function inventoryOptionTitle(item: any, t?: (key: string) => string) {
   if (!item || typeof item !== 'object') return String(item || '')
-  const spec = item.spec ? ` / ${item.spec}` : ''
-  const unit = item.unit ? ` ${item.unit}` : ''
-  return `${item.product_name}${spec} · 库存 ${money(item.stock_qty)}${unit}`
+  const specLabel = item.spec ? item.spec : (t ? t('inventorySpecEmpty') : '无规格')
+  const unitLabel = item.unit ? item.unit : (t ? t('inventoryUnitEmpty') : '无单位')
+  return `${item.product_name} / ${specLabel} / ${unitLabel} · 库存 ${money(item.stock_qty)}`
+}
+function stockOutLockedFieldDisplay(key: string, value: string, t: (key: string) => string) {
+  if (key === 'spec') return value || t('inventorySpecEmpty')
+  if (key === 'unit') return value || t('inventoryUnitEmpty')
+  return value
 }
 function productOptionTitle(item: any) {
   if (!item || typeof item !== 'object') return String(item || '')
@@ -4761,11 +4811,17 @@ function renderRecordFormField(
   }
 
   if (config.table === 'stockOut' && key === 'product_name') {
+    const inventoryTitle = (item: any) => inventoryOptionTitle(item, t)
     const selected = inventoryOptions.find(item =>
       item.product_name === form.product_name &&
       (item.spec || '') === (form.spec || '') &&
       (item.unit || '') === (form.unit || '')
-    ) || form.product_name || null
+    ) || (form.product_name ? {
+      product_name: form.product_name,
+      spec: form.spec || '',
+      unit: form.unit || '',
+      stock_qty: 0,
+    } : null)
     return h('div', { class: wrapClass, key }, [
       h(VCombobox, {
         ...base,
@@ -4775,19 +4831,47 @@ function renderRecordFormField(
             form.product_name = v.product_name
             form.spec = v.spec || ''
             form.unit = v.unit || ''
-          } else {
-            form.product_name = String(v || '')
+          } else if (!v) {
+            form.product_name = ''
+            form.spec = ''
+            form.unit = ''
           }
         },
         items: inventoryOptions,
         itemTitle: 'product_name',
-        customFilter: productComboboxFilter(inventoryOptionTitle),
+        customFilter: productComboboxFilter(inventoryTitle),
         label: formFieldLabel(key, config, t),
         placeholder: t('selectInventoryProduct'),
         returnObject: true,
         clearable: true,
         hideNoData: false,
-      }, productComboboxSlots(form, inventoryOptionTitle)),
+      }, productComboboxSlots(form, inventoryTitle)),
+    ])
+  }
+
+  if (config.table === 'stockOut' && (key === 'spec' || key === 'unit')) {
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: stockOutLockedFieldDisplay(key, String(form[key] || ''), t),
+        label: formFieldLabel(key, config, t),
+        readonly: true,
+        hint: t('inventoryFieldAutoHint'),
+        persistentHint: true,
+      }),
+    ])
+  }
+
+  if (config.table === 'stockIn' && (key === 'spec' || key === 'unit')) {
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: form[key],
+        'onUpdate:modelValue': (v: any) => { form[key] = v },
+        label: formFieldLabel(key, config, t),
+        hint: t(key === 'spec' ? 'stockInSpecHint' : 'stockInUnitHint'),
+        persistentHint: true,
+      }),
     ])
   }
 

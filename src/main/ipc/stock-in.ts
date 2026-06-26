@@ -218,6 +218,7 @@ export function registerStockInHandlers(): void {
     const db = getDb()
     const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
     let count = 0
+    let lastError = ''
     for (const id of uniqueIds) {
       try {
         const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
@@ -225,13 +226,15 @@ export function registerStockInHandlers(): void {
         softDelete('stock_in_ledger', id)
         if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
         count++
-      } catch {
+      } catch (error: any) {
+        lastError = error?.message || '删除失败'
         break
       }
     }
     cleanupOrphanAttachments()
     syncProductCatalogWithLedger()
-    return { ok: count === uniqueIds.length, count, total: uniqueIds.length }
+    if (count === uniqueIds.length) return { ok: true, count, total: uniqueIds.length }
+    return { ok: false, count, total: uniqueIds.length, error: lastError || `仅删除 ${count}/${uniqueIds.length} 条` }
   })
   ipcMain.handle('stockIn:trash', () => {
     return getDb().prepare(`SELECT * FROM stock_in_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()

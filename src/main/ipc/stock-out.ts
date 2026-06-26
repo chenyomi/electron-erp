@@ -240,18 +240,20 @@ export function registerStockOutHandlers(): void {
     const db = getDb()
     const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
     let count = 0
+    let lastError = ''
     for (const id of uniqueIds) {
       try {
         deleteStockOutById(db, id)
         count++
-      } catch {
-        // stop on first failure so user sees partial state clearly
+      } catch (error: any) {
+        lastError = error?.message || '删除失败'
         break
       }
     }
     cleanupOrphanAttachments()
     syncProductCatalogWithLedger()
-    return { ok: count === uniqueIds.length, count, total: uniqueIds.length }
+    if (count === uniqueIds.length) return { ok: true, count, total: uniqueIds.length }
+    return { ok: false, count, total: uniqueIds.length, error: lastError || `仅删除 ${count}/${uniqueIds.length} 条` }
   })
 
   ipcMain.handle('stockOut:trash', () => {

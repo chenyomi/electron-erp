@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3'
 import {
   buildSupplierDescription,
-  getSupplierLedgerDeleteBlockReason,
   isAutoReturnStockIn,
   isSupplierPayableRecord,
   validatePayableSyncFromStockIn,
@@ -119,7 +118,11 @@ function listLinkedSupplierRows(db: Database.Database, payableId: number) {
 export function getStockInDeleteBlockReason(db: Database.Database, stockInRow: Record<string, any>): string | null {
   const payable = findPayableForStockIn(db, stockInRow)
   if (!payable) return null
-  return getSupplierLedgerDeleteBlockReason(payable, listLinkedSupplierRows(db, Number(payable.id)))
+  const linked = listLinkedSupplierRows(db, Number(payable.id))
+  if (linked.length > 0) {
+    return '该入库已有退货或付款，请先撤销关联记录'
+  }
+  return null
 }
 
 export function syncPayableFromStockIn(db: Database.Database, stockInRow: Record<string, any>) {

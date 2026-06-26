@@ -3400,6 +3400,12 @@ const LedgerPage = defineComponent({
         emit('notify', error?.message || '保存失败', 'error')
       }
     }
+    const assertDeleteResult = (result: any, fallback = '删除失败') => {
+      if (result?.ok === false) throw new Error(result.error || fallback)
+      if (Number(result?.total) > 0 && Number(result?.count) < Number(result?.total)) {
+        throw new Error(result.error || `仅删除 ${result.count}/${result.total} 条`)
+      }
+    }
     const remove = async (id: number) => {
       const row = rows.value.find((item: any) => item.id === id)
       if (row && props.page === 'customer' && customerDetailDialog.value) {
@@ -3417,7 +3423,8 @@ const LedgerPage = defineComponent({
       })
       if (!ok) return
       try {
-        await config.value.api.delete(id)
+        const result = await config.value.api.delete(id)
+        assertDeleteResult(result)
         emit('notify', '已移入回收站')
         load()
       } catch (error: any) {
@@ -3440,11 +3447,16 @@ const LedgerPage = defineComponent({
       batchDeleting.value = true
       try {
         const ids = [...selected.value]
+        let result: any
         if (typeof config.value.api.deleteMany === 'function') {
-          await config.value.api.deleteMany(ids)
+          result = await config.value.api.deleteMany(ids)
         } else {
-          for (const id of ids) await config.value.api.delete(id)
+          for (const id of ids) {
+            result = await config.value.api.delete(id)
+            assertDeleteResult(result)
+          }
         }
+        assertDeleteResult(result)
         selected.value = []
         emit('notify', props.t('batchDeleteDone', { count }))
         load()

@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3'
 import {
   buildCustomerDescription,
-  getCustomerLedgerDeleteBlockReason,
   isCustomerPaymentRecord,
   isCustomerReturnRecord,
   sqlCustomerPaymentWhere,
@@ -179,7 +178,11 @@ function listLinkedCustomerRows(db: Database.Database, receivableId: number) {
 export function getStockOutDeleteBlockReason(db: Database.Database, stockOutRow: Record<string, any>): string | null {
   const receivable = findReceivableForStockOut(db, stockOutRow)
   if (!receivable) return null
-  return getCustomerLedgerDeleteBlockReason(receivable, listLinkedCustomerRows(db, Number(receivable.id)))
+  const linked = listLinkedCustomerRows(db, Number(receivable.id))
+  if (linked.length > 0) {
+    return '该出库已有退货或收款，请先撤销关联记录'
+  }
+  return null
 }
 
 export function syncReceivableFromStockOut(db: Database.Database, stockOutRow: Record<string, any>) {

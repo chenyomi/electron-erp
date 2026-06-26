@@ -544,7 +544,16 @@ export function registerCustomerHandlers(): void {
   ipcMain.handle('customer:trash', () => {
     return getDb().prepare(`SELECT * FROM customer_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
   })
-  ipcMain.handle('customer:restore', (_e, id) => { restore('customer_ledger', id); return { ok: true } })
+  ipcMain.handle('customer:restore', (_e, id) => {
+    const db = getDb()
+    restore('customer_ledger', id)
+    const row = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+    if (row?.customer_name) recalculateCustomerBalances(db, row.customer_name)
+    if (row && isCustomerReturnRecord(row)) {
+      applyCustomerReturnSideEffects(db, row)
+    }
+    return { ok: true }
+  })
 
   ipcMain.handle('customer:attachments', (_e, id: number) => {
     const db = getDb()

@@ -126,6 +126,27 @@ export function calcSupplierPayableRemaining(
   return Math.round(Math.max(0, remaining) * 100) / 100
 }
 
+/** 单笔应付的净额、尚欠、多付（按关联退货/付款计算） */
+export function calcSupplierPayableSettlement(
+  payableAmountIn: number,
+  linkedRows: Array<Record<string, any>>,
+): { netDue: number; remaining: number; overpaid: number } {
+  let net = Number(payableAmountIn || 0)
+  let paid = 0
+  for (const item of linkedRows) {
+    if (isSupplierReturnRecord(item)) net += Number(item.amount_in || 0)
+    else if (isSupplierPaymentRecord(item)) paid += Number(item.amount_out || 0)
+  }
+  net = Math.round(net * 100) / 100
+  paid = Math.round(paid * 100) / 100
+  const delta = Math.round((net - paid) * 100) / 100
+  return {
+    netDue: net,
+    remaining: Math.max(0, delta),
+    overpaid: Math.max(0, -delta),
+  }
+}
+
 export function validateSupplierReturnAgainstPayments(
   payableAmountIn: number,
   linkedRows: Array<Record<string, any>>,
@@ -148,22 +169,12 @@ export function validateSupplierReturnAgainstPayments(
 }
 
 export function validateSupplierPaymentAmount(
-  payableAmountIn: number,
-  linkedRows: Array<Record<string, any>>,
+  _payableAmountIn: number,
+  _linkedRows: Array<Record<string, any>>,
   paymentAmountOut: number,
-  excludePaymentId = 0,
+  _excludePaymentId = 0,
 ): string | null {
-  let returnSum = 0
-  let paid = paymentAmountOut
-  for (const item of linkedRows) {
-    if (isSupplierReturnRecord(item)) returnSum += Number(item.amount_in || 0)
-    else if (isSupplierPaymentRecord(item)) {
-      if (excludePaymentId && Number(item.id) === excludePaymentId) continue
-      paid += Number(item.amount_out || 0)
-    }
-  }
-  const net = Math.round((Number(payableAmountIn || 0) + returnSum) * 100) / 100
-  if (paid > net + 0.005) return '付款金额不能超过尚欠'
+  if (paymentAmountOut <= 0) return '请填写付款金额'
   return null
 }
 
@@ -220,4 +231,65 @@ export function sortSupplierLedgerGrouped(rows: Array<Record<string, any>>): Arr
   return sortLedgerGrouped(rows, {
     isParent: isSupplierPayableRecord,
   })
+}
+
+export function supplierLedgerBizKindLabel(row: Record<string, any>): string {
+  if (isSupplierPaymentRecord(row)) return '付款'
+  if (isSupplierReturnRecord(row)) return '退货'
+  return '应付'
+}
+
+export function formatSupplierExportNote(row: Record<string, any>): string {
+  let note = String(row.note || '').trim()
+  if (row.payment_for) {
+    const extra = `付款对应：${row.payment_for}${row.payment_for_contract ? `（${row.payment_for_contract}）` : ''}`
+    note = note ? `${note}；${extra}` : extra
+  }
+  return note
+}
+
+export function getSupplierLedgerDeleteBlockReason(
+  row: Record<string, any>,
+  linkedToPayable: Array<Record<string, any>>,
+): string | null {
+  const actions = getSupplierLedgerRowActions(row, linkedToPayable)
+  return actions.showDelete ? null : (actions.deleteTip || '不能删除')
+}
+
+export function getSupplierLedgerAmountEditBlockReason(
+  row: Record<string, any>,
+  linkedToPayable: Array<Record<string, any>>,
+  payload?: Partial<Record<string, any>>,
+): string | null {
+  if (isSupplierPayableRecord(row)) {
+    if (Number(row.stock_in_id || 0) > 0) return '入库生成的应付请在「产品入库」中修改'
+    if (linkedToPayable.length > 0 && payload) {
+      const changed = Math.abs(Number(payload.amount_in ?? row.amount_in) - Number(row.amount_in)) > 0.005
+        || Math.abs(Number(payload.quantity ?? row.quantity) - Number(row.quantity)) > 0.005
+        || Math.abs(Number(payload.unit_price ?? row.unit_price) - Number(row.unit_price)) > 0.005
+      if (changed) return '该应付已有退货或付款，不能修改数量/金额'
+    }
+  }
+  if (isSupplierReturnRecord(row) && payload && linkedToPayable.some(isSupplierPaymentRecord)) {
+    const qtyChanged = Math.abs(Math.abs(Number(payload.quantity ?? row.quantity)) - Math.abs(Number(row.quantity))) > 0.005
+    const priceChanged = Math.abs(Number(payload.unit_price ?? row.unit_price) - Number(row.unit_price)) > 0.005
+    const amountChanged = Math.abs(Number(payload.amount_in ?? row.amount_in) - Number(row.amount_in)) > 0.005
+    if (qtyChanged || priceChanged || amountChanged) {
+      return '该应付已有付款，不能改退货数量/金额。可先撤销付款，或只改日期/备注'
+    }
+  }
+  return null
+}
+
+export function validatePayableSyncFromStockIn(
+  oldPayable: Record<string, any>,
+  linkedRows: Array<Record<string, any>>,
+  payload: { amount_in: number; quantity: number; unit_price: number },
+): string | null {
+  const block = getSupplierLedgerAmountEditBlockReason(oldPayable, linkedRows, payload)
+  if (block) return block
+  if (linkedRows.length > 0) {
+    return validateSupplierReturnAgainstPayments(payload.amount_in, linkedRows, 0)
+  }
+  return null
 }

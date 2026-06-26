@@ -10,6 +10,7 @@ import {
   deleteReceivableForStockOut,
   syncReceivableFromStockOut,
 } from './stock-customer-link'
+import type Database from 'better-sqlite3'
 
 function productKey(row: any) {
   return {
@@ -36,13 +37,13 @@ function normalizeStockOutRow(row: any) {
   }
 }
 
-function availableStock(row: any, excludeId?: number) {
-  const db = getDb()
+function availableStock(db: Database.Database, row: any, excludeId?: number) {
   const key = productKey(row)
   const stockIn = db.prepare(`
     SELECT COALESCE(SUM(quantity), 0) AS qty
     FROM stock_in_ledger
     WHERE deleted_at IS NULL
+      AND COALESCE(counts_inventory, 1) = 1
       AND product_name = ?
       AND COALESCE(spec, '') = ?
       AND COALESCE(unit, '') = ?
@@ -67,16 +68,17 @@ function formatSpecUnitLabel(spec: string, unit: string): string {
   return `${specLabel} / ${unitLabel}`
 }
 
-function buildNoStockError(db: ReturnType<typeof getDb>, key: ReturnType<typeof productKey>, excludeId?: number): string {
+function buildNoStockError(db: Database.Database, key: ReturnType<typeof productKey>, excludeId?: number): string {
   const variants = db.prepare(`
     SELECT DISTINCT COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit
     FROM stock_in_ledger
-    WHERE deleted_at IS NULL AND product_name = ?
+    WHERE deleted_at IS NULL AND COALESCE(counts_inventory, 1) = 1 AND product_name = ?
   `).all(key.productName) as Array<{ spec: string; unit: string }>
 
   const availableVariants: string[] = []
   for (const variant of variants) {
     const avail = availableStock(
+      db,
       { product_name: key.productName, spec: variant.spec, unit: variant.unit },
       excludeId,
     )
@@ -91,21 +93,19 @@ function buildNoStockError(db: ReturnType<typeof getDb>, key: ReturnType<typeof 
   return '该产品当前没有库存，不能出库'
 }
 
-function validateStockOut(row: any, excludeId?: number) {
-  const db = getDb()
+function validateStockOut(db: Database.Database, row: any, excludeId?: number) {
   const key = productKey(row)
   const quantity = Number(row?.quantity || 0)
   assertStockOutCustomerExists(db, row?.customer_name)
   if (!String(row?.date || '').trim()) throw new Error('请填写日期')
   if (!key.productName) throw new Error('请选择库存产品')
   if (quantity <= 0) throw new Error('出库数量必须大于 0')
-  const available = availableStock(row, excludeId)
+  const available = availableStock(db, row, excludeId)
   if (available <= 0) throw new Error(buildNoStockError(db, key, excludeId))
   if (quantity > available) throw new Error(`库存不足，当前可出库 ${available}`)
 }
 
-function deleteStockOutById(id: number) {
-  const db = getDb()
+function deleteStockOutById(db: ReturnType<typeof getDb>, id: number) {
   const row = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any> | undefined
   if (!row || row.deleted_at) return
   deleteReceivableForStockOut(db, row)
@@ -174,10 +174,10 @@ export function registerStockOutHandlers(): void {
     const db = getDb()
     const payload = normalizeStockOutRow(row)
     if (!payload.doc_no) payload.doc_no = generateDocNo('CK', 'stock_out_ledger', payload.date)
-    validateStockOut(payload)
     ensureProductCatalog(payload)
 
     const newRow = db.transaction(() => {
+      validateStockOut(db, payload)
       const result = db.prepare(`
         INSERT INTO stock_out_ledger (
           doc_no, customer_name, category, date, contract_no, product_name, spec, unit,
@@ -203,48 +203,68 @@ export function registerStockOutHandlers(): void {
     const oldRow = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as any
     const payload = normalizeStockOutRow(row)
     if (!payload.doc_no) payload.doc_no = oldRow?.doc_no || generateDocNo('CK', 'stock_out_ledger', payload.date)
-    validateStockOut(payload, id)
     ensureProductCatalog(payload)
-    db.prepare(`
-      UPDATE stock_out_ledger SET
-        doc_no=@doc_no, customer_name=@customer_name, category=@category, date=@date,
-        contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
-        quantity=@quantity, unit_price=@unit_price, amount=@amount,
-        note=@note, updated_at=datetime('now','localtime')
-      WHERE id=@id
-    `).run({ ...payload, id })
-    const newRow = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any>
+
+    const newRow = db.transaction(() => {
+      validateStockOut(db, payload, id)
+      db.prepare(`
+        UPDATE stock_out_ledger SET
+          doc_no=@doc_no, customer_name=@customer_name, category=@category, date=@date,
+          contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
+          quantity=@quantity, unit_price=@unit_price, amount=@amount,
+          note=@note, updated_at=datetime('now','localtime')
+        WHERE id=@id
+      `).run({ ...payload, id })
+      const updated = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any>
+      syncReceivableFromStockOut(db, updated)
+      return updated
+    })()
+
     logOperation('stock_out_ledger', id, 'UPDATE', oldRow as object, newRow as object)
     recalcInventoryForRows(oldRow, newRow)
-    syncReceivableFromStockOut(db, newRow)
     return newRow
   })
 
   ipcMain.handle('stockOut:delete', (_e, id) => {
-    deleteStockOutById(id)
-    cleanupOrphanAttachments()
-    syncProductCatalogWithLedger()
-    return { ok: true }
+    try {
+      deleteStockOutById(getDb(), id)
+      cleanupOrphanAttachments()
+      syncProductCatalogWithLedger()
+      return { ok: true }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '删除失败' }
+    }
   })
 
   ipcMain.handle('stockOut:deleteMany', (_e, ids: number[] = []) => {
+    const db = getDb()
     const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
-    for (const id of uniqueIds) deleteStockOutById(id)
+    let count = 0
+    for (const id of uniqueIds) {
+      try {
+        deleteStockOutById(db, id)
+        count++
+      } catch {
+        // stop on first failure so user sees partial state clearly
+        break
+      }
+    }
     cleanupOrphanAttachments()
     syncProductCatalogWithLedger()
-    return { ok: true, count: uniqueIds.length }
+    return { ok: count === uniqueIds.length, count, total: uniqueIds.length }
   })
 
   ipcMain.handle('stockOut:trash', () => {
     return getDb().prepare(`SELECT * FROM stock_out_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()
   })
   ipcMain.handle('stockOut:restore', (_e, id) => {
-    const row = getDb().prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id)
-    validateStockOut(row, id)
+    const db = getDb()
+    const row = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id)
+    validateStockOut(db, row, id)
     restore('stock_out_ledger', id)
     recalcInventoryForRows(row)
-    const restored = getDb().prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any>
-    syncReceivableFromStockOut(getDb(), restored)
+    const restored = db.prepare('SELECT * FROM stock_out_ledger WHERE id = ?').get(id) as Record<string, any>
+    syncReceivableFromStockOut(db, restored)
     return { ok: true }
   })
 }

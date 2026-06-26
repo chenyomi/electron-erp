@@ -3,6 +3,7 @@ import { getDb } from '../db'
 import {
   buildSupplierDescription,
   enrichSupplierRow,
+  getSupplierLedgerDeleteBlockReason,
   isSupplierPayableRecord,
   isSupplierPaymentRecord,
   isSupplierReturnRecord,
@@ -472,6 +473,15 @@ export function registerSupplierHandlers(): void {
     const db = getDb()
     const row = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
     if (!row) throw new Error('记录不存在')
+
+    const linkedToPayable = isSupplierPayableRecord(row)
+      ? db.prepare(`SELECT * FROM supplier_ledger WHERE deleted_at IS NULL AND ref_ledger_id = ?`).all(id)
+      : Number(row.ref_ledger_id || 0) > 0
+        ? db.prepare(`SELECT * FROM supplier_ledger WHERE deleted_at IS NULL AND ref_ledger_id = ?`).all(Number(row.ref_ledger_id))
+        : []
+    const deleteBlock = getSupplierLedgerDeleteBlockReason(row, linkedToPayable as Array<Record<string, any>>)
+    if (deleteBlock) throw new Error(deleteBlock)
+
     if (Number(row.stock_in_id || 0) > 0) {
       throw new Error('入库关联的应付请在「产品入库」中删除')
     }

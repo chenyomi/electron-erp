@@ -1,5 +1,12 @@
 import type Database from 'better-sqlite3'
-import { buildCustomerDescription, isCustomerPaymentRecord, isCustomerReturnRecord, sqlCustomerPaymentWhere } from '../../common/customer-ledger'
+import {
+  buildCustomerDescription,
+  getCustomerLedgerDeleteBlockReason,
+  isCustomerPaymentRecord,
+  isCustomerReturnRecord,
+  sqlCustomerPaymentWhere,
+  validateReceivableSyncFromStockOut,
+} from '../../common/customer-ledger'
 import { customerNameExists, recalculateCustomerBalances } from './customer-profile'
 import { logOperation, softDelete } from './helpers'
 import { ensureProductCatalog, recalcInventoryForRows } from './stock-business'
@@ -151,6 +158,30 @@ export function createReceivableFromStockOut(db: Database.Database, stockOutRow:
   return newRow
 }
 
+function findReceivableForStockOut(db: Database.Database, stockOutRow: Record<string, any>): Record<string, any> | undefined {
+  const ledgerId = Number(stockOutRow.ledger_id || 0)
+  if (ledgerId) {
+    return db.prepare('SELECT * FROM customer_ledger WHERE id = ? AND deleted_at IS NULL').get(ledgerId) as Record<string, any> | undefined
+  }
+  return db.prepare(`
+    SELECT * FROM customer_ledger
+    WHERE deleted_at IS NULL AND stock_out_id = ?
+  `).get(Number(stockOutRow.id || 0)) as Record<string, any> | undefined
+}
+
+function listLinkedCustomerRows(db: Database.Database, receivableId: number) {
+  return db.prepare(`
+    SELECT * FROM customer_ledger
+    WHERE deleted_at IS NULL AND ref_ledger_id = ?
+  `).all(receivableId) as Array<Record<string, any>>
+}
+
+export function getStockOutDeleteBlockReason(db: Database.Database, stockOutRow: Record<string, any>): string | null {
+  const receivable = findReceivableForStockOut(db, stockOutRow)
+  if (!receivable) return null
+  return getCustomerLedgerDeleteBlockReason(receivable, listLinkedCustomerRows(db, Number(receivable.id)))
+}
+
 export function syncReceivableFromStockOut(db: Database.Database, stockOutRow: Record<string, any>) {
   const ledgerId = Number(stockOutRow.ledger_id || 0)
   if (!ledgerId) {
@@ -176,6 +207,13 @@ export function syncReceivableFromStockOut(db: Database.Database, stockOutRow: R
     note: String(stockOutRow.note || '').trim(),
     stock_out_id: Number(stockOutRow.id || 0),
   }
+  const linkedRows = listLinkedCustomerRows(db, ledgerId)
+  const syncError = validateReceivableSyncFromStockOut(oldRow, linkedRows, {
+    amount_in: payload.amount_in,
+    quantity: payload.quantity,
+    unit_price: payload.unit_price,
+  })
+  if (syncError) throw new Error(syncError)
   db.prepare(`
     UPDATE customer_ledger SET
       customer_name=@customer_name, date=@date, description=@description,
@@ -195,6 +233,8 @@ export function syncReceivableFromStockOut(db: Database.Database, stockOutRow: R
 }
 
 export function deleteReceivableForStockOut(db: Database.Database, stockOutRow: Record<string, any>) {
+  const block = getStockOutDeleteBlockReason(db, stockOutRow)
+  if (block) throw new Error(block)
   const ledgerId = Number(stockOutRow.ledger_id || 0)
   if (!ledgerId) {
     const linked = db.prepare(`

@@ -118,6 +118,29 @@
       </aside>
 
       <main class="content-shell">
+        <v-alert
+          v-if="updateBannerVisible"
+          class="update-banner"
+          type="info"
+          variant="tonal"
+          density="comfortable"
+          closable
+          border="start"
+          @click:close="snoozeUpdate"
+        >
+          <div class="update-banner__body">
+            <div>
+              <div class="update-banner__title">{{ t('updateBannerTitle', { version: updateState.version || '' }) }}</div>
+              <p v-if="updateState.status === 'downloading'" class="muted tiny mb-0">{{ updateDownloadProgressText }}</p>
+              <p v-else class="muted tiny mb-0">{{ t('updateBannerHint') }}</p>
+            </div>
+            <div class="update-banner__actions">
+              <v-btn v-if="updateState.status === 'available'" size="small" color="primary" :loading="updateBusy" @click="downloadUpdatePackage">{{ t('updateDownload') }}</v-btn>
+              <v-btn v-else-if="updateState.status === 'downloaded'" size="small" color="primary" @click="openUpdateDialog">{{ t('updateInstall') }}</v-btn>
+              <v-btn size="small" variant="text" @click="snoozeUpdate">{{ t('updateSnooze') }}</v-btn>
+            </div>
+          </div>
+        </v-alert>
         <DashboardPage v-if="page === 'dashboard'" :t="t" />
         <InventoryPage v-else-if="page === 'inventory'" :t="t" />
         <LedgerPage v-else-if="isLedgerPage" :page="page" :t="t" @notify="notify" />
@@ -142,6 +165,16 @@
           <v-btn icon size="small" variant="tonal" :title="themeMode === 'dark' ? '浅色模式' : '深色模式'" @click="toggleTheme">{{ themeMode === 'dark' ? '☀' : '☾' }}</v-btn>
           <v-btn icon size="small" variant="tonal" :title="languageMode === 'zh' ? 'English' : '中文'" @click="toggleLanguage">{{ languageMode === 'zh' ? 'EN' : '中' }}</v-btn>
           <v-btn icon size="small" variant="tonal" :title="t('helpTitle')" @click="helpDialog = true">?</v-btn>
+          <v-chip
+            v-if="updateReadyChipVisible"
+            size="small"
+            color="primary"
+            variant="flat"
+            class="update-ready-chip"
+            @click="openUpdateDialog"
+          >
+            {{ t('updateReadyChip') }}
+          </v-chip>
           <v-btn icon size="small" variant="tonal" :title="t('changePassword')" @click="passwordDialog = true">🔒</v-btn>
         </div>
         <v-btn class="logout-compact" color="error" variant="tonal" size="small" :title="t('logout')" @click="handleLogout">
@@ -309,6 +342,7 @@
         </div>
         <v-card-text class="record-dialog__body">
           <v-alert v-if="updateState.status === 'error'" type="error" variant="tonal" density="compact">{{ updateState.error }}</v-alert>
+          <v-alert v-else-if="updateState.platformMessage" type="info" variant="tonal" density="compact">{{ updateState.platformMessage }}</v-alert>
           <v-alert v-else-if="updateState.status === 'not-available'" type="success" variant="tonal" density="compact">
             {{ t('updateLatest', { version: updateState.currentVersion || appVersion }) }}
           </v-alert>
@@ -318,12 +352,13 @@
           </div>
           <div v-else-if="updateState.status === 'downloading'">
             <v-progress-linear :model-value="updateState.percent || 0" color="primary" height="8" rounded />
-            <p class="muted tiny mt-2">{{ t('updateDownloading', { percent: Math.round(updateState.percent || 0) }) }}</p>
+            <p class="muted tiny mt-2">{{ updateDownloadProgressText }}</p>
           </div>
           <p v-else-if="updateState.status === 'checking'" class="muted">{{ t('updateChecking') }}</p>
         </v-card-text>
         <div class="record-dialog__footer">
-          <v-btn variant="text" @click="updateDialog = false">{{ t('cancel') }}</v-btn>
+          <v-btn variant="text" @click="closeUpdateDialog">{{ t('cancel') }}</v-btn>
+          <v-btn v-if="updateState.status === 'available'" variant="text" @click="snoozeUpdate">{{ t('updateSnooze') }}</v-btn>
           <v-btn v-if="updateState.status === 'available'" color="primary" :loading="updateBusy" @click="downloadUpdatePackage">{{ t('updateDownload') }}</v-btn>
           <v-btn v-else-if="updateState.status === 'downloaded'" color="primary" @click="installUpdateNow">{{ t('updateInstall') }}</v-btn>
           <v-btn v-else-if="updateState.status === 'error' || updateState.status === 'not-available'" color="primary" :loading="updateBusy" @click="runUpdateCheck">{{ t('updateRetry') }}</v-btn>
@@ -451,6 +486,13 @@ const messages = {
     updateRetry: '重新检查',
     updateSubtitleIdle: '启动后会自动检查新版本（Windows 通过七牛云更新源）。',
     updateSubtitleReady: '更新包已下载完成，重启后即可安装。',
+    updateBannerTitle: '新版本 v{version} 可用',
+    updateBannerHint: '可立即下载，稍后提醒将 24 小时内不再提示。',
+    updateSnooze: '稍后提醒',
+    updateReadyChip: '更新已就绪',
+    updateInstallConfirm: '安装更新将重启应用。退出前会自动备份数据，请确认未保存的录入已提交。',
+    updateInstallConfirmAction: '重启安装',
+    updateInstallBlockedSync: '云端同步进行中，请稍后再安装更新。',
     close: '关闭',
     navFinance: '账务管理',
     navTools: '工具',
@@ -720,7 +762,7 @@ const messages = {
     customerReturnBatchHint: '仅冲减本笔出库（{date} · {qty}{unit} · 待收 {remaining}），不影响其他批次；库存按退货数量加回。',
     customerLedgerEmptyHint: '产品出库后会自动生成应收。若仍为空，请重置筛选或到回收站恢复。',
     customerRefreshLedger: '刷新',
-    customerPaymentLinkedHint: '登记本条应收的收款，可改金额（支持部分收）',
+    customerPaymentLinkedHint: '登记本条应收的收款；可部分收，也可超过待收（多收部分在待收列显示）',
     customerRemainingToReceive: '待收',
     addCustomerPayment: '登记收款',
     customerBizKind: '类型',
@@ -804,7 +846,7 @@ const messages = {
     supplierPaymentRow: '付款',
     supplierLinkedPayable: '关联应付',
     selectPayableRowToPay: '请从应付行点击「付款」',
-    supplierPaymentLinkedHint: '登记本条应付的付款，可改金额（支持部分付）',
+    supplierPaymentLinkedHint: '登记本条应付的付款；可部分付，也可超过尚欠（多付部分在汇总中体现）',
     supplierPaymentFormHint: '每付一笔登记一条付款；请从应付行点「付款」关联。',
     supplierPayableFormHint: '应付由入库自动生成；此处仅可编辑已有明细。',
     supplierPayableAutoOnly: '应付由入库自动生成，请在应付行点「付款」或「退货」。',
@@ -932,6 +974,13 @@ const messages = {
     updateRetry: 'Check Again',
     updateSubtitleIdle: 'The app checks for updates after startup (Windows uses the Qiniu update CDN).',
     updateSubtitleReady: 'The update package is ready. Restart to install.',
+    updateBannerTitle: 'Version v{version} is available',
+    updateBannerHint: 'Download now, or snooze reminders for 24 hours.',
+    updateSnooze: 'Remind Later',
+    updateReadyChip: 'Update Ready',
+    updateInstallConfirm: 'Installing will restart the app. Your data will be auto-backed up on exit. Save any in-progress entries first.',
+    updateInstallConfirmAction: 'Restart & Install',
+    updateInstallBlockedSync: 'Cloud sync is in progress. Try again after it finishes.',
     close: 'Close',
     navFinance: 'Finance',
     navTools: 'Tools',
@@ -1198,7 +1247,7 @@ const messages = {
     customerLedgerDetailSub: 'Stock-out creates receivable rows. On receivable: Receive / Return. On payment/return rows: Edit or Delete.',
     customerLedgerEmptyHint: 'Receivables are created automatically from stock-out. Reset filters or check Trash if empty.',
     customerRefreshLedger: 'Refresh',
-    customerPaymentLinkedHint: 'Record payment for this receivable; amount can be partial',
+    customerPaymentLinkedHint: 'Record payment for this receivable; partial or overpayment allowed (overpaid shown in remaining column)',
     customerRemainingToReceive: 'Due',
     addCustomerPayment: 'Record Payment',
     customerBizKind: 'Type',
@@ -1281,7 +1330,7 @@ const messages = {
     supplierPaymentRow: 'Pay',
     supplierLinkedPayable: 'Linked payable',
     selectPayableRowToPay: 'Click Pay on a payable row first',
-    supplierPaymentLinkedHint: 'Record payment for this payable; partial payment supported',
+    supplierPaymentLinkedHint: 'Record payment for this payable; partial or overpayment allowed',
     supplierPaymentFormHint: 'One payment per transfer. Link from a payable row via Pay.',
     supplierPayableFormHint: 'Payables are auto-created from stock-in; edit existing rows only.',
     supplierPayableAutoOnly: 'Payables are created from stock-in. Use Pay or Return on payable rows.',
@@ -1396,8 +1445,11 @@ const passwordConfirmDialog = reactive({
 let passwordConfirmResolver: ((value: string | null) => void) | null = null
 const appVersion = ref('')
 const updateDialog = ref(false)
+const updateBannerVisible = ref(false)
+const updateManualCheck = ref(false)
 const updateBusy = ref(false)
 const updateState = ref<any>({ status: 'idle', currentVersion: '' })
+const UPDATE_SNOOZE_KEY = 'donghaoUpdateSnoozedUntil'
 let offUpdateState: (() => void) | undefined
 let offUpdateOpenDialog: (() => void) | undefined
 let offHeaderCloudProgress: (() => void) | undefined
@@ -1441,10 +1493,54 @@ const updateDialogSubtitle = computed(() => {
   return t('updateSubtitleIdle')
 })
 
-function maybeOpenUpdateDialog(state: any) {
+const updateDownloadProgressText = computed(() => {
+  const transferred = Number(updateState.value.transferred || 0)
+  const total = Number(updateState.value.total || 0)
+  const percent = Math.round(updateState.value.percent || 0)
+  if (total > 0) {
+    const mb = (value: number) => (value / 1024 / 1024).toFixed(1)
+    return `${t('updateDownloading', { percent })}（${mb(transferred)} / ${mb(total)} MB）`
+  }
+  return t('updateDownloading', { percent })
+})
+
+const updateReadyChipVisible = computed(() =>
+  updateState.value.status === 'downloaded' && !updateBannerVisible.value && !updateDialog.value,
+)
+
+function isUpdateSnoozed() {
+  const until = Number(localStorage.getItem(UPDATE_SNOOZE_KEY) || 0)
+  return until > Date.now()
+}
+
+function snoozeUpdate() {
+  localStorage.setItem(UPDATE_SNOOZE_KEY, String(Date.now() + 24 * 60 * 60 * 1000))
+  updateBannerVisible.value = false
+  updateDialog.value = false
+  cloudStartupPending = false
+  tryRunPendingCloudStartupCheck()
+}
+
+function openUpdateDialog() {
+  updateDialog.value = true
+}
+
+function closeUpdateDialog() {
+  updateDialog.value = false
+  if (updateState.value.status === 'available') snoozeUpdate()
+  else tryRunPendingCloudStartupCheck()
+}
+
+function maybeShowUpdatePrompt(state: any) {
   if (!currentUser.value) return
-  if (state?.status === 'available' || state?.status === 'downloaded') {
+  if (updateManualCheck.value) {
     updateDialog.value = true
+    return
+  }
+  if (isUpdateSnoozed()) return
+  if (state?.silent && (state?.status === 'not-available' || state?.status === 'error')) return
+  if (state?.status === 'available' || state?.status === 'downloaded') {
+    updateBannerVisible.value = true
     cloudStartupPending = true
   }
 }
@@ -1593,7 +1689,7 @@ async function maybePromptCloudUpdates() {
 }
 
 function tryRunPendingCloudStartupCheck() {
-  if (!cloudStartupPending || cloudStartupChecked || updateDialog.value) return
+  if (!cloudStartupPending || cloudStartupChecked || updateDialog.value || updateBannerVisible.value) return
   cloudStartupPending = false
   void maybePromptCloudUpdates()
 }
@@ -1604,22 +1700,24 @@ async function runStartupPromptSequence() {
   await waitForInitialUpdateCheck()
   const status = updateState.value.status
   if (status === 'available' || status === 'downloaded') {
-    maybeOpenUpdateDialog(updateState.value)
+    maybeShowUpdatePrompt(updateState.value)
     return
   }
   await maybePromptCloudUpdates()
 }
 
 async function runUpdateCheck() {
+  updateManualCheck.value = true
   updateBusy.value = true
   updateDialog.value = true
   try {
-    const state = await updateAPI.check()
+    const state = await updateAPI.check({ silent: false })
     updateState.value = state
   } catch (error: any) {
     updateState.value = { ...updateState.value, status: 'error', error: error?.message || t('updateRetry') }
   } finally {
     updateBusy.value = false
+    updateManualCheck.value = false
   }
 }
 
@@ -1635,6 +1733,16 @@ async function downloadUpdatePackage() {
 }
 
 async function installUpdateNow() {
+  if (headerCloudSyncBusy.value) {
+    notify(t('updateInstallBlockedSync'), 'warning')
+    return
+  }
+  const ok = await askConfirm({
+    message: t('updateInstallConfirm'),
+    confirmLabel: t('updateInstallConfirmAction'),
+    confirmColor: 'primary',
+  })
+  if (!ok) return
   await updateAPI.install()
 }
 
@@ -1820,6 +1928,7 @@ async function handleLogout() {
   cloudStartupChecked = false
   cloudStartupPending = false
   updateDialog.value = false
+  updateBannerVisible.value = false
 }
 
 async function changePassword() {
@@ -1848,23 +1957,28 @@ watch(updateDialog, (open) => {
   if (!open) tryRunPendingCloudStartupCheck()
 })
 
+watch(updateBannerVisible, (open) => {
+  if (!open) tryRunPendingCloudStartupCheck()
+})
+
 onMounted(async () => {
   offUpdateState = updateAPI.onState((state) => {
     updateState.value = state
-    maybeOpenUpdateDialog(state)
+    if (state?.status === 'downloaded') updateBannerVisible.value = true
+    maybeShowUpdatePrompt(state)
     if (state?.status === 'not-available' || state?.status === 'error') {
       tryRunPendingCloudStartupCheck()
     }
   })
   offUpdateOpenDialog = updateAPI.onOpenDialog(() => {
-    updateDialog.value = true
+    void runUpdateCheck()
   })
   offHeaderCloudProgress = cloudAPI.onSyncProgress(handleHeaderCloudProgress)
   try {
     appVersion.value = await systemAPI.appVersion()
     currentUser.value = await authAPI.me()
     updateState.value = await updateAPI.getState()
-    maybeOpenUpdateDialog(updateState.value)
+    maybeShowUpdatePrompt(updateState.value)
     if (currentUser.value) {
       await runCloudBootstrap()
       void runStartupPromptSequence()

@@ -1,9 +1,27 @@
 import * as XLSX from 'xlsx-js-style'
-import { enrichCustomerRow } from '../../common/customer-ledger'
+import {
+  calcCustomerReceivableRemaining,
+  customerLedgerBizKindLabel,
+  enrichCustomerRow,
+  formatCustomerExportNote,
+  isCustomerPaymentRecord,
+  isCustomerReceivableRecord,
+  isCustomerReturnRecord,
+  sortCustomerLedgerGrouped,
+} from '../../common/customer-ledger'
+import {
+  calcSupplierPayableRemaining,
+  enrichSupplierRow,
+  formatSupplierExportNote,
+  isSupplierPaymentRecord,
+  isSupplierPayableRecord,
+  sortSupplierLedgerGrouped,
+  supplierLedgerBizKindLabel,
+} from '../../common/supplier-ledger'
 import { buildDateOrderBy } from '../../common/ledger-date'
 import { buildDateFilterClause } from '../ipc/helpers'
 
-export type ExportTable = 'all' | 'cash' | 'bank' | 'bills' | 'customer' | 'stockIn' | 'stockOut'
+export type ExportTable = 'all' | 'cash' | 'bank' | 'bills' | 'customer' | 'supplier' | 'stockIn' | 'stockOut'
 
 export interface ExportParams {
   table?: ExportTable
@@ -191,6 +209,95 @@ function buildSummaryCells(design: ExportDesign, designColumns: ExportColumn[], 
     }
     return ''
   })
+}
+
+function enrichCustomerExportRows(db: any, rows: any[]) {
+  return rows.map((row) => {
+    const enriched = { ...enrichCustomerRow(row) }
+    if (isCustomerPaymentRecord(enriched) && Number(enriched.ref_ledger_id || 0) > 0) {
+      const ref = db.prepare(`
+        SELECT product_name, contract_no FROM customer_ledger
+        WHERE id = ? AND deleted_at IS NULL
+      `).get(Number(enriched.ref_ledger_id)) as { product_name?: string; contract_no?: string } | undefined
+      if (ref?.product_name) {
+        enriched.payment_for = ref.product_name
+        enriched.payment_for_contract = ref.contract_no || ''
+      }
+    }
+    if (isCustomerReturnRecord(enriched) && Number(enriched.ref_ledger_id || 0) > 0) {
+      const ref = db.prepare(`
+        SELECT product_name FROM customer_ledger
+        WHERE id = ? AND deleted_at IS NULL
+      `).get(Number(enriched.ref_ledger_id)) as { product_name?: string } | undefined
+      if (ref?.product_name) enriched.return_for = ref.product_name
+    }
+    if (isCustomerReceivableRecord(enriched)) {
+      const linked = db.prepare(`
+        SELECT amount_in, amount_out, description, product_name, quantity, note
+        FROM customer_ledger
+        WHERE deleted_at IS NULL AND ref_ledger_id = ?
+      `).all(enriched.id) as Array<Record<string, any>>
+      enriched.remaining_receivable = calcCustomerReceivableRemaining(enriched.amount_in, linked)
+    }
+    enriched.biz_kind = customerLedgerBizKindLabel(enriched)
+    return enriched
+  })
+}
+
+function enrichSupplierExportRows(db: any, rows: any[]) {
+  return rows.map((row) => {
+    const enriched = { ...enrichSupplierRow(row) }
+    if (isSupplierPaymentRecord(enriched) && Number(enriched.ref_ledger_id || 0) > 0) {
+      const ref = db.prepare(`
+        SELECT product_name, contract_no FROM supplier_ledger
+        WHERE id = ? AND deleted_at IS NULL
+      `).get(Number(enriched.ref_ledger_id)) as { product_name?: string; contract_no?: string } | undefined
+      if (ref?.product_name) {
+        enriched.payment_for = ref.product_name
+        enriched.payment_for_contract = ref.contract_no || ''
+      }
+    }
+    if (isSupplierPayableRecord(enriched)) {
+      const linked = db.prepare(`
+        SELECT amount_in, amount_out, description, product_name, quantity, note
+        FROM supplier_ledger
+        WHERE deleted_at IS NULL AND ref_ledger_id = ?
+      `).all(enriched.id) as Array<Record<string, any>>
+      enriched.remaining_payable = calcSupplierPayableRemaining(enriched.amount_in, linked)
+    }
+    enriched.biz_kind = supplierLedgerBizKindLabel(enriched)
+    return enriched
+  })
+}
+
+function exportCustomerAmountIn(row: Record<string, any>) {
+  if (isCustomerPaymentRecord(row)) return ''
+  return num(row.amount_in)
+}
+
+function exportCustomerQuantity(row: Record<string, any>) {
+  if (isCustomerPaymentRecord(row)) return ''
+  return num(row.quantity)
+}
+
+function exportCustomerAmountOut(row: Record<string, any>) {
+  if (!isCustomerPaymentRecord(row)) return ''
+  return Math.abs(num(row.amount_out))
+}
+
+function exportSupplierAmountIn(row: Record<string, any>) {
+  if (isSupplierPaymentRecord(row)) return ''
+  return num(row.amount_in)
+}
+
+function exportSupplierQuantity(row: Record<string, any>) {
+  if (isSupplierPaymentRecord(row)) return ''
+  return num(row.quantity)
+}
+
+function exportSupplierAmountOut(row: Record<string, any>) {
+  if (!isSupplierPaymentRecord(row)) return ''
+  return Math.abs(num(row.amount_out))
 }
 
 function createWorksheet(design: ExportDesign, params: ExportParams, rawRows: any[]) {
@@ -436,22 +543,22 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     columns: [
       { key: 'index', header: '序号', width: 6, sum: 'count' },
       { key: 'customer_name', header: '客户名称', width: 18 },
+      { key: 'biz_kind', header: '类型', width: 8 },
       { key: 'date', header: '日期', width: 12 },
       { key: 'contract_no', header: '合同编号', width: 14 },
       { key: 'product_name', header: '产品名称', width: 18 },
       { key: 'spec', header: '规格型号', width: 16 },
       { key: 'unit', header: '单位', width: 8 },
-      { key: 'quantity', header: '数量', width: 10, sum: 'qty' },
+      { key: 'quantity', header: '数量', width: 10, type: 'qty' },
       { key: 'unit_price', header: '单价', width: 10, type: 'money' },
-      { key: 'amount_in', header: '金额', width: 14, type: 'money', sum: 'money' },
-      { key: 'amount_out', header: '付款', width: 14, type: 'money', sum: 'money' },
-      { key: 'balance', header: '余额', width: 14, type: 'money' },
-      { key: 'month_label', header: '月份', width: 10 },
-      { key: 'note', header: '备注', width: 20 },
+      { key: 'amount_in', header: '应收金额', width: 14, type: 'money' },
+      { key: 'remaining_receivable', header: '待收金额', width: 14, type: 'money' },
+      { key: 'amount_out', header: '收款', width: 14, type: 'money', sum: 'money' },
+      { key: 'note', header: '备注', width: 24 },
     ],
     query: (params) => {
       const ids = getSelectedIds(params.ids)
-      const columns = 'customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, month_label'
+      const columns = 'id, customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, month_label, ref_ledger_id'
       if (ids.length) return idsQuery('customer_ledger', columns, ids, `customer_name ASC, ${buildDateOrderBy('date')}`)
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
@@ -470,25 +577,78 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
         params: [customerName, customerName, like, like, like, like, like, like, like, ...dateWhere.params],
       }
     },
-    mapRow: (row, index) => {
-      const item = enrichCustomerRow(row)
+    mapRow: (row, index) => ({
+      index: index + 1,
+      customer_name: text(row.customer_name),
+      biz_kind: text(row.biz_kind),
+      date: text(row.date),
+      contract_no: text(row.contract_no),
+      product_name: text(row.product_name),
+      spec: text(row.spec),
+      unit: text(row.unit),
+      quantity: exportCustomerQuantity(row),
+      unit_price: isCustomerPaymentRecord(row) ? '' : num(row.unit_price),
+      amount_in: exportCustomerAmountIn(row),
+      remaining_receivable: isCustomerReceivableRecord(row) ? num(row.remaining_receivable) : '',
+      amount_out: exportCustomerAmountOut(row),
+      note: formatCustomerExportNote(row),
+    }),
+  },
+  supplier: {
+    sheetName: '供应商往来',
+    defaultFileName: '供应商往来导出',
+    title: '供应商往来账',
+    columns: [
+      { key: 'index', header: '序号', width: 6, sum: 'count' },
+      { key: 'supplier_name', header: '供应商', width: 18 },
+      { key: 'biz_kind', header: '类型', width: 8 },
+      { key: 'date', header: '日期', width: 12 },
+      { key: 'contract_no', header: '合同编号', width: 14 },
+      { key: 'product_name', header: '产品名称', width: 18 },
+      { key: 'spec', header: '规格型号', width: 16 },
+      { key: 'unit', header: '单位', width: 8 },
+      { key: 'quantity', header: '数量', width: 10, type: 'qty' },
+      { key: 'unit_price', header: '单价', width: 10, type: 'money' },
+      { key: 'amount_in', header: '应付金额', width: 14, type: 'money' },
+      { key: 'amount_out', header: '付款', width: 14, type: 'money', sum: 'money' },
+      { key: 'note', header: '备注', width: 24 },
+    ],
+    query: (params) => {
+      const ids = getSelectedIds(params.ids)
+      const columns = 'id, supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, ref_ledger_id'
+      if (ids.length) return idsQuery('supplier_ledger', columns, ids, `supplier_name ASC, ${buildDateOrderBy('date')}`)
+      const like = `%${params.keyword || ''}%`
+      const supplierName = params.supplierName || ''
+      const dateWhere = buildDateFilterClause(params)
       return {
-        index: index + 1,
-        customer_name: text(item.customer_name),
-        date: text(item.date),
-        contract_no: text(item.contract_no),
-        product_name: text(item.product_name),
-        spec: text(item.spec),
-        unit: text(item.unit),
-        quantity: num(item.quantity),
-        unit_price: num(item.unit_price),
-        amount_in: num(item.amount_in),
-        amount_out: num(item.amount_out),
-        balance: num(item.balance),
-        month_label: text(item.month_label),
-        note: text(item.note),
+        sql: `
+          SELECT ${columns}
+          FROM supplier_ledger
+          WHERE deleted_at IS NULL
+            AND (? = '' OR supplier_name = ?)
+            AND (description LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?
+              OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
+            ${dateWhere.sql}
+          ORDER BY supplier_name ASC, ${buildDateOrderBy('date')}
+        `,
+        params: [supplierName, supplierName, like, like, like, like, like, like, like, ...dateWhere.params],
       }
     },
+    mapRow: (row, index) => ({
+      index: index + 1,
+      supplier_name: text(row.supplier_name),
+      biz_kind: text(row.biz_kind),
+      date: text(row.date),
+      contract_no: text(row.contract_no),
+      product_name: text(row.product_name),
+      spec: text(row.spec),
+      unit: text(row.unit),
+      quantity: exportSupplierQuantity(row),
+      unit_price: isSupplierPaymentRecord(row) ? '' : num(row.unit_price),
+      amount_in: exportSupplierAmountIn(row),
+      amount_out: exportSupplierAmountOut(row),
+      note: formatSupplierExportNote(row),
+    }),
   },
   stockIn: {
     sheetName: '产品入库',
@@ -496,6 +656,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     title: '产品入库明细',
     columns: [
       { key: 'index', header: '序号', width: 6, sum: 'count' },
+      { key: 'doc_no', header: '单号', width: 14 },
       { key: 'supplier_name', header: '供应商', width: 16 },
       { key: 'category', header: '类别', width: 10 },
       { key: 'date', header: '日期', width: 12 },
@@ -510,7 +671,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     ],
     query: (params) => {
       const ids = getSelectedIds(params.ids)
-      const columns = 'supplier_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
+      const columns = 'doc_no, supplier_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
       if (ids.length) return idsQuery('stock_in_ledger', columns, ids, buildDateOrderBy('date'))
       const like = `%${params.keyword || ''}%`
       const supplierName = params.supplierName || ''
@@ -521,15 +682,16 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           FROM stock_in_ledger
           WHERE deleted_at IS NULL
             AND (? = '' OR supplier_name = ?)
-            AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
+            AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ? OR doc_no LIKE ?)
             ${dateWhere.sql}
           ORDER BY ${buildDateOrderBy('date')}
         `,
-        params: [supplierName, supplierName, like, like, like, like, like, like, ...dateWhere.params],
+        params: [supplierName, supplierName, like, like, like, like, like, like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
       index: index + 1,
+      doc_no: text(row.doc_no),
       supplier_name: text(row.supplier_name),
       category: text(row.category),
       date: text(row.date),
@@ -549,6 +711,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     title: '产品出库明细',
     columns: [
       { key: 'index', header: '序号', width: 6, sum: 'count' },
+      { key: 'doc_no', header: '单号', width: 14 },
       { key: 'customer_name', header: '客户', width: 16 },
       { key: 'category', header: '类别', width: 10 },
       { key: 'date', header: '日期', width: 12 },
@@ -563,7 +726,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     ],
     query: (params) => {
       const ids = getSelectedIds(params.ids)
-      const columns = 'customer_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
+      const columns = 'doc_no, customer_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
       if (ids.length) return idsQuery('stock_out_ledger', columns, ids, buildDateOrderBy('date'))
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
@@ -574,15 +737,16 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           FROM stock_out_ledger
           WHERE deleted_at IS NULL
             AND (? = '' OR customer_name = ?)
-            AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?)
+            AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ? OR doc_no LIKE ?)
             ${dateWhere.sql}
           ORDER BY ${buildDateOrderBy('date')}
         `,
-        params: [customerName, customerName, like, like, like, like, like, like, ...dateWhere.params],
+        params: [customerName, customerName, like, like, like, like, like, like, like, like, ...dateWhere.params],
       }
     },
     mapRow: (row, index) => ({
       index: index + 1,
+      doc_no: text(row.doc_no),
       customer_name: text(row.customer_name),
       category: text(row.category),
       date: text(row.date),
@@ -616,21 +780,28 @@ function buildOverviewSheet(db: any) {
       count: (db.prepare(`SELECT COUNT(*) as n FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总进账', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总付出', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).v),
-      extra: '',
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM bank_ledger WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '承兑票',
       count: (db.prepare(`SELECT COUNT(*) as n FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总收票', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总付出', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).v),
-      extra: '',
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM acceptance_bills WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '客户往来',
       count: (db.prepare(`SELECT COUNT(*) as n FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).n,
-      inLabel: '总收款', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).v),
-      outLabel: '总付款', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).v),
+      inLabel: '总应收', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).v),
+      outLabel: '总收款', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).v),
       extra: `客户数 ${(db.prepare(`SELECT COUNT(DISTINCT customer_name) as n FROM customer_ledger WHERE deleted_at IS NULL`).get() as any).n}`,
+    },
+    {
+      name: '供应商往来',
+      count: (db.prepare(`SELECT COUNT(*) as n FROM supplier_ledger WHERE deleted_at IS NULL`).get() as any).n,
+      inLabel: '总应付', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM supplier_ledger WHERE deleted_at IS NULL`).get() as any).v),
+      outLabel: '总付款', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM supplier_ledger WHERE deleted_at IS NULL`).get() as any).v),
+      extra: `供应商数 ${(db.prepare(`SELECT COUNT(DISTINCT supplier_name) as n FROM supplier_ledger WHERE deleted_at IS NULL`).get() as any).n}`,
     },
     {
       name: '产品入库',
@@ -651,7 +822,7 @@ function buildOverviewSheet(db: any) {
   const aoa = [
     ['账务总览', '', '', '', '', '', ''],
     [COMPANY_NAME, '', '', `导出时间：${exportedAt}`, '', '', ''],
-    ['包含现金账、公账、承兑票、客户往来、产品入库、产品出库全部未删除记录', '', '', `账册数：${stats.length}`, '', '', ''],
+    ['包含现金账、公账、承兑票、客户往来、供应商往来、产品入库、产品出库全部未删除记录', '', '', `账册数：${stats.length}`, '', '', ''],
     [],
     ['账册', '记录数', '进/收入项', '金额', '出/支出项', '金额', '备注'],
     ...stats.map((item) => [item.name, item.count, item.inLabel, item.inValue, item.outLabel, item.outValue, item.extra]),
@@ -718,9 +889,15 @@ function buildOverviewSheet(db: any) {
   return sheet
 }
 
+function prepareExportRows(db: any, key: Exclude<ExportTable, 'all'>, rawRows: any[]) {
+  if (key === 'customer') return sortCustomerLedgerGrouped(enrichCustomerExportRows(db, rawRows))
+  if (key === 'supplier') return sortSupplierLedgerGrouped(enrichSupplierExportRows(db, rawRows))
+  return rawRows
+}
+
 export function buildExportWorkbook(db: any, table: ExportTable, params: ExportParams = {}) {
   const tableKeys: Array<Exclude<ExportTable, 'all'>> = table === 'all'
-    ? ['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut']
+    ? ['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut']
     : [table]
   const exportParams: ExportParams = table === 'all'
     ? {}
@@ -753,7 +930,8 @@ export function buildExportWorkbook(db: any, table: ExportTable, params: ExportP
     const design = exportDesigns[key]
     const query = design.query(exportParams)
     const rawRows = db.prepare(query.sql).all(...query.params)
-    const { sheet, rows } = createWorksheet(design, exportParams, rawRows)
+    const preparedRows = prepareExportRows(db, key, rawRows)
+    const { sheet, rows } = createWorksheet(design, exportParams, preparedRows)
     totalRows += rows.length
     XLSX.utils.book_append_sheet(wb, sheet, design.sheetName)
   }

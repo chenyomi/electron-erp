@@ -336,12 +336,16 @@ export async function restoreFromBackup(sourcePath: string): Promise<{ ok: boole
     return { ok: false, error: '未找到有效备份，请选择包含 ledger.db 的备份文件夹' }
   }
 
+  const preBackup = await autoBackup({ automatic: true, force: true })
+  if (!preBackup.ok) {
+    return { ok: false, error: `恢复前自动备份失败：${preBackup.error || '未知错误'}，已取消恢复以保护现有数据` }
+  }
+  const safetyBackup = preBackup.path ? resolveBackupSource(preBackup.path) : null
+
+  const dataDir = getDataDir()
+  const targetDbPath = join(dataDir, 'ledger.db')
+
   try {
-    await autoBackup({ automatic: true, force: true })
-
-    const dataDir = getDataDir()
-    const targetDbPath = join(dataDir, 'ledger.db')
-
     closeDatabase()
     replaceDbFile(source.dbPath, targetDbPath)
 
@@ -355,6 +359,22 @@ export async function restoreFromBackup(sourcePath: string): Promise<{ ok: boole
     normalizeRestoredAttachmentPaths()
     return { ok: true }
   } catch (e: any) {
+    if (safetyBackup) {
+      try {
+        closeDatabase()
+        replaceDbFile(safetyBackup.dbPath, targetDbPath)
+        if (safetyBackup.hasImages) {
+          for (const dirName of DATA_DIRS) {
+            replaceDir(join(safetyBackup.baseDir, dirName), join(dataDir, dirName))
+          }
+        }
+        initDatabase()
+        normalizeRestoredAttachmentPaths()
+        return { ok: false, error: `恢复失败，已回滚到恢复前备份：${e?.message || '未知错误'}` }
+      } catch (rollbackError: any) {
+        console.error('Restore rollback failed:', rollbackError)
+      }
+    }
     try {
       initDatabase()
     } catch {

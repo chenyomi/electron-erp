@@ -141,22 +141,29 @@ export function registerStockInHandlers(): void {
       counts_inventory: countsInventory,
     }
     validateStockInRow(db, payload)
-    const result = db.prepare(`
-      INSERT INTO stock_in_ledger (
-        doc_no, supplier_name, category, date, contract_no, product_name, spec, unit,
-        quantity, unit_price, amount, material_quantity, material_unit_price,
-        tax_rate, tax_amount, invoice_amount, note, counts_inventory
-      ) VALUES (
-        @doc_no, @supplier_name, @category, @date, @contract_no, @product_name, @spec, @unit,
-        @quantity, @unit_price, @amount, @material_quantity, @material_unit_price,
-        @tax_rate, @tax_amount, @invoice_amount, @note, @counts_inventory
-      )
-    `).run(payload)
-    const stockInId = Number(result.lastInsertRowid)
-    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId) as Record<string, any>
-    logOperation('stock_in_ledger', stockInId, 'INSERT', null, newRow as object)
-    applyStockInSideEffects(db, newRow)
-    return db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId)
+
+    const newRow = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO stock_in_ledger (
+          doc_no, supplier_name, category, date, contract_no, product_name, spec, unit,
+          quantity, unit_price, amount, material_quantity, material_unit_price,
+          tax_rate, tax_amount, invoice_amount, note, counts_inventory
+        ) VALUES (
+          @doc_no, @supplier_name, @category, @date, @contract_no, @product_name, @spec, @unit,
+          @quantity, @unit_price, @amount, @material_quantity, @material_unit_price,
+          @tax_rate, @tax_amount, @invoice_amount, @note, @counts_inventory
+        )
+      `).run(payload)
+      const stockInId = Number(result.lastInsertRowid)
+      const inserted = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId) as Record<string, any>
+      if (Number(inserted?.counts_inventory || 0) === 1) ensureProductCatalog(inserted)
+      syncPayableFromStockIn(db, inserted)
+      return inserted
+    })()
+
+    logOperation('stock_in_ledger', Number(newRow.id), 'INSERT', null, newRow as object)
+    if (Number(newRow?.counts_inventory || 0) === 1) recalcInventoryForRows(newRow)
+    return db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(newRow.id)
   })
 
   ipcMain.handle('stockIn:update', (_e, { id, ...row }) => {
@@ -169,45 +176,62 @@ export function registerStockInHandlers(): void {
       counts_inventory: countsInventory,
     }
     validateStockInRow(db, payload)
-    db.prepare(`
-      UPDATE stock_in_ledger SET
-        doc_no=@doc_no, supplier_name=@supplier_name, category=@category, date=@date,
-        contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
-        quantity=@quantity, unit_price=@unit_price, amount=@amount,
-        material_quantity=@material_quantity, material_unit_price=@material_unit_price,
-        tax_rate=@tax_rate, tax_amount=@tax_amount, invoice_amount=@invoice_amount,
-        note=@note, counts_inventory=@counts_inventory, updated_at=datetime('now','localtime')
-      WHERE id=@id
-    `).run({ ...payload, id })
-    const newRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+
+    const newRow = db.transaction(() => {
+      db.prepare(`
+        UPDATE stock_in_ledger SET
+          doc_no=@doc_no, supplier_name=@supplier_name, category=@category, date=@date,
+          contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
+          quantity=@quantity, unit_price=@unit_price, amount=@amount,
+          material_quantity=@material_quantity, material_unit_price=@material_unit_price,
+          tax_rate=@tax_rate, tax_amount=@tax_amount, invoice_amount=@invoice_amount,
+          note=@note, counts_inventory=@counts_inventory, updated_at=datetime('now','localtime')
+        WHERE id=@id
+      `).run({ ...payload, id })
+      const updated = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+      syncPayableFromStockIn(db, updated)
+      return updated
+    })()
+
     logOperation('stock_in_ledger', id, 'UPDATE', oldRow as object, newRow as object)
-    applyStockInSideEffects(db, newRow, oldRow)
+    if (Number(newRow?.counts_inventory || 0) === 1) recalcInventoryForRows(newRow)
+    if (oldRow && Number(oldRow?.counts_inventory || 0) === 1) recalcInventoryForRows(oldRow)
     return newRow
   })
 
   ipcMain.handle('stockIn:delete', (_e, id) => {
-    const db = getDb()
-    const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
-    deletePayableForStockIn(db, row)
-    softDelete('stock_in_ledger', id)
-    if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
-    cleanupOrphanAttachments()
-    syncProductCatalogWithLedger()
-    return { ok: true }
+    try {
+      const db = getDb()
+      const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+      deletePayableForStockIn(db, row)
+      softDelete('stock_in_ledger', id)
+      if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
+      cleanupOrphanAttachments()
+      syncProductCatalogWithLedger()
+      return { ok: true }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || '删除失败' }
+    }
   })
 
   ipcMain.handle('stockIn:deleteMany', (_e, ids: number[] = []) => {
     const db = getDb()
     const uniqueIds = [...new Set((ids || []).map(id => Number(id)).filter(id => id > 0))]
+    let count = 0
     for (const id of uniqueIds) {
-      const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
-      deletePayableForStockIn(db, row)
-      softDelete('stock_in_ledger', id)
-      if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
+      try {
+        const row = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as Record<string, any>
+        deletePayableForStockIn(db, row)
+        softDelete('stock_in_ledger', id)
+        if (Number(row?.counts_inventory || 0) === 1) recalcInventoryForRows(row)
+        count++
+      } catch {
+        break
+      }
     }
     cleanupOrphanAttachments()
     syncProductCatalogWithLedger()
-    return { ok: true, count: uniqueIds.length }
+    return { ok: count === uniqueIds.length, count, total: uniqueIds.length }
   })
   ipcMain.handle('stockIn:trash', () => {
     return getDb().prepare(`SELECT * FROM stock_in_ledger WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`).all()

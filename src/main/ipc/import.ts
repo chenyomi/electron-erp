@@ -14,6 +14,7 @@ import { compressImageBuffer } from '../image-compress'
 import { insertAttachmentIfMissing } from './attachments'
 import { importStockInExcel } from './stock-import'
 import { rebuildInventoryBusinessTables } from './stock-business'
+import { backfillSupplierPayablesFromStockIn } from './stock-supplier-link'
 
 export function registerImportHandlers(): void {
   ipcMain.handle('import:pick-file', async () => {
@@ -38,7 +39,8 @@ export function registerImportHandlers(): void {
       const db = getDb()
       const imported = importStockInExcel(db, filePath)
       rebuildInventoryBusinessTables()
-      return { ok: true, imported }
+      const payablesLinked = backfillSupplierPayablesFromStockIn(db)
+      return { ok: true, imported: { ...imported, payablesLinked } }
     } catch (e: any) {
       return { ok: false, error: e.message }
     }

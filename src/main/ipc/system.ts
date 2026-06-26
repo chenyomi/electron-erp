@@ -17,6 +17,7 @@ const TRASH_TABLES = [
   'bank_ledger',
   'acceptance_bills',
   'customer_ledger',
+  'supplier_ledger',
   'stock_in_ledger',
   'stock_out_ledger',
 ] as const
@@ -214,7 +215,7 @@ export function registerSystemHandlers(): void {
   ipcMain.handle('system:export-excel', async (event, params: ExportParams = {}) => {
     try {
       const table: ExportTable = params.table || 'all'
-      if (table !== 'all' && !['cash', 'bank', 'bills', 'customer', 'stockIn', 'stockOut'].includes(table)) {
+      if (table !== 'all' && !['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut'].includes(table)) {
         return { ok: false, error: `不支持的导出类型: ${table}` }
       }
 

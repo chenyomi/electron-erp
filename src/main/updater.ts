@@ -21,6 +21,8 @@ export interface UpdateState {
   transferred?: number
   total?: number
   error?: string
+  platformMessage?: string
+  silent?: boolean
 }
 
 let updateState: UpdateState = {
@@ -30,6 +32,7 @@ let updateState: UpdateState = {
 
 let checkingPromise: Promise<UpdateState> | null = null
 let initialized = false
+let lastCheckSilent = true
 
 function formatReleaseNotes(value: unknown): string | undefined {
   if (typeof value === 'string') return value.trim() || undefined
@@ -55,12 +58,13 @@ function setState(partial: Partial<UpdateState>) {
     ...updateState,
     ...partial,
     currentVersion: app.getVersion(),
+    silent: partial.silent ?? lastCheckSilent,
   }
   broadcastState()
 }
 
 export function getUpdateState(): UpdateState {
-  return { ...updateState }
+  return { ...updateState, silent: lastCheckSilent }
 }
 
 export function initAutoUpdater(): void {
@@ -74,11 +78,11 @@ export function initAutoUpdater(): void {
   autoUpdater.allowPrerelease = false
 
   autoUpdater.on('checking-for-update', () => {
-    setState({ status: 'checking', error: undefined })
+    setState({ status: 'checking', error: undefined, platformMessage: undefined })
   })
 
   autoUpdater.on('update-not-available', () => {
-    setState({ status: 'not-available', error: undefined })
+    setState({ status: 'not-available', error: undefined, platformMessage: undefined })
   })
 
   autoUpdater.on('update-available', (info) => {
@@ -88,6 +92,7 @@ export function initAutoUpdater(): void {
       releaseNotes: formatReleaseNotes(info.releaseNotes),
       releaseDate: info.releaseDate,
       error: undefined,
+      platformMessage: undefined,
     })
   })
 
@@ -127,14 +132,28 @@ export function initAutoUpdater(): void {
 }
 
 export async function checkForUpdates(options: { silent?: boolean } = {}): Promise<UpdateState> {
+  lastCheckSilent = options.silent !== false
+
   if (process.platform !== 'win32') {
+    const platformMessage = process.platform === 'darwin'
+      ? 'macOS 暂不支持自动更新，请从 GitHub Releases 下载最新安装包。'
+      : '当前系统暂不支持自动更新，请从 GitHub Releases 手动下载安装包。'
+    if (!lastCheckSilent) {
+      setState({
+        status: 'not-available',
+        error: undefined,
+        platformMessage,
+      })
+    }
     return getUpdateState()
   }
+
   if (is.dev) {
     const state = {
       ...getUpdateState(),
       status: 'error' as const,
       error: '开发模式不支持检查更新',
+      platformMessage: undefined,
     }
     setState(state)
     return state
@@ -144,7 +163,7 @@ export async function checkForUpdates(options: { silent?: boolean } = {}): Promi
 
   checkingPromise = (async () => {
     try {
-      setState({ status: 'checking', error: undefined })
+      setState({ status: 'checking', error: undefined, platformMessage: undefined })
       await autoUpdater.checkForUpdates()
       return getUpdateState()
     } catch (error) {
@@ -175,7 +194,7 @@ export async function downloadUpdate(): Promise<UpdateState> {
   if (updateState.status === 'downloaded') return getUpdateState()
 
   try {
-    setState({ status: 'downloading', error: undefined, percent: 0 })
+    setState({ status: 'downloading', error: undefined, percent: 0, transferred: 0, total: 0 })
     await autoUpdater.downloadUpdate()
     return getUpdateState()
   } catch (error) {

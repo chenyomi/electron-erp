@@ -1,5 +1,11 @@
 import type Database from 'better-sqlite3'
-import { buildSupplierDescription, isAutoReturnStockIn, isSupplierPayableRecord } from '../../common/supplier-ledger'
+import {
+  buildSupplierDescription,
+  getSupplierLedgerDeleteBlockReason,
+  isAutoReturnStockIn,
+  isSupplierPayableRecord,
+  validatePayableSyncFromStockIn,
+} from '../../common/supplier-ledger'
 import { isMaterialSupplierType } from '../../common/supplier-profile'
 import { getSupplierType, recalculateSupplierBalances } from './supplier-profile'
 import { logOperation, restore, softDelete } from './helpers'
@@ -92,6 +98,30 @@ export function createPayableFromStockIn(db: Database.Database, stockInRow: Reco
   return newRow
 }
 
+function findPayableForStockIn(db: Database.Database, stockInRow: Record<string, any>): Record<string, any> | undefined {
+  const ledgerId = Number(stockInRow.ledger_id || 0)
+  if (ledgerId) {
+    return db.prepare('SELECT * FROM supplier_ledger WHERE id = ? AND deleted_at IS NULL').get(ledgerId) as Record<string, any> | undefined
+  }
+  return db.prepare(`
+    SELECT * FROM supplier_ledger
+    WHERE deleted_at IS NULL AND stock_in_id = ?
+  `).get(Number(stockInRow.id || 0)) as Record<string, any> | undefined
+}
+
+function listLinkedSupplierRows(db: Database.Database, payableId: number) {
+  return db.prepare(`
+    SELECT * FROM supplier_ledger
+    WHERE deleted_at IS NULL AND ref_ledger_id = ?
+  `).all(payableId) as Array<Record<string, any>>
+}
+
+export function getStockInDeleteBlockReason(db: Database.Database, stockInRow: Record<string, any>): string | null {
+  const payable = findPayableForStockIn(db, stockInRow)
+  if (!payable) return null
+  return getSupplierLedgerDeleteBlockReason(payable, listLinkedSupplierRows(db, Number(payable.id)))
+}
+
 export function syncPayableFromStockIn(db: Database.Database, stockInRow: Record<string, any>) {
   if (!shouldLinkSupplierPayable(stockInRow)) {
     deletePayableForStockIn(db, stockInRow)
@@ -112,6 +142,13 @@ export function syncPayableFromStockIn(db: Database.Database, stockInRow: Record
     id: ledgerId,
     ...buildPayablePayloadFromStockIn(db, stockInRow),
   }
+  const linkedRows = listLinkedSupplierRows(db, ledgerId)
+  const syncError = validatePayableSyncFromStockIn(oldRow, linkedRows, {
+    amount_in: Number(payload.amount_in || 0),
+    quantity: Number(payload.quantity || 0),
+    unit_price: Number(payload.unit_price || 0),
+  })
+  if (syncError) throw new Error(syncError)
   db.prepare(`
     UPDATE supplier_ledger SET
       supplier_name=@supplier_name, date=@date, description=@description,
@@ -131,6 +168,8 @@ export function syncPayableFromStockIn(db: Database.Database, stockInRow: Record
 }
 
 export function deletePayableForStockIn(db: Database.Database, stockInRow: Record<string, any>) {
+  const block = getStockInDeleteBlockReason(db, stockInRow)
+  if (block) throw new Error(block)
   const ledgerId = Number(stockInRow.ledger_id || 0)
   if (!ledgerId) {
     const linked = db.prepare(`

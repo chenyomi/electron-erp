@@ -400,6 +400,37 @@ body {
     linear-gradient(180deg, color-mix(in srgb, var(--app-bg) 92%, transparent), var(--app-bg));
 }
 
+.update-banner {
+  margin: 16px 24px 0;
+}
+
+.update-banner__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.update-banner__title {
+  font-weight: 600;
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.update-ready-chip {
+  cursor: pointer;
+}
+
+.top-user-card .update-ready-chip {
+  margin-right: 4px;
+}
+
 .page-wrap {
   min-height: 100%;
   padding: 24px 24px 96px;

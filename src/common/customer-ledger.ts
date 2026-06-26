@@ -190,18 +190,12 @@ export function validateCustomerReturnAgainstPayments(
 }
 
 export function validateCustomerPaymentAmount(
-  receivableAmountIn: number,
-  linkedRows: Array<Record<string, any>>,
+  _receivableAmountIn: number,
+  _linkedRows: Array<Record<string, any>>,
   paymentAmountOut: number,
-  excludePaymentId = 0,
+  _excludePaymentId = 0,
 ): string | null {
-  const remaining = calcCustomerReceivableRemaining(
-    receivableAmountIn,
-    linkedRows.filter(item => Number(item.id) !== excludePaymentId),
-  )
-  if (paymentAmountOut > remaining + 0.005) {
-    return `收款金额不能超过待收 ${remaining.toFixed(2)}`
-  }
+  if (paymentAmountOut <= 0) return '请填写收款金额'
   return null
 }
 
@@ -333,6 +327,38 @@ export function buildCustomerDescription(row: CustomerLedgerFields): string {
   ].filter(Boolean)
 
   return parts.join(' ') || String(row.description || '').trim()
+}
+
+export function customerLedgerBizKindLabel(row: Record<string, any>): string {
+  if (isCustomerPaymentRecord(row)) return '付款'
+  if (isCustomerReturnRecord(row)) return '退货'
+  return '应收'
+}
+
+export function formatCustomerExportNote(row: Record<string, any>): string {
+  let note = String(row.note || '').trim()
+  if (row.payment_for) {
+    const extra = `收款对应：${row.payment_for}${row.payment_for_contract ? `（${row.payment_for_contract}）` : ''}`
+    note = note ? `${note}；${extra}` : extra
+  }
+  if (row.return_for) {
+    const extra = `退货对应：${row.return_for}`
+    note = note ? `${note}；${extra}` : extra
+  }
+  return note
+}
+
+export function validateReceivableSyncFromStockOut(
+  oldReceivable: Record<string, any>,
+  linkedRows: Array<Record<string, any>>,
+  payload: { amount_in: number; quantity: number; unit_price: number },
+): string | null {
+  const block = getCustomerLedgerAmountEditBlockReason(oldReceivable, linkedRows, payload)
+  if (block) return block
+  if (linkedRows.length > 0) {
+    return validateCustomerReturnAgainstPayments(payload.amount_in, linkedRows, 0)
+  }
+  return null
 }
 
 export function enrichCustomerRow<T extends Record<string, any>>(row: T): T {

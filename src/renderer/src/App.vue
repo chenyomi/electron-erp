@@ -304,6 +304,22 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="cloudStartupFailureDialog.show" max-width="520" persistent>
+      <v-card class="record-dialog confirm-dialog">
+        <div class="record-dialog__header">
+          <div>
+            <h2 class="record-dialog__title">{{ cloudStartupFailureDialog.title }}</h2>
+            <p class="record-dialog__subtitle confirm-dialog__message">{{ cloudStartupFailureDialog.message }}</p>
+          </div>
+        </div>
+        <div class="record-dialog__footer">
+          <v-btn variant="text" @click="resolveCloudStartupFailure('continue')">{{ cloudStartupFailureDialog.continueLabel }}</v-btn>
+          <v-btn variant="tonal" color="error" @click="resolveCloudStartupFailure('quit')">{{ cloudStartupFailureDialog.quitLabel }}</v-btn>
+          <v-btn color="primary" @click="resolveCloudStartupFailure('retry')">{{ cloudStartupFailureDialog.retryLabel }}</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="passwordConfirmDialog.show" max-width="480" persistent>
       <v-card class="record-dialog confirm-dialog">
         <div class="record-dialog__header">
@@ -1432,6 +1448,16 @@ const confirmDialog = reactive({
   confirmColor: 'primary',
 })
 let confirmResolver: ((value: boolean) => void) | null = null
+type CloudStartupFailureAction = 'retry' | 'continue' | 'quit'
+const cloudStartupFailureDialog = reactive({
+  show: false,
+  title: '云端数据拉取失败',
+  message: '',
+  retryLabel: '重试拉取',
+  continueLabel: '继续使用本机',
+  quitLabel: '关闭软件',
+})
+let cloudStartupFailureResolver: ((value: CloudStartupFailureAction) => void) | null = null
 const passwordConfirmDialog = reactive({
   show: false,
   title: '',
@@ -1570,25 +1596,29 @@ async function waitForInitialUpdateCheck(maxMs = 12000): Promise<void> {
   }
 }
 
+type CloudAutoDownloadOutcome = { status: 'ok' | 'failed' | 'canceled'; error?: string }
+
 async function runCloudAutoDownload(plan?: {
   pendingFiles?: number
   remoteUpdatedAt?: string
   remoteFingerprint?: string
   localEmpty?: boolean
   downloadIncludeMedia?: boolean
-}) {
+}, options: { notifyFailure?: boolean } = {}): Promise<CloudAutoDownloadOutcome> {
   headerCloudSyncBusy.value = true
   beginHeaderCloudProgress('download')
   try {
+    const notifyFailure = options.notifyFailure !== false
     const includeMedia = plan?.downloadIncludeMedia ?? Boolean(plan?.localEmpty)
     const result = await cloudAPI.syncDownload({ includeMedia })
     if (result?.canceled) {
       notify(t('cloudSyncDownloadCanceled'), 'info')
-      return false
+      return { status: 'canceled' }
     }
     if (!result?.ok) {
-      if (!result?.canceled) notify(result?.error || t('restoreFailed'), 'error')
-      return false
+      const error = result?.error || t('restoreFailed')
+      if (!result?.canceled && notifyFailure) notify(error, 'error')
+      return { status: 'failed', error }
     }
     const downloaded = Number(result.downloaded || 0)
     const skipped = Number(result.skipped || 0)
@@ -1599,10 +1629,32 @@ async function runCloudAutoDownload(plan?: {
     else if (!plan?.pendingFiles) notify(t('cloudSyncNoChange'))
     else if (!includeMedia && downloaded === 0) notify('账本已对齐，图片/附件保留本机设置', 'info')
     else notify(t('cloudSyncDownloadDone', { downloaded, skipped }))
-    return true
+    return { status: 'ok' }
   } finally {
     headerCloudSyncBusy.value = false
     finishHeaderCloudProgress()
+  }
+}
+
+async function runCloudAutoDownloadWithFailureChoice(plan?: {
+  pendingFiles?: number
+  remoteUpdatedAt?: string
+  remoteFingerprint?: string
+  localEmpty?: boolean
+  downloadIncludeMedia?: boolean
+}) {
+  while (true) {
+    const outcome = await runCloudAutoDownload(plan, { notifyFailure: false })
+    if (outcome.status === 'ok' || outcome.status === 'canceled') return outcome
+
+    const action = await askCloudStartupFailure(outcome.error)
+    if (action === 'retry') continue
+    if (action === 'quit') {
+      await systemAPI.quit()
+      return outcome
+    }
+    notify('已继续使用本机数据', 'info')
+    return outcome
   }
 }
 
@@ -1645,7 +1697,7 @@ async function runCloudBootstrap() {
         })
         : '正在对齐云端账本（不拉回图片/附件）…'
     sessionStorage.setItem(CLOUD_BOOTSTRAP_GUARD_KEY, String(Date.now()))
-    await runCloudAutoDownload(plan)
+    await runCloudAutoDownloadWithFailureChoice(plan)
   } catch {
     notify(t('cloudOfflineHint'), 'warning')
   } finally {
@@ -1848,6 +1900,24 @@ function resolveConfirm(confirmed: boolean) {
   confirmDialog.show = false
   confirmResolver?.(confirmed)
   confirmResolver = null
+}
+
+function askCloudStartupFailure(error?: string): Promise<CloudStartupFailureAction> {
+  return new Promise((resolve) => {
+    cloudStartupFailureResolver = resolve
+    cloudStartupFailureDialog.title = '云端数据拉取失败'
+    cloudStartupFailureDialog.message = `启动时自动拉取云端数据失败。\n\n当前会继续保留本机数据，云端可能有更新未同步。\n\n错误：${error || '未知错误'}`
+    cloudStartupFailureDialog.retryLabel = '重试拉取'
+    cloudStartupFailureDialog.continueLabel = '继续使用本机'
+    cloudStartupFailureDialog.quitLabel = '关闭软件'
+    cloudStartupFailureDialog.show = true
+  })
+}
+
+function resolveCloudStartupFailure(action: CloudStartupFailureAction) {
+  cloudStartupFailureDialog.show = false
+  cloudStartupFailureResolver?.(action)
+  cloudStartupFailureResolver = null
 }
 
 interface PasswordConfirmOptions {

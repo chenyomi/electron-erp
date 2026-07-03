@@ -78,6 +78,11 @@ function friendlySaveError(error: any) {
 }
 
 export function registerSystemHandlers(): void {
+  ipcMain.handle('system:quit', () => {
+    app.quit()
+    return { ok: true }
+  })
+
   ipcMain.handle('system:app-version', () => app.getVersion())
 
   ipcMain.handle('system:summary', () => {

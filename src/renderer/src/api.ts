@@ -184,6 +184,7 @@ export const systemAPI = {
   openBackupDir: () => api.invoke('system:open-backup-dir'),
   openExcelImagesDir: () => api.invoke('system:open-excel-images-dir'),
   monthlyAll: () => api.invoke('system:monthly-all'),
+  quit: () => api.invoke('system:quit'),
 }
 
 export const authAPI = {

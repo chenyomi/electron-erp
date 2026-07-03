@@ -13,14 +13,74 @@ const appIconPath = join(__dirname, '../../resources/icon.png')
 const APP_NAME = '东昊账务'
 
 let mainWindow: BrowserWindow | null = null
-let isQuitting = false
+let isAppQuitting = false
+let shutdownCompleted = false
+let shutdownTaskPromise: Promise<ShutdownDecision> | null = null
+let allowWindowClose = false
 
-async function runShutdownTasks(): Promise<void> {
-  await autoBackup({ automatic: true })
+type ShutdownDecision = 'proceed' | 'cancel'
+
+async function askExitUploadFailed(error?: string, backupError?: string): Promise<'retry' | 'proceed' | 'cancel'> {
+  const backupLine = backupError
+    ? `本机自动备份也失败了：${backupError}`
+    : '本机自动备份已完成。'
+  const options = {
+    type: 'warning' as const,
+    title: '云端自动上传失败',
+    message: '退出前自动上传到云端失败',
+    detail: `${backupLine}\n云端可能还不是最新。\n\n错误：${error || '未知错误'}`,
+    buttons: ['重试上传', '仍然退出', '取消退出'],
+    defaultId: 0,
+    cancelId: 2,
+  }
+  const parent = focusedWindow()
+  const result = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options)
+  if (result.response === 0) return 'retry'
+  if (result.response === 1) return 'proceed'
+  return 'cancel'
+}
+
+async function runExitCloudUploadWithPrompt(backupError?: string): Promise<ShutdownDecision> {
+  while (true) {
+    const result = await runExitCloudUpload()
+    if (result.ok) return 'proceed'
+
+    const action = await askExitUploadFailed(result.error, backupError)
+    if (action === 'retry') continue
+    return action === 'proceed' ? 'proceed' : 'cancel'
+  }
+}
+
+async function runShutdownTasks(): Promise<ShutdownDecision> {
+  const backupResult = await autoBackup({ automatic: true })
+  const backupError = backupResult.ok ? undefined : backupResult.error || '备份失败'
   const prefs = getCloudSyncPrefs()
   if (prefs.exitAutoUpload) {
-    await runExitCloudUpload()
+    return runExitCloudUploadWithPrompt(backupError)
   }
+  return 'proceed'
+}
+
+async function runShutdownTasksOnce(): Promise<ShutdownDecision> {
+  if (shutdownCompleted) return 'proceed'
+  if (!shutdownTaskPromise) {
+    shutdownTaskPromise = runShutdownTasks()
+      .catch((error) => {
+        console.error('Shutdown tasks failed:', error)
+        return 'proceed' as const
+      })
+      .then((decision) => {
+        if (decision === 'proceed') {
+          shutdownCompleted = true
+        } else {
+          shutdownTaskPromise = null
+        }
+        return decision
+      })
+  }
+  return shutdownTaskPromise
 }
 
 function focusedWindow(): BrowserWindow | null {
@@ -190,6 +250,11 @@ function createApplicationMenu(): void {
 }
 
 function createWindow(): void {
+  if (!isAppQuitting) {
+    shutdownCompleted = false
+    shutdownTaskPromise = null
+  }
+  allowWindowClose = false
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -210,6 +275,10 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -222,21 +291,37 @@ function createWindow(): void {
   }
 
   mainWindow.on('close', (event) => {
-    if (isQuitting) return
+    if (allowWindowClose) return
     event.preventDefault()
     void (async () => {
-      try {
-        await runShutdownTasks()
-      } catch (error) {
-        console.error('Shutdown tasks failed:', error)
-      } finally {
-        isQuitting = true
-        mainWindow?.destroy()
-        mainWindow = null
-      }
+      const decision = await runShutdownTasksOnce()
+      if (decision === 'cancel') return
+      allowWindowClose = true
+      mainWindow?.close()
     })()
   })
 }
+
+app.on('before-quit', (event) => {
+  if (shutdownCompleted) {
+    isAppQuitting = true
+    allowWindowClose = true
+    return
+  }
+  event.preventDefault()
+  if (isAppQuitting) return
+  isAppQuitting = true
+  void (async () => {
+    const decision = await runShutdownTasksOnce()
+    if (decision === 'cancel') {
+      isAppQuitting = false
+      allowWindowClose = false
+      return
+    }
+    allowWindowClose = true
+    app.quit()
+  })()
+})
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.donghao.ledger')

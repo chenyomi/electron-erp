@@ -1381,15 +1381,17 @@ export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadS
   }
 }
 
-export async function runExitCloudUpload(): Promise<void> {
-  if (!getQiniuConfigView().configured) return
+export async function runExitCloudUpload(): Promise<CloudSyncResult> {
+  if (!getQiniuConfigView().configured) return { ok: true, uploaded: 0, skipped: 0, totalFiles: 0 }
   try {
     const result = await syncCloudUpload()
     if (!result.ok && result.error) {
       console.warn('Exit cloud upload:', result.error)
     }
+    return result
   } catch (error) {
     console.warn('Exit cloud upload failed:', error)
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
 

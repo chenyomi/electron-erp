@@ -97,7 +97,6 @@
       "target": "nsis",
       "artifactName": "${name}-setup-${version}.${ext}",
       "icon": "resources/icon.ico",
-      "signAndEditExecutable": false,
       "publish": {
         "provider": "generic",
         "url": "http://public.chenyomi.top/version/"
@@ -113,6 +112,7 @@
       "shortcutName": "东昊账务",
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
+      "include": "build/installer.nsh",
       "installerHeader": "resources/installer-header.bmp",
       "installerSidebar": "resources/installer-sidebar.bmp",
       "installerLanguages": [

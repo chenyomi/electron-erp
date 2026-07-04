@@ -9,7 +9,10 @@ import { getCloudSyncPrefs } from './cloud-sync-prefs'
 import { runExitCloudUpload } from './qiniu-cloud'
 import * as fs from 'fs'
 
-const appIconPath = join(__dirname, '../../resources/icon.png')
+const appPngIconPath = join(__dirname, '../../resources/icon.png')
+const appWindowIconPath = process.platform === 'win32'
+  ? join(__dirname, '../../resources/icon.ico')
+  : appPngIconPath
 const APP_NAME = '东昊账务'
 
 let mainWindow: BrowserWindow | null = null
@@ -114,7 +117,7 @@ function createApplicationMenu(): void {
     version: app.getVersion(),
     copyright: '温州东昊汽车配件有限公司',
     credits: '本地账务、库存、附件、备份恢复管理系统',
-    iconPath: appIconPath,
+    iconPath: appPngIconPath,
   })
 
   const appMenu: MenuItemConstructorOptions[] = process.platform === 'darwin'
@@ -261,7 +264,7 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 700,
     show: false,
-    icon: appIconPath,
+    icon: appWindowIconPath,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#0f1729',
     webPreferences: {
@@ -327,7 +330,7 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.donghao.ledger')
 
   if (process.platform === 'darwin') {
-    app.dock.setIcon(nativeImage.createFromPath(appIconPath))
+    app.dock.setIcon(nativeImage.createFromPath(appPngIconPath))
   }
 
   app.on('browser-window-created', (_, window) => {

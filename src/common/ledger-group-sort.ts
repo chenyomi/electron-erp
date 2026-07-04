@@ -37,14 +37,14 @@ export function sortLedgerGrouped(
     for (const row of groupRows) used.add(Number(row.id))
   }
 
-  groups.sort((a, b) => compareNewestFirst(newestRowInGroup(a), newestRowInGroup(b)))
-
-  const ordered = groups.flat()
   const orphans = rows
     .filter(row => {
       const rowId = Number(row.id || 0)
       return rowId && !used.has(rowId)
     })
-    .sort(compareNewestFirst)
-  return [...ordered, ...orphans]
+    .map(row => [row])
+
+  return [...groups, ...orphans]
+    .sort((a, b) => compareNewestFirst(newestRowInGroup(a), newestRowInGroup(b)))
+    .flat()
 }

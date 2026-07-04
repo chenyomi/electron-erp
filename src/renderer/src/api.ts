@@ -65,6 +65,8 @@ export const customerAPI = {
   repair: (customerName?: string) => api.invoke('customer:repair', customerName || ''),
   paymentAudit: (customerName?: string) => api.invoke('customer:payment-audit', customerName || ''),
   backfillFromStockOut: (customerName?: string) => api.invoke('customer:backfill-from-stock-out', customerName || ''),
+  returnProductOptions: (customerName: string) => api.invoke('customer:return-product-options', customerName),
+  returnProducts: (payload: any) => api.invoke('customer:return-products', payload),
   add: (row: any) => api.invoke('customer:add', row),
   update: (row: any) => api.invoke('customer:update', row),
   delete: (id: number) => api.invoke('customer:delete', id),
@@ -115,6 +117,10 @@ export const supplierAPI = {
   removePreview: (supplierName: string) => api.invoke('supplier:remove-preview', supplierName),
   remove: (supplierName: string) => api.invoke('supplier:remove', supplierName),
   backfillFromStockIn: (supplierName?: string) => api.invoke('supplier:backfill-from-stock-in', supplierName || ''),
+  returnProductOptions: (supplierName: string) => api.invoke('supplier:return-product-options', supplierName),
+  returnProducts: (payload: any) => api.invoke('supplier:return-products', payload),
+  materialReturnOption: (supplierName: string) => api.invoke('supplier:material-return-option', supplierName),
+  returnMaterial: (payload: any) => api.invoke('supplier:return-material', payload),
   add: (row: any) => api.invoke('supplier:add', row),
   update: (row: any) => api.invoke('supplier:update', row),
   delete: (id: number) => api.invoke('supplier:delete', id),
@@ -146,6 +152,7 @@ export const printAPI = {
   saveSettings: (settings: any) => api.invoke('print:save-settings', settings),
   preview: (params?: {
     ids?: number[]
+    kind?: 'stockOut' | 'customerReturn' | 'supplierReturn'
     template?: 'sales' | 'metal'
     customerPhone?: string
     customerAddress?: string
@@ -154,6 +161,7 @@ export const printAPI = {
   }) => api.invoke('print:preview', params),
   lodopScript: (params?: {
     ids?: number[]
+    kind?: 'stockOut' | 'customerReturn' | 'supplierReturn'
     template?: 'sales' | 'metal'
     customerPhone?: string
     customerAddress?: string

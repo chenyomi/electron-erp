@@ -229,12 +229,12 @@ export function renderMetalSlipHtml(
       <div class="doc-no">单据编号：${escapeHtml(data.docNo)}</div>
     </div>
     <div class="meta-line">
-      <div class="meta-cell"><span class="meta-label">客户名称：</span><span class="meta-value">${escapeHtml(data.customerName)}</span></div>
+      <div class="meta-cell"><span class="meta-label">${escapeHtml(data.partyLabel || '客户名称')}：</span><span class="meta-value">${escapeHtml(data.customerName)}</span></div>
       <div class="meta-cell"><span class="meta-label">联系电话：</span><span class="meta-value">${escapeHtml(data.customerPhone || '')}</span></div>
       <div class="meta-cell"><span class="meta-label">日期：</span><span class="meta-value center">${escapeHtml(formatDisplayDate(data.date))}</span></div>
     </div>
     <div class="meta-line mb4">
-      <div class="meta-cell" style="grid-column: span 2;"><span class="meta-label">客户地址：</span><span class="meta-value">${escapeHtml(customerAddress || '')}</span></div>
+      <div class="meta-cell" style="grid-column: span 2;"><span class="meta-label">${escapeHtml(data.partyLabel === '供应商名称' ? '供应商地址' : '客户地址')}：</span><span class="meta-value">${escapeHtml(customerAddress || '')}</span></div>
       <div class="meta-cell"><span class="meta-label">制单人：</span><span class="meta-value center">${escapeHtml(data.issuer || '')}</span></div>
     </div>
 

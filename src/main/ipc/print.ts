@@ -3,13 +3,15 @@ import { join } from 'path'
 import { getDb } from '../db'
 import { getCurrentUser } from './auth'
 import { buildLodopPrintPayload, buildLodopRunnerScript } from '../print/lodop-print'
-import { renderSlipHtml, buildSalesSlipData } from '../print/sales-slip'
+import { renderSlipHtml, buildSalesSlipData, buildReturnSlipData } from '../print/sales-slip'
 import {
   getPrintSettings,
   savePrintSettings,
   type PrintSettingsBundle,
   type SlipTemplate,
 } from '../print/print-settings'
+
+export type PrintSlipKind = 'stockOut' | 'customerReturn' | 'supplierReturn'
 
 function getSelectedIds(ids: unknown): number[] {
   if (!Array.isArray(ids)) return []
@@ -29,47 +31,89 @@ async function loadHtmlInWindow(html: string): Promise<BrowserWindow> {
   return win
 }
 
+function withReturnSlipTitles(settings: PrintSettingsBundle, partyKind: 'customer' | 'supplier'): PrintSettingsBundle {
+  const slipTitle = partyKind === 'supplier' ? '供应商退货单' : '产品退货单'
+  return {
+    ...settings,
+    sales: { ...settings.sales, slipTitle },
+    metal: { ...settings.metal, slipTitle },
+  }
+}
+
 function buildPreviewPayload(params: {
   ids?: number[]
+  kind?: PrintSlipKind
   template?: SlipTemplate
   customerPhone?: string
   customerAddress?: string
   paymentReceived?: number
   overlay?: boolean
 }) {
+  const kind: PrintSlipKind = params.kind === 'customerReturn'
+    ? 'customerReturn'
+    : params.kind === 'supplierReturn'
+      ? 'supplierReturn'
+      : 'stockOut'
   const ids = getSelectedIds(params.ids)
-  if (!ids.length) return { ok: false as const, error: '请先选择要打印的出库记录' }
+  if (!ids.length) {
+    return {
+      ok: false as const,
+      error: kind === 'stockOut' ? '请先选择要打印的出库记录' : '请先选择要打印的退货记录',
+    }
+  }
 
   const db = getDb()
-  const rows = db.prepare(`
-    SELECT * FROM stock_out_ledger
-    WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})
-    ORDER BY date ASC, id ASC
-  `).all(...ids) as any[]
-
-  if (!rows.length) return { ok: false as const, error: '未找到有效的出库记录' }
-
   const user = getCurrentUser()
-  const built = buildSalesSlipData(rows, {
-    issuer: user?.displayName || user?.username || '',
-    customerPhone: params.customerPhone,
-    customerAddress: params.customerAddress,
-    paymentReceived: params.paymentReceived,
-  })
-  if (!built.ok) return built
-
   const settings = getPrintSettings(db)
   const template: SlipTemplate = params.template === 'metal' ? 'metal' : (params.template === 'sales' ? 'sales' : settings.template)
   const overlay = Boolean(params.overlay ?? settings.lodop.overlayMode)
-  const html = renderSlipHtml(built.data, settings, template, { overlay })
-  const lodopPayload = buildLodopPrintPayload(html, built.data, template, settings.lodop, overlay)
+
+  let built: ReturnType<typeof buildSalesSlipData>
+  let printSettings = settings
+
+  if (kind === 'customerReturn' || kind === 'supplierReturn') {
+    const table = kind === 'supplierReturn' ? 'supplier_ledger' : 'customer_ledger'
+    const partyKind = kind === 'supplierReturn' ? 'supplier' as const : 'customer' as const
+    const rows = db.prepare(`
+      SELECT * FROM ${table}
+      WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})
+      ORDER BY date ASC, id ASC
+    `).all(...ids) as any[]
+    if (!rows.length) return { ok: false as const, error: '未找到有效的退货记录' }
+    built = buildReturnSlipData(rows, {
+      issuer: user?.displayName || user?.username || '',
+      customerPhone: params.customerPhone,
+      customerAddress: params.customerAddress,
+      partyKind,
+    })
+    printSettings = withReturnSlipTitles(settings, partyKind)
+  } else {
+    const rows = db.prepare(`
+      SELECT * FROM stock_out_ledger
+      WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})
+      ORDER BY date ASC, id ASC
+    `).all(...ids) as any[]
+    if (!rows.length) return { ok: false as const, error: '未找到有效的出库记录' }
+    built = buildSalesSlipData(rows, {
+      issuer: user?.displayName || user?.username || '',
+      customerPhone: params.customerPhone,
+      customerAddress: params.customerAddress,
+      paymentReceived: params.paymentReceived,
+    })
+  }
+
+  if (!built.ok) return built
+
+  const html = renderSlipHtml(built.data, printSettings, template, { overlay })
+  const lodopPayload = buildLodopPrintPayload(html, built.data, template, printSettings.lodop, overlay)
 
   return {
     ok: true as const,
     html,
     slip: built.data,
-    settings,
+    settings: printSettings,
     template,
+    kind,
     lodopPayload,
     lodopScript: buildLodopRunnerScript(lodopPayload),
   }
@@ -87,6 +131,7 @@ export function registerPrintHandlers(): void {
 
   ipcMain.handle('print:preview', (_e, params: {
     ids?: number[]
+    kind?: PrintSlipKind
     template?: SlipTemplate
     customerPhone?: string
     customerAddress?: string
@@ -95,12 +140,13 @@ export function registerPrintHandlers(): void {
   } = {}) => {
     const result = buildPreviewPayload(params)
     if (!result.ok) return result
-    const { html, slip, settings, template, lodopPayload, lodopScript } = result
-    return { ok: true, html, slip, settings, template, lodopPayload, lodopScript }
+    const { html, slip, settings, template, kind, lodopPayload, lodopScript } = result
+    return { ok: true, html, slip, settings, template, kind, lodopPayload, lodopScript }
   })
 
   ipcMain.handle('print:lodop-script', (_e, params: {
     ids?: number[]
+    kind?: PrintSlipKind
     template?: SlipTemplate
     customerPhone?: string
     customerAddress?: string
@@ -114,6 +160,7 @@ export function registerPrintHandlers(): void {
       lodopScript: result.lodopScript,
       lodopPayload: result.lodopPayload,
       template: result.template,
+      kind: result.kind,
     }
   })
 
@@ -136,7 +183,7 @@ export function registerPrintHandlers(): void {
     if (!html?.trim()) return { ok: false, error: '没有可保存的内容' }
     const result = await dialog.showSaveDialog({
       title: '保存 PDF',
-      defaultPath: `销售单-${new Date().toISOString().slice(0, 10)}.pdf`,
+      defaultPath: `单据-${new Date().toISOString().slice(0, 10)}.pdf`,
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
     })
     if (result.canceled || !result.filePath) return { ok: false, canceled: true }

@@ -34,7 +34,7 @@ export function buildPayablePayloadFromStockIn(db: Database.Database, stockInRow
     ].filter(Boolean).join(' · ')
     const ledgerFields = {
       contract_no: String(stockInRow.contract_no || '').trim(),
-      product_name: finishedName || '材料费',
+      product_name: '原材料',
       spec: '',
       unit: '公斤',
       quantity: materialQty,
@@ -288,25 +288,47 @@ export function applySupplierReturnSideEffects(
     `).run(returnRow.id)
   }
 
+  const product = {
+    product_name: String(returnRow.product_name || '').trim(),
+    spec: String(returnRow.spec || '').trim(),
+    unit: String(returnRow.unit || '').trim(),
+    unit_price: Math.abs(Number(returnRow.unit_price || 0)),
+  }
+
   const refId = Number(returnRow.ref_ledger_id || 0)
-  if (!refId) return
+  if (!refId) {
+    if (product.product_name) {
+      ensureProductCatalog(product)
+      recalcInventoryForRows(product)
+    }
+    if (options.previousProduct) {
+      recalcInventoryForRows(options.previousProduct)
+    }
+    return
+  }
 
   const ref = db.prepare('SELECT * FROM supplier_ledger WHERE id = ? AND deleted_at IS NULL').get(refId) as Record<string, any> | undefined
   const stockInId = Number(ref?.stock_in_id || 0)
-  if (!stockInId) return
+  if (!stockInId) {
+    if (product.product_name) recalcInventoryForRows(product)
+    if (options.previousProduct) recalcInventoryForRows(options.previousProduct)
+    return
+  }
 
   const stockIn = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ? AND deleted_at IS NULL').get(stockInId) as Record<string, any> | undefined
-  if (!stockIn || Number(stockIn.counts_inventory || 0) !== 1) return
+  if (!stockIn || Number(stockIn.counts_inventory || 0) !== 1) {
+    if (product.product_name) recalcInventoryForRows(product)
+    if (options.previousProduct) recalcInventoryForRows(options.previousProduct)
+    return
+  }
 
   const qty = Math.abs(Number(returnRow.quantity || 0))
   if (qty <= 0) return
 
-  const product = {
-    product_name: String(returnRow.product_name || stockIn.product_name || '').trim(),
-    spec: String(returnRow.spec || stockIn.spec || '').trim(),
-    unit: String(returnRow.unit || stockIn.unit || '').trim(),
-    unit_price: Math.abs(Number(returnRow.unit_price || stockIn.unit_price || 0)),
-  }
+  product.product_name = product.product_name || String(stockIn.product_name || '').trim()
+  product.spec = product.spec || String(stockIn.spec || '').trim()
+  product.unit = product.unit || String(stockIn.unit || '').trim()
+  product.unit_price = product.unit_price || Math.abs(Number(stockIn.unit_price || 0))
   ensureProductCatalog(product)
   recalcInventoryForRows(product)
   if (options.previousProduct) {

@@ -24,7 +24,11 @@ export function ensureProductCatalog(row: any) {
   `).run(product)
 }
 
-export function generateDocNo(prefix: 'RK' | 'CK', tableName: 'stock_in_ledger' | 'stock_out_ledger', dateValue?: string) {
+export function generateDocNo(
+  prefix: 'RK' | 'CK' | 'TH' | 'GT',
+  tableName: 'stock_in_ledger' | 'stock_out_ledger' | 'customer_ledger' | 'supplier_ledger',
+  dateValue?: string,
+) {
   const db = getDb()
   const compactDate = String(dateValue || new Date().toISOString().slice(0, 10)).replace(/\D/g, '').slice(0, 8)
   const head = `${prefix}${compactDate}`
@@ -66,11 +70,10 @@ export function sumSupplierReturnQty(
   const row = db.prepare(`
     SELECT COALESCE(SUM(ABS(s.quantity)), 0) AS qty
     FROM supplier_ledger s
-    INNER JOIN supplier_ledger payable ON payable.id = s.ref_ledger_id AND payable.deleted_at IS NULL
-    INNER JOIN stock_in_ledger si ON si.id = payable.stock_in_id AND si.deleted_at IS NULL
-      AND COALESCE(si.counts_inventory, 1) = 1
     WHERE s.deleted_at IS NULL
       AND COALESCE(s.quantity, 0) < 0
+      AND TRIM(COALESCE(s.product_name, '')) NOT LIKE '%原材料退货%'
+      AND TRIM(COALESCE(s.note, '')) NOT LIKE '%原材料退货%'
       AND s.product_name = ?
       AND COALESCE(s.spec, '') = ?
       AND COALESCE(s.unit, '') = ?
@@ -96,10 +99,9 @@ export const inventoryFlowsSql = `
   SELECT s.product_name, COALESCE(s.spec, '') AS spec, COALESCE(s.unit, '') AS unit,
          -ABS(s.quantity) AS in_qty, 0 AS out_qty
   FROM supplier_ledger s
-  INNER JOIN supplier_ledger payable ON payable.id = s.ref_ledger_id AND payable.deleted_at IS NULL
-  INNER JOIN stock_in_ledger si ON si.id = payable.stock_in_id AND si.deleted_at IS NULL
-    AND COALESCE(si.counts_inventory, 1) = 1
   WHERE s.deleted_at IS NULL AND COALESCE(s.quantity, 0) < 0
+    AND TRIM(COALESCE(s.product_name, '')) NOT LIKE '%原材料退货%'
+    AND TRIM(COALESCE(s.note, '')) NOT LIKE '%原材料退货%'
 `
 
 export function recalcInventoryBalance(row: any) {

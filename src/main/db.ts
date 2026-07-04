@@ -73,6 +73,7 @@ function migrateSchema(): void {
   addColumnIfMissing('stock_in_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('stock_out_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('stock_out_ledger', 'ledger_id INTEGER')
+  addColumnIfMissing('customer_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('customer_ledger', 'stock_out_id INTEGER')
   addColumnIfMissing('customer_ledger', 'ref_ledger_id INTEGER')
   addColumnIfMissing('customer_ledger', 'return_stock_in_id INTEGER')
@@ -91,6 +92,7 @@ function migrateSchema(): void {
   addColumnIfMissing('stock_in_ledger', 'counts_inventory INTEGER DEFAULT 1')
   addColumnIfMissing('stock_in_ledger', 'material_quantity REAL DEFAULT 0')
   addColumnIfMissing('stock_in_ledger', 'material_unit_price REAL DEFAULT 0')
+  addColumnIfMissing('supplier_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('supplier_ledger', 'ref_ledger_id INTEGER')
   addColumnIfMissing('supplier_ledger', 'return_stock_out_id INTEGER')
   migrateLedgerDates()
@@ -372,6 +374,7 @@ function createTables(): void {
       balance             REAL    DEFAULT 0,
       note                TEXT    DEFAULT '',
       month_label         TEXT    DEFAULT '', -- Excel 导入月份兼容
+      doc_no              TEXT    DEFAULT '', -- 退货单号（同一次登记共用）
       stock_out_id        INTEGER, -- 关联 stock_out_ledger
       ref_ledger_id       INTEGER, -- 退货关联原应收
       return_stock_in_id  INTEGER, -- 退货自动入库 id
@@ -419,6 +422,7 @@ function createTables(): void {
       amount_out      REAL    DEFAULT 0,
       balance         REAL    DEFAULT 0,
       note            TEXT    DEFAULT '',
+      doc_no          TEXT    DEFAULT '', -- 退货单号（同一次登记共用）
       stock_in_id     INTEGER,
       ref_ledger_id   INTEGER,
       return_stock_out_id INTEGER,

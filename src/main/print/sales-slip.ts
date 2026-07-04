@@ -1,3 +1,5 @@
+import { isCustomerReturnRecord } from '../../common/customer-ledger'
+import { isSupplierReturnRecord } from '../../common/supplier-ledger'
 import { renderMetalSlipHtml } from './metal-slip'
 import type { PrintSettingsBundle, SlipTemplate } from './print-settings'
 import { pageSizeCss } from './paper-sizes'
@@ -30,6 +32,8 @@ export interface SalesSlipData {
   customerName: string
   customerPhone: string
   customerAddress: string
+  /** 往来单位标签，默认「客户名称」；供应商退货单为「供应商名称」 */
+  partyLabel?: string
   items: SalesSlipItem[]
   totalQuantity: number
   totalAmount: number
@@ -163,6 +167,83 @@ export function buildSalesSlipData(
       amountChinese: amountToChinese(totalAmount),
       issuer: options.issuer || '',
       paymentReceived: Number(options.paymentReceived) || 0,
+    },
+  }
+}
+
+/** 客户/供应商退货单：台账退货行合并打印，数量/金额取绝对值 */
+export function buildReturnSlipData(
+  rows: any[],
+  options: {
+    issuer?: string
+    customerPhone?: string
+    customerAddress?: string
+    partyKind?: 'customer' | 'supplier'
+  } = {},
+): { ok: true; data: SalesSlipData } | { ok: false; error: string } {
+  if (!rows.length) return { ok: false, error: '请先选择要打印的退货记录' }
+
+  const partyKind = options.partyKind === 'supplier' ? 'supplier' : 'customer'
+  const isReturn = partyKind === 'supplier' ? isSupplierReturnRecord : isCustomerReturnRecord
+  const partyKey = partyKind === 'supplier' ? 'supplier_name' : 'customer_name'
+  const partyLabel = partyKind === 'supplier' ? '供应商名称' : '客户名称'
+  const partyWord = partyKind === 'supplier' ? '供应商' : '客户'
+  const docPrefix = partyKind === 'supplier' ? 'GT' : 'TH'
+
+  if (rows.some((row) => !isReturn(row))) {
+    return { ok: false, error: '只能勾选退货记录打印退货单' }
+  }
+
+  const parties = Array.from(new Set(rows.map((r) => r[partyKey] || '').filter(Boolean)))
+  if (parties.length > 1) {
+    return { ok: false, error: `所选记录包含多个${partyWord}，请按同一${partyWord}勾选后再打印` }
+  }
+
+  const dates = Array.from(new Set(rows.map((r) => normalizeDate(r.date || '')).filter(Boolean)))
+  const date = dates.length === 1 ? dates[0] : normalizeDate(rows[0].date || '')
+
+  const docNos = Array.from(new Set(rows.map((r) => String(r.doc_no || '').trim()).filter(Boolean)))
+  const docNo = docNos.length === 1 && docNos[0]
+    ? docNos[0]
+    : `${docPrefix}${date.replace(/-/g, '')}${padDocSuffix(Math.min(...rows.map((r) => Number(r.id) || 0)))}`
+
+  const items: SalesSlipItem[] = rows.map((row, index) => {
+    const qty = Math.abs(Number(row.quantity) || 0)
+    const unitPrice = Math.abs(Number(row.unit_price) || 0)
+    const amount = Math.abs(Number(row.amount_in) || 0) || Math.round(qty * unitPrice * 100) / 100
+    const productName = [row.product_name, row.spec].filter(Boolean).join(' ')
+    return {
+      lineNo: `${index + 1}`,
+      productName: productName || row.product_name || '',
+      material: '',
+      model: row.product_name || '',
+      spec: row.spec || '',
+      quantity: qty,
+      unit: row.unit || '',
+      unitPrice,
+      amount,
+      note: row.note || '',
+    }
+  })
+
+  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0)
+  const totalAmount = items.reduce((sum, item) => sum + item.amount, 0)
+
+  return {
+    ok: true,
+    data: {
+      docNo,
+      date,
+      customerName: parties[0] || rows[0][partyKey] || '',
+      customerPhone: options.customerPhone || '',
+      customerAddress: options.customerAddress || '',
+      partyLabel,
+      items,
+      totalQuantity,
+      totalAmount,
+      amountChinese: amountToChinese(totalAmount),
+      issuer: options.issuer || '',
+      paymentReceived: 0,
     },
   }
 }
@@ -323,7 +404,7 @@ export function renderSalesSlipHtml(data: SalesSlipData, settings: SalesSlipSett
     <div class="title">${escapeHtml(settings.slipTitle)}</div>
 
     <div class="meta">
-      <div class="meta-item"><label>客户名称</label><span>${escapeHtml(data.customerName)}</span></div>
+      <div class="meta-item"><label>${escapeHtml(data.partyLabel || '客户名称')}</label><span>${escapeHtml(data.customerName)}</span></div>
       <div class="meta-item"><label>联系电话</label><span>${escapeHtml(data.customerPhone || '—')}</span></div>
       <div class="meta-item doc"><label>单据编号</label><span>${escapeHtml(data.docNo)}</span></div>
       <div class="meta-item"><label>日期</label><span>${escapeHtml(data.date)}</span></div>

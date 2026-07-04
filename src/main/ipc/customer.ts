@@ -25,13 +25,77 @@ import {
   resolveReceivableReference,
   resolveReturnReference,
 } from './stock-customer-link'
-import { recalcInventoryForRows, syncProductCatalogWithLedger } from './stock-business'
+import { generateDocNo, recalcInventoryForRows, syncProductCatalogWithLedger } from './stock-business'
 
 function listLinkedCustomerLedgerRows(db: ReturnType<typeof getDb>, receivableId: number) {
   return db.prepare(`
     SELECT * FROM customer_ledger
     WHERE deleted_at IS NULL AND ref_ledger_id = ?
   `).all(receivableId) as Array<Record<string, any>>
+}
+
+function listCustomerReturnProductOptions(db: ReturnType<typeof getDb>, customerName: string) {
+  const name = String(customerName || '').trim()
+  if (!name) return []
+  return db.prepare(`
+    WITH sold AS (
+      SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+        COALESCE(SUM(quantity), 0) AS sold_qty,
+        MAX(unit_price) AS unit_price
+      FROM stock_out_ledger
+      WHERE deleted_at IS NULL AND customer_name = ?
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
+    ),
+    returned AS (
+      SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+        COALESCE(SUM(ABS(quantity)), 0) AS returned_qty
+      FROM customer_ledger
+      WHERE deleted_at IS NULL AND customer_name = ? AND COALESCE(quantity, 0) < 0
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
+    )
+    SELECT sold.product_name, sold.spec, sold.unit,
+      sold.unit_price,
+      sold.sold_qty,
+      COALESCE(returned.returned_qty, 0) AS returned_qty,
+      MAX(0, sold.sold_qty - COALESCE(returned.returned_qty, 0)) AS max_qty
+    FROM sold
+    LEFT JOIN returned ON returned.product_name = sold.product_name
+      AND returned.spec = sold.spec
+      AND returned.unit = sold.unit
+    WHERE sold.sold_qty - COALESCE(returned.returned_qty, 0) > 0.005
+    ORDER BY sold.product_name COLLATE NOCASE ASC, sold.spec COLLATE NOCASE ASC
+  `).all(name, name) as Array<Record<string, any>>
+}
+
+function getCustomerProductReturnMax(
+  db: ReturnType<typeof getDb>,
+  customerName: string,
+  productName: string,
+  spec: string,
+  unit: string,
+  excludeLedgerId = 0,
+): number {
+  const sold = db.prepare(`
+    SELECT COALESCE(SUM(quantity), 0) AS qty
+    FROM stock_out_ledger
+    WHERE deleted_at IS NULL
+      AND customer_name = ?
+      AND product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+  `).get(customerName, productName, spec, unit) as { qty?: number }
+  const returned = db.prepare(`
+    SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+    FROM customer_ledger
+    WHERE deleted_at IS NULL
+      AND customer_name = ?
+      AND product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+      AND COALESCE(quantity, 0) < 0
+      AND (? = 0 OR id != ?)
+  `).get(customerName, productName, spec, unit, excludeLedgerId, excludeLedgerId) as { qty?: number }
+  return Math.max(0, Number(sold?.qty || 0) - Number(returned?.qty || 0))
 }
 
 export function registerCustomerHandlers(): void {
@@ -46,6 +110,10 @@ export function registerCustomerHandlers(): void {
 
   ipcMain.handle('customer:sale-options', (_e, customerName: string) => {
     return listCustomerSaleOptions(getDb(), customerName || '')
+  })
+
+  ipcMain.handle('customer:return-product-options', (_e, customerName: string) => {
+    return listCustomerReturnProductOptions(getDb(), customerName || '')
   })
 
   ipcMain.handle('customer:backfill-from-stock-out', (_e, customerName = '') => {
@@ -317,6 +385,7 @@ export function registerCustomerHandlers(): void {
       balance: 0,
       note: String(row.note || '').trim(),
       month_label: String(row.month_label || ''),
+      doc_no: String(row.doc_no || '').trim(),
       stock_out_id: stockOutId || null,
       ref_ledger_id: Number(row.ref_ledger_id || 0) || null,
       return_stock_in_id: null,
@@ -341,6 +410,7 @@ export function registerCustomerHandlers(): void {
       if (!String(payload.note || '').includes('退货')) {
         payload.note = payload.note ? `${payload.note} 退货` : '退货'
       }
+      if (!payload.doc_no) payload.doc_no = generateDocNo('TH', 'customer_ledger', payload.date)
       const linked = listLinkedCustomerLedgerRows(db, refId)
       const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linked, payload.amount_in)
       if (returnErr) throw new Error(returnErr)
@@ -365,17 +435,18 @@ export function registerCustomerHandlers(): void {
       payload.quantity = 0
       payload.unit_price = 0
       payload.amount_in = 0
+      payload.doc_no = ''
       if (Number(payload.amount_out || 0) <= 0) throw new Error('请填写收款金额')
     }
 
     const r = db.prepare(`
       INSERT INTO customer_ledger (
         customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
-        amount_in, amount_out, balance, note, month_label, stock_out_id, ref_ledger_id, return_stock_in_id
+        amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id, return_stock_in_id
       )
       VALUES (
         @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
-        @amount_in, @amount_out, @balance, @note, @month_label, @stock_out_id, @ref_ledger_id, @return_stock_in_id
+        @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id, @return_stock_in_id
       )
     `).run(payload)
     const ledgerId = Number(r.lastInsertRowid)
@@ -387,6 +458,78 @@ export function registerCustomerHandlers(): void {
     }
     logOperation('customer_ledger', ledgerId, 'INSERT', null, newRow as object)
     return newRow
+  })
+
+  ipcMain.handle('customer:return-products', (_e, payload: { customer_name?: string; date?: string; note?: string; items?: any[] }) => {
+    const db = getDb()
+    const customerName = String(payload?.customer_name || '').trim()
+    if (!customerName) throw new Error('请选择客户')
+    const date = String(payload?.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请填写退货日期')
+    const options = listCustomerReturnProductOptions(db, customerName)
+    const optionMap = new Map(options.map(item => [`${item.product_name}\u0000${item.spec || ''}\u0000${item.unit || ''}`, item]))
+    const items = (payload?.items || []).filter(item => Number(item.quantity || 0) > 0)
+    if (!items.length) throw new Error('请选择退货产品并填写数量')
+    const inserted: Record<string, any>[] = []
+    const docNo = generateDocNo('TH', 'customer_ledger', date)
+
+    const tx = db.transaction(() => {
+      for (const item of items) {
+        const productName = String(item.product_name || '').trim()
+        const spec = String(item.spec || '').trim()
+        const unit = String(item.unit || '').trim()
+        const key = `${productName}\u0000${spec}\u0000${unit}`
+        const option = optionMap.get(key)
+        if (!option) throw new Error(`产品「${productName} ${spec}」不可退或已退完`)
+        const qty = Math.abs(Number(item.quantity || 0))
+        const maxQty = Number(option.max_qty || 0)
+        if (qty <= 0) throw new Error(`请填写「${productName}」退货数量`)
+        if (qty - maxQty > 0.005) throw new Error(`「${productName}」最多可退 ${maxQty}`)
+        const price = Math.abs(Number(item.unit_price || option.unit_price || 0))
+        if (price <= 0) throw new Error(`请填写「${productName}」单价`)
+        const row = {
+          customer_name: customerName,
+          date,
+          description: '',
+          contract_no: '',
+          product_name: productName,
+          spec,
+          unit,
+          quantity: -qty,
+          unit_price: price,
+          amount_in: -Math.round(qty * price * 100) / 100,
+          amount_out: 0,
+          balance: 0,
+          note: String(item.note || payload.note || '退货').includes('退货')
+            ? String(item.note || payload.note || '退货').trim()
+            : `${String(item.note || payload.note || '').trim()} 退货`.trim(),
+          month_label: '',
+          doc_no: docNo,
+          stock_out_id: null,
+          ref_ledger_id: null,
+          return_stock_in_id: null,
+        }
+        row.description = buildCustomerDescription(row)
+        const result = db.prepare(`
+          INSERT INTO customer_ledger (
+            customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+            amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id, return_stock_in_id
+          ) VALUES (
+            @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+            @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id, @return_stock_in_id
+          )
+        `).run(row)
+        const id = Number(result.lastInsertRowid)
+        let newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+        applyCustomerReturnSideEffects(db, newRow)
+        newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+        logOperation('customer_ledger', id, 'INSERT', null, newRow as object)
+        inserted.push(newRow)
+      }
+      recalculateCustomerBalances(db, customerName)
+    })
+    tx()
+    return { ok: true, count: inserted.length, rows: inserted }
   })
 
   ipcMain.handle('customer:update', (_e, { id, ...row }) => {
@@ -422,6 +565,7 @@ export function registerCustomerHandlers(): void {
       balance: Number(row.balance ?? old.balance ?? 0),
       note: String(row.note ?? old.note ?? '').trim(),
       month_label: String(row.month_label ?? old.month_label ?? '').trim(),
+      doc_no: String(old.doc_no || row.doc_no || '').trim(),
       ref_ledger_id: Number(row.ref_ledger_id ?? old.ref_ledger_id ?? 0) || null,
       stock_out_id: Number(old.stock_out_id || 0) || null,
       return_stock_in_id: Number(old.return_stock_in_id || 0) || null,
@@ -436,16 +580,29 @@ export function registerCustomerHandlers(): void {
 
     if (isReturn) {
       const refId = Number(payload.ref_ledger_id || 0)
-      if (!refId) throw new Error('请选择要退货的应收台账')
-      const ref = resolveReturnReference(db, payload.customer_name, refId)
       const qty = Math.abs(Number(payload.quantity || 0))
       const price = Math.abs(Number(payload.unit_price || 0))
+      if (qty <= 0 || price <= 0) throw new Error('请填写退货数量与单价')
+      if (refId) {
+        const ref = resolveReturnReference(db, payload.customer_name, refId)
+        const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linkedToReceivable, -Math.round(qty * price * 100) / 100, id)
+        if (returnErr) throw new Error(returnErr)
+      } else {
+        const productName = String(payload.product_name || '').trim()
+        const spec = String(payload.spec || '').trim()
+        const unit = String(payload.unit || '').trim()
+        if (!productName) throw new Error('请选择退货产品')
+        const maxQty = getCustomerProductReturnMax(db, payload.customer_name, productName, spec, unit, id)
+        if (qty - maxQty > 0.005) throw new Error(`「${productName}」最多可退 ${maxQty}`)
+      }
       payload.quantity = -qty
       payload.unit_price = price
       payload.amount_in = -Math.round(qty * price * 100) / 100
       payload.description = buildCustomerDescription(payload)
-      const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linkedToReceivable, payload.amount_in, id)
-      if (returnErr) throw new Error(returnErr)
+      if (!String(payload.note || '').includes('退货')) {
+        payload.note = payload.note ? `${payload.note} 退货` : '退货'
+      }
+      if (!payload.doc_no) payload.doc_no = generateDocNo('TH', 'customer_ledger', payload.date)
     } else if (isPayment) {
       const refId = Number(payload.ref_ledger_id || 0)
       if (refId) {
@@ -461,6 +618,7 @@ export function registerCustomerHandlers(): void {
       payload.quantity = 0
       payload.unit_price = 0
       payload.amount_in = 0
+      payload.doc_no = ''
       if (Number(payload.amount_out || 0) <= 0) throw new Error('请填写收款金额')
     }
 
@@ -469,7 +627,7 @@ export function registerCustomerHandlers(): void {
         description=@description, contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
         quantity=@quantity, unit_price=@unit_price,
         amount_in=@amount_in, amount_out=@amount_out,
-        balance=@balance, note=@note, month_label=@month_label,
+        balance=@balance, note=@note, month_label=@month_label, doc_no=@doc_no,
         ref_ledger_id=@ref_ledger_id,
         updated_at=datetime('now','localtime') WHERE id=@id
     `).run(payload)

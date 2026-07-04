@@ -1001,6 +1001,16 @@ body {
   z-index: 2800 !important;
 }
 
+/* 高于台账内嵌弹窗（最高 3000），避免校验提示被遮挡 */
+.app-snackbar {
+  z-index: 4000 !important;
+}
+
+.app-snackbar .v-overlay__content,
+.app-snackbar.v-snackbar {
+  z-index: 4000 !important;
+}
+
 .customer-workspace-dialog__footer {
   display: flex;
   flex-wrap: wrap;

@@ -35,6 +35,179 @@ import {
   resolvePayableReference,
   shouldLinkSupplierPayable,
 } from './stock-supplier-link'
+import { generateDocNo, recalcInventoryForRows } from './stock-business'
+
+const MATERIAL_RETURN_PRODUCT_NAME = '原材料退货'
+
+function isSupplierMaterialReturnRow(row: Record<string, any>): boolean {
+  if (isSupplierPaymentRecord(row)) return false
+  return Number(row.quantity || 0) < 0 && (
+    String(row.product_name || '').includes(MATERIAL_RETURN_PRODUCT_NAME)
+    || String(row.note || '').includes(MATERIAL_RETURN_PRODUCT_NAME)
+  )
+}
+
+function listSupplierReturnProductOptions(db: ReturnType<typeof getDb>, supplierName: string) {
+  const name = String(supplierName || '').trim()
+  if (!name) return []
+  if (isMaterialSupplierType(getSupplierType(db, name))) return []
+  return db.prepare(`
+    WITH supplied AS (
+      SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+        COALESCE(SUM(quantity), 0) AS supplied_qty,
+        MAX(unit_price) AS unit_price
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND supplier_name = ?
+        AND COALESCE(counts_inventory, 1) = 1
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
+    ),
+    returned AS (
+      SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit,
+        COALESCE(SUM(ABS(quantity)), 0) AS returned_qty
+      FROM supplier_ledger
+      WHERE deleted_at IS NULL AND supplier_name = ? AND COALESCE(quantity, 0) < 0
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '')
+    )
+    SELECT supplied.product_name, supplied.spec, supplied.unit,
+      supplied.unit_price,
+      supplied.supplied_qty,
+      COALESCE(returned.returned_qty, 0) AS returned_qty,
+      COALESCE(inv.stock_qty, 0) AS stock_qty,
+      MIN(supplied.supplied_qty - COALESCE(returned.returned_qty, 0), COALESCE(inv.stock_qty, 0)) AS max_qty
+    FROM supplied
+    LEFT JOIN returned ON returned.product_name = supplied.product_name
+      AND returned.spec = supplied.spec
+      AND returned.unit = supplied.unit
+    LEFT JOIN inventory_balances inv ON inv.product_name = supplied.product_name
+      AND COALESCE(inv.spec, '') = supplied.spec
+      AND COALESCE(inv.unit, '') = supplied.unit
+    WHERE supplied.supplied_qty - COALESCE(returned.returned_qty, 0) > 0.005
+      AND COALESCE(inv.stock_qty, 0) > 0.005
+    ORDER BY supplied.product_name COLLATE NOCASE ASC, supplied.spec COLLATE NOCASE ASC
+  `).all(name, name) as Array<Record<string, any>>
+}
+
+function getSupplierMaterialReturnMax(
+  db: ReturnType<typeof getDb>,
+  supplierName: string,
+  excludeLedgerId = 0,
+): number {
+  const supplied = db.prepare(`
+    SELECT COALESCE(SUM(material_quantity), 0) AS qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND COALESCE(material_quantity, 0) > 0
+  `).get(supplierName) as { qty?: number }
+  const returned = db.prepare(`
+    SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+    FROM supplier_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND COALESCE(quantity, 0) < 0
+      AND (
+        product_name LIKE ?
+        OR note LIKE ?
+      )
+      AND (? = 0 OR id != ?)
+  `).get(supplierName, `%${MATERIAL_RETURN_PRODUCT_NAME}%`, `%${MATERIAL_RETURN_PRODUCT_NAME}%`, excludeLedgerId, excludeLedgerId) as { qty?: number }
+  return Math.max(0, Number(supplied?.qty || 0) - Number(returned?.qty || 0))
+}
+
+function getSupplierMaterialReturnOption(db: ReturnType<typeof getDb>, supplierName: string, excludeLedgerId = 0) {
+  const name = String(supplierName || '').trim()
+  if (!name) return { max_qty: 0, unit_price: 0, supplied_qty: 0, returned_qty: 0 }
+  const supplied = db.prepare(`
+    SELECT COALESCE(SUM(material_quantity), 0) AS qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND COALESCE(material_quantity, 0) > 0
+  `).get(name) as { qty?: number }
+  const returned = db.prepare(`
+    SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+    FROM supplier_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND COALESCE(quantity, 0) < 0
+      AND (
+        product_name LIKE ?
+        OR note LIKE ?
+      )
+      AND (? = 0 OR id != ?)
+  `).get(name, `%${MATERIAL_RETURN_PRODUCT_NAME}%`, `%${MATERIAL_RETURN_PRODUCT_NAME}%`, excludeLedgerId, excludeLedgerId) as { qty?: number }
+  const latest = db.prepare(`
+    SELECT material_unit_price
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND COALESCE(material_quantity, 0) > 0
+      AND COALESCE(material_unit_price, 0) > 0
+    ORDER BY date DESC, id DESC
+    LIMIT 1
+  `).get(name) as { material_unit_price?: number } | undefined
+  const suppliedQty = Number(supplied?.qty || 0)
+  const returnedQty = Number(returned?.qty || 0)
+  return {
+    supplied_qty: suppliedQty,
+    returned_qty: returnedQty,
+    max_qty: Math.max(0, suppliedQty - returnedQty),
+    unit_price: Number(latest?.material_unit_price || 0),
+    unit: '公斤',
+  }
+}
+
+function getSupplierProductReturnMax(
+  db: ReturnType<typeof getDb>,
+  supplierName: string,
+  productName: string,
+  spec: string,
+  unit: string,
+  excludeLedgerId = 0,
+): number {
+  const supplied = db.prepare(`
+    SELECT COALESCE(SUM(quantity), 0) AS qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+      AND COALESCE(counts_inventory, 1) = 1
+  `).get(supplierName, productName, spec, unit) as { qty?: number }
+  const returned = db.prepare(`
+    SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+    FROM supplier_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+      AND COALESCE(quantity, 0) < 0
+      AND (? = 0 OR id != ?)
+  `).get(supplierName, productName, spec, unit, excludeLedgerId, excludeLedgerId) as { qty?: number }
+  const stock = db.prepare(`
+    SELECT COALESCE(stock_qty, 0) AS qty
+    FROM inventory_balances
+    WHERE product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+  `).get(productName, spec, unit) as { qty?: number } | undefined
+  const old = excludeLedgerId
+    ? db.prepare(`
+      SELECT product_name, COALESCE(spec, '') AS spec, COALESCE(unit, '') AS unit, ABS(quantity) AS qty
+      FROM supplier_ledger
+      WHERE id = ? AND deleted_at IS NULL AND COALESCE(quantity, 0) < 0
+    `).get(excludeLedgerId) as { product_name?: string; spec?: string; unit?: string; qty?: number } | undefined
+    : undefined
+  const stockQty = Number(stock?.qty || 0) + (
+    old?.product_name === productName && String(old.spec || '') === spec && String(old.unit || '') === unit
+      ? Number(old.qty || 0)
+      : 0
+  )
+  return Math.max(0, Math.min(Number(supplied?.qty || 0) - Number(returned?.qty || 0), stockQty))
+}
 
 export function registerSupplierHandlers(): void {
   ipcMain.handle('supplier:names', () => {
@@ -209,6 +382,20 @@ export function registerSupplierHandlers(): void {
     return getSupplierProfile(getDb(), supplierName || '')
   })
 
+  ipcMain.handle('supplier:return-product-options', (_e, supplierName: string) => {
+    return listSupplierReturnProductOptions(getDb(), supplierName || '')
+  })
+
+  ipcMain.handle('supplier:material-return-option', (_e, supplierName: string) => {
+    const db = getDb()
+    const name = String(supplierName || '').trim()
+    if (!name) throw new Error('请选择供应商')
+    if (!isMaterialSupplierType(getSupplierType(db, name))) {
+      throw new Error('只有原材料供应商按公斤退货')
+    }
+    return getSupplierMaterialReturnOption(db, name)
+  })
+
   ipcMain.handle('supplier:create', (_e, profile: {
     supplier_name: string
     supplier_type?: string
@@ -273,6 +460,7 @@ export function registerSupplierHandlers(): void {
       amount_out: Number(row.amount_out || 0),
       balance: 0,
       note: String(row.note || '').trim(),
+      doc_no: String(row.doc_no || '').trim(),
       stock_in_id: null,
       ref_ledger_id: Number(row.ref_ledger_id || 0) || null,
       return_stock_out_id: null,
@@ -298,6 +486,7 @@ export function registerSupplierHandlers(): void {
       if (!String(payload.note || '').includes('退货')) {
         payload.note = payload.note ? `${payload.note} 退货` : '退货'
       }
+      if (!payload.doc_no) payload.doc_no = generateDocNo('GT', 'supplier_ledger', payload.date)
       const linked = listLinkedRows(db, refId)
       const returnErr = validateSupplierReturnAgainstPayments(Number(ref.amount_in || 0), linked, payload.amount_in)
       if (returnErr) throw new Error(returnErr)
@@ -310,6 +499,7 @@ export function registerSupplierHandlers(): void {
       payload.quantity = 0
       payload.unit_price = 0
       payload.amount_in = 0
+      payload.doc_no = ''
       if (Number(payload.amount_out || 0) <= 0) throw new Error('请填写付款金额')
       const refId = Number(row.ref_ledger_id || 0)
       if (refId > 0) {
@@ -339,10 +529,10 @@ export function registerSupplierHandlers(): void {
     const r = db.prepare(`
       INSERT INTO supplier_ledger (
         supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
-        amount_in, amount_out, balance, note, stock_in_id, ref_ledger_id, return_stock_out_id
+        amount_in, amount_out, balance, note, doc_no, stock_in_id, ref_ledger_id, return_stock_out_id
       ) VALUES (
         @supplier_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
-        @amount_in, @amount_out, @balance, @note, @stock_in_id, @ref_ledger_id, @return_stock_out_id
+        @amount_in, @amount_out, @balance, @note, @doc_no, @stock_in_id, @ref_ledger_id, @return_stock_out_id
       )
     `).run(payload)
     const ledgerId = Number(r.lastInsertRowid)
@@ -354,6 +544,133 @@ export function registerSupplierHandlers(): void {
     }
     logOperation('supplier_ledger', ledgerId, 'INSERT', null, newRow as object)
     return newRow
+  })
+
+  ipcMain.handle('supplier:return-products', (_e, payload: { supplier_name?: string; date?: string; note?: string; items?: any[] }) => {
+    const db = getDb()
+    const supplierName = String(payload?.supplier_name || '').trim()
+    if (!supplierName) throw new Error('请选择供应商')
+    if (isMaterialSupplierType(getSupplierType(db, supplierName))) {
+      throw new Error('原材料供应商请按公斤登记退货')
+    }
+    const date = String(payload?.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请填写退货日期')
+    const options = listSupplierReturnProductOptions(db, supplierName)
+    const optionMap = new Map(options.map(item => [`${item.product_name}\u0000${item.spec || ''}\u0000${item.unit || ''}`, item]))
+    const items = (payload?.items || []).filter(item => Number(item.quantity || 0) > 0)
+    if (!items.length) throw new Error('请选择退货产品并填写数量')
+    const inserted: Record<string, any>[] = []
+    const docNo = generateDocNo('GT', 'supplier_ledger', date)
+
+    const tx = db.transaction(() => {
+      for (const item of items) {
+        const productName = String(item.product_name || '').trim()
+        const spec = String(item.spec || '').trim()
+        const unit = String(item.unit || '').trim()
+        const key = `${productName}\u0000${spec}\u0000${unit}`
+        const option = optionMap.get(key)
+        if (!option) throw new Error(`产品「${productName} ${spec}」不可退或库存不足`)
+        const qty = Math.abs(Number(item.quantity || 0))
+        const maxQty = Number(option.max_qty || 0)
+        if (qty <= 0) throw new Error(`请填写「${productName}」退货数量`)
+        if (qty - maxQty > 0.005) throw new Error(`「${productName}」最多可退 ${maxQty}`)
+        const price = Math.abs(Number(item.unit_price || option.unit_price || 0))
+        if (price <= 0) throw new Error(`请填写「${productName}」单价`)
+        const row = {
+          supplier_name: supplierName,
+          date,
+          description: '',
+          contract_no: '',
+          product_name: productName,
+          spec,
+          unit,
+          quantity: -qty,
+          unit_price: price,
+          amount_in: -Math.round(qty * price * 100) / 100,
+          amount_out: 0,
+          balance: 0,
+          note: String(item.note || payload.note || '退货').includes('退货')
+            ? String(item.note || payload.note || '退货').trim()
+            : `${String(item.note || payload.note || '').trim()} 退货`.trim(),
+          doc_no: docNo,
+          stock_in_id: null,
+          ref_ledger_id: null,
+          return_stock_out_id: null,
+        }
+        row.description = buildSupplierDescription(row)
+        const result = db.prepare(`
+          INSERT INTO supplier_ledger (
+            supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+            amount_in, amount_out, balance, note, doc_no, stock_in_id, ref_ledger_id, return_stock_out_id
+          ) VALUES (
+            @supplier_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+            @amount_in, @amount_out, @balance, @note, @doc_no, @stock_in_id, @ref_ledger_id, @return_stock_out_id
+          )
+        `).run(row)
+        const id = Number(result.lastInsertRowid)
+        const newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
+        recalcInventoryForRows(newRow)
+        logOperation('supplier_ledger', id, 'INSERT', null, newRow as object)
+        inserted.push(newRow)
+      }
+      recalculateSupplierBalances(db, supplierName)
+    })
+    tx()
+    return { ok: true, count: inserted.length, rows: inserted }
+  })
+
+  ipcMain.handle('supplier:return-material', (_e, payload: { supplier_name?: string; date?: string; quantity?: number; unit_price?: number; note?: string }) => {
+    const db = getDb()
+    const supplierName = String(payload?.supplier_name || '').trim()
+    if (!supplierName) throw new Error('请选择供应商')
+    if (!isMaterialSupplierType(getSupplierType(db, supplierName))) {
+      throw new Error('只有原材料供应商按公斤退货')
+    }
+    const date = String(payload?.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请填写退货日期')
+    const qty = Math.abs(Number(payload?.quantity || 0))
+    const price = Math.abs(Number(payload?.unit_price || 0))
+    if (qty <= 0) throw new Error('请填写退货公斤数')
+    if (price <= 0) throw new Error('请填写材料单价')
+    const maxQty = getSupplierMaterialReturnMax(db, supplierName)
+    if (qty - maxQty > 0.005) throw new Error(`最多可退 ${maxQty} 公斤`)
+    const noteText = String(payload?.note || MATERIAL_RETURN_PRODUCT_NAME).includes(MATERIAL_RETURN_PRODUCT_NAME)
+      ? String(payload?.note || MATERIAL_RETURN_PRODUCT_NAME).trim()
+      : `${String(payload?.note || '').trim()} ${MATERIAL_RETURN_PRODUCT_NAME}`.trim()
+    const row = {
+      supplier_name: supplierName,
+      date,
+      description: '',
+      contract_no: '',
+      product_name: MATERIAL_RETURN_PRODUCT_NAME,
+      spec: '',
+      unit: '公斤',
+      quantity: -qty,
+      unit_price: price,
+      amount_in: -Math.round(qty * price * 100) / 100,
+      amount_out: 0,
+      balance: 0,
+      note: noteText,
+      doc_no: generateDocNo('GT', 'supplier_ledger', date),
+      stock_in_id: null,
+      ref_ledger_id: null,
+      return_stock_out_id: null,
+    }
+    row.description = buildSupplierDescription(row)
+    const result = db.prepare(`
+      INSERT INTO supplier_ledger (
+        supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+        amount_in, amount_out, balance, note, doc_no, stock_in_id, ref_ledger_id, return_stock_out_id
+      ) VALUES (
+        @supplier_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+        @amount_in, @amount_out, @balance, @note, @doc_no, @stock_in_id, @ref_ledger_id, @return_stock_out_id
+      )
+    `).run(row)
+    const id = Number(result.lastInsertRowid)
+    recalculateSupplierBalances(db, supplierName)
+    const newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
+    logOperation('supplier_ledger', id, 'INSERT', null, newRow as object)
+    return { ok: true, row: newRow }
   })
 
   ipcMain.handle('supplier:update', (_e, { id, ...row }) => {
@@ -384,22 +701,40 @@ export function registerSupplierHandlers(): void {
       amount_in: Number(row.amount_in || 0),
       amount_out: Number(row.amount_out || 0),
       note: String(row.note || '').trim(),
+      doc_no: String(old.doc_no || row.doc_no || '').trim(),
       stock_in_id: old.stock_in_id ?? null,
       ref_ledger_id: Number(row.ref_ledger_id ?? old.ref_ledger_id ?? 0) || null,
       return_stock_out_id: Number(old.return_stock_out_id || 0) || null,
     }
 
-    if (isReturn && isMaterialSupplierType(getSupplierType(db, payload.supplier_name))) {
+    if (isReturn && Number(payload.ref_ledger_id || 0) > 0 && isMaterialSupplierType(getSupplierType(db, payload.supplier_name))) {
       throw new Error('原材料供应商不支持退货')
     }
 
     if (isReturn) {
       const refId = Number(payload.ref_ledger_id || 0)
-      if (!refId) throw new Error('请选择要退货的应付台账')
-      const ref = resolvePayableReference(db, payload.supplier_name, refId)
       const qty = Math.abs(Number(payload.quantity || 0))
-      const price = Math.abs(Number(payload.unit_price || ref.unit_price || 0))
+      const price = Math.abs(Number(payload.unit_price || 0))
       if (qty <= 0 || price <= 0) throw new Error('请填写退货数量与单价')
+      if (refId) {
+        const ref = resolvePayableReference(db, payload.supplier_name, refId)
+        const linked = listLinkedRows(db, refId)
+        const returnErr = validateSupplierReturnAgainstPayments(Number(ref.amount_in || 0), linked, -Math.round(qty * price * 100) / 100, id)
+        if (returnErr) throw new Error(returnErr)
+      } else if (isSupplierMaterialReturnRow({ ...old, ...payload }) || isMaterialSupplierType(getSupplierType(db, payload.supplier_name))) {
+        const maxQty = getSupplierMaterialReturnMax(db, payload.supplier_name, id)
+        if (qty - maxQty > 0.005) throw new Error(`最多可退 ${maxQty} 公斤`)
+        payload.product_name = MATERIAL_RETURN_PRODUCT_NAME
+        payload.spec = ''
+        payload.unit = '公斤'
+      } else {
+        const productName = String(payload.product_name || '').trim()
+        const spec = String(payload.spec || '').trim()
+        const unit = String(payload.unit || '').trim()
+        if (!productName) throw new Error('请选择退货产品')
+        const maxQty = getSupplierProductReturnMax(db, payload.supplier_name, productName, spec, unit, id)
+        if (qty - maxQty > 0.005) throw new Error(`「${productName}」最多可退 ${maxQty}`)
+      }
       payload.quantity = -qty
       payload.unit_price = price
       payload.amount_in = -Math.round(qty * price * 100) / 100
@@ -408,9 +743,10 @@ export function registerSupplierHandlers(): void {
       if (!String(payload.note || '').includes('退货')) {
         payload.note = payload.note ? `${payload.note} 退货` : '退货'
       }
-      const linked = listLinkedRows(db, refId)
-      const returnErr = validateSupplierReturnAgainstPayments(Number(ref.amount_in || 0), linked, payload.amount_in, id)
-      if (returnErr) throw new Error(returnErr)
+      if (payload.product_name === MATERIAL_RETURN_PRODUCT_NAME && !String(payload.note || '').includes(MATERIAL_RETURN_PRODUCT_NAME)) {
+        payload.note = payload.note ? `${payload.note} ${MATERIAL_RETURN_PRODUCT_NAME}` : MATERIAL_RETURN_PRODUCT_NAME
+      }
+      if (!payload.doc_no) payload.doc_no = generateDocNo('GT', 'supplier_ledger', payload.date)
     } else if (isPayment) {
       payload.description = '付款'
       payload.product_name = '付款'
@@ -420,6 +756,7 @@ export function registerSupplierHandlers(): void {
       payload.quantity = 0
       payload.unit_price = 0
       payload.amount_in = 0
+      payload.doc_no = ''
       const refId = Number(payload.ref_ledger_id || 0)
       if (refId > 0) {
         const ref = resolvePayableReference(db, payload.supplier_name, refId)
@@ -436,6 +773,7 @@ export function registerSupplierHandlers(): void {
       payload.amount_out = 0
       payload.description = buildSupplierDescription(payload)
       payload.ref_ledger_id = null
+      payload.doc_no = ''
     }
 
     db.prepare(`
@@ -443,7 +781,7 @@ export function registerSupplierHandlers(): void {
         supplier_name=@supplier_name, date=@date, description=@description,
         contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
         quantity=@quantity, unit_price=@unit_price, amount_in=@amount_in, amount_out=@amount_out,
-        note=@note, ref_ledger_id=@ref_ledger_id, updated_at=datetime('now','localtime')
+        note=@note, doc_no=@doc_no, ref_ledger_id=@ref_ledger_id, updated_at=datetime('now','localtime')
       WHERE id=@id
     `).run(payload)
     if (old.supplier_name !== payload.supplier_name) {
@@ -451,7 +789,7 @@ export function registerSupplierHandlers(): void {
     }
     recalculateSupplierBalances(db, payload.supplier_name)
     let newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
-    if (isReturn) {
+    if (isReturn && !isSupplierMaterialReturnRow(newRow)) {
       const previousProduct = isSupplierReturnRecord(old)
         ? {
           product_name: String(old.product_name || '').trim(),
@@ -489,9 +827,10 @@ export function registerSupplierHandlers(): void {
       cleanupSupplierReturnStockOut(db, row)
     }
     const wasReturn = isSupplierReturnRecord(row)
+    const wasMaterialReturn = isSupplierMaterialReturnRow(row)
     softDelete('supplier_ledger', id)
     recalculateSupplierBalances(db, row.supplier_name)
-    if (wasReturn) recalcInventoryForSupplierReturnRow(db, row)
+    if (wasReturn && !wasMaterialReturn) recalcInventoryForSupplierReturnRow(db, row)
     return { ok: true }
   })
 

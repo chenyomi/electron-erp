@@ -410,7 +410,14 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snackbar.show" :color="snackbar.color" timeout="2600">{{ snackbar.text }}</v-snackbar>
+    <v-snackbar
+      v-model="snackbar.show"
+      class="app-snackbar"
+      :color="snackbar.color"
+      timeout="2600"
+      location="top"
+      :z-index="4000"
+    >{{ snackbar.text }}</v-snackbar>
   </v-app>
 </template>
 
@@ -557,6 +564,8 @@ const messages = {
     inventorySpecEmpty: '无规格',
     inventoryUnitEmpty: '无单位',
     inventoryFieldAutoHint: '随产品名称选择自动带出，须与入库一致',
+    stockOutAvailableHint: '当前可出库 {qty}（按库存限制）',
+    stockOutSelectProductFirst: '请先选择库存产品',
     stockOutSelectFromList: '请从下拉列表选择有库存的产品（品名/规格/单位须与入库一致）',
     stockInUnitRequired: '请填写单位（须与出库一致，用于库存匹配）',
     stockInUnitHint: '必填；出库时按品名+规格+单位匹配库存',
@@ -640,7 +649,11 @@ const messages = {
     exportDoneSelected: '已导出选中 {count} 条',
     exportFailed: '导出失败',
     printSlip: '打印出库单',
+    printReturnSlip: '打印退货单',
     printPreview: '出库单预览',
+    printReturnPreview: '退货单预览',
+    selectReturnRowsToPrint: '请先勾选退货记录',
+    printReturnHint: '已选择 {count} 条退货记录，将合并生成一张退货单。',
     printNow: '打印',
     savePdf: '保存 PDF',
     slipSettings: '模板设置',
@@ -767,12 +780,12 @@ const messages = {
     addCustomerReturn: '登记退货',
     customerReturnRow: '退货',
     customerReceiveRow: '收款',
-    selectSaleRowToReturn: '请从应收行点击「退货」',
-    selectSaleRowToReceive: '请从应收行点击「收款」',
+    selectSaleRowToReturn: '请在台账顶部点击「退货」',
+    selectSaleRowToReceive: '请在台账顶部点击「收款」',
     customerLinkedReceivable: '关联应收',
     customerLinkedPaymentFor: '针对应收',
     customerLedgerDetail: '往来明细',
-    customerLedgerDetailSub: '每笔出库单独算待收。退货/收款必须点对应那一笔应收；已结清的不显示按钮。列表按「一笔出库+其退货/收款」分组，最近活动在上。',
+    customerLedgerDetailSub: '出库自动生成应收；收款和退货在台账顶部统一登记。勾选退货行可打印退货单；按产品退货会加回库存。',
     customerRemainingColumn: '待收',
     customerSettledTag: '已结清',
     customerReturnBatchHint: '仅冲减本笔出库（{date} · {qty}{unit} · 待收 {remaining}），不影响其他批次；库存按退货数量加回。',
@@ -786,9 +799,9 @@ const messages = {
     customerBizReturn: '客户退货',
     customerBizPayment: '收款',
     customerReturnFormHint: '填写退货数量与单价即可，产品自动与关联应收一致；只冲减应收、加回库存，不生成出库单。',
-    customerPaymentFormHint: '客户每转来一笔钱，登记一条收款；不支持批量合并收款。',
+    customerPaymentFormHint: '客户每转来一笔钱，登记一条收款；这笔收款记在客户台账下，不强制绑定某一笔应收。',
     customerOverview: '客户欠款一览',
-    customerOverviewSub: '点右侧「台账」查看明细；出库自动生成应收，在应收行上登记退货与收款。',
+    customerOverviewSub: '点右侧「台账」查看明细；出库自动生成应收，收款和退货在台账顶部登记。',
     amountAutoCalc: '自动计算（数量 × 单价）',
     materialAmountAutoCalc: '自动计算（公斤数 × 元/公斤）',
     finishedUnitPriceHint: '成品参考单价，与下方材料费无关',
@@ -843,7 +856,7 @@ const messages = {
     supplier: '供应商往来',
     supplierSub: '应付与付款',
     supplierOverview: '供应商应付一览',
-    supplierOverviewSub: '入库自动生成应付；外协加工支持退货与付款，原材料仅付款。',
+    supplierOverviewSub: '入库自动生成应付；付款和退货在供应商台账顶部统一登记。',
     supplierPayable: '应付',
     supplierPaid: '付款',
     supplierBalance: '尚欠',
@@ -853,7 +866,7 @@ const messages = {
     supplierBizPayable: '应付',
     supplierBizPayment: '付款',
     supplierLedgerDetail: '往来明细',
-    supplierLedgerDetailSub: '入库自动生成应付；应付行可点「付款」；外协加工应付可点「退货」。列表按「一笔应付+其退货/付款」分组，最近活动在上。',
+    supplierLedgerDetailSub: '入库自动生成应付；付款和退货在台账顶部统一登记。勾选退货行可打印退货单；退货数量受供货剩余和库存限制。',
     supplierWorkspaceTitle: '供应商台账',
     addSupplier: '新增供应商',
     addSupplierSub: '只建供应商档案；应付与付款请进台账登记。',
@@ -861,11 +874,11 @@ const messages = {
     addSupplierPayment: '登记付款',
     supplierPaymentRow: '付款',
     supplierLinkedPayable: '关联应付',
-    selectPayableRowToPay: '请从应付行点击「付款」',
+    selectPayableRowToPay: '请在台账顶部点击「付款」',
     supplierPaymentLinkedHint: '登记本条应付的付款；可部分付，也可超过尚欠（多付部分在汇总中体现）',
-    supplierPaymentFormHint: '每付一笔登记一条付款；请从应付行点「付款」关联。',
+    supplierPaymentFormHint: '每付一笔登记一条付款；这笔付款记在供应商台账下，不强制绑定某一笔应付。',
     supplierPayableFormHint: '应付由入库自动生成；此处仅可编辑已有明细。',
-    supplierPayableAutoOnly: '应付由入库自动生成，请在应付行点「付款」或「退货」。',
+    supplierPayableAutoOnly: '应付由入库自动生成；付款和退货请在台账顶部登记。',
     supplierLedgerEmptyHint: '成品入库并选择该供应商后会自动生成应付。若仍为空，请重置筛选或到回收站恢复。',
     supplierWorkspaceSummaryHint: '尚欠 = 期初应付 + 应付 − 退货 − 付款',
     supplierType: '供应商类别',
@@ -885,7 +898,7 @@ const messages = {
     finishedStockAmountHint: '仅供参考（数量×单价），不入应付',
     addSupplierReturn: '登记退货',
     supplierReturnRow: '退货',
-    selectPayableRowToReturn: '请从应付行点击「退货」',
+    selectPayableRowToReturn: '请在台账顶部点击「退货」',
     supplierReturnFormHint: '填写退货数量与单价（正数）；冲减应付，并按退货数量直接减库存（不生成出库单）。',
     supplierBizReturn: '退供应商',
     supplierDebtTag: '尚欠',
@@ -1045,6 +1058,8 @@ const messages = {
     inventorySpecEmpty: 'No spec',
     inventoryUnitEmpty: 'No unit',
     inventoryFieldAutoHint: 'Filled from product selection; must match stock-in',
+    stockOutAvailableHint: 'Available to ship: {qty} (limited by stock)',
+    stockOutSelectProductFirst: 'Select an in-stock product first',
     stockOutSelectFromList: 'Select an in-stock product from the list (name/spec/unit must match stock-in)',
     stockInUnitRequired: 'Unit is required (must match stock-out for inventory matching)',
     stockInUnitHint: 'Required; stock-out matches by name + spec + unit',
@@ -1128,7 +1143,11 @@ const messages = {
     exportDoneSelected: 'Exported {count} selected rows',
     exportFailed: 'Export failed',
     printSlip: 'Print Outbound Slip',
+    printReturnSlip: 'Print Return Slip',
     printPreview: 'Outbound Slip Preview',
+    printReturnPreview: 'Return Slip Preview',
+    selectReturnRowsToPrint: 'Select return rows first',
+    printReturnHint: '{count} return row(s) selected; will merge into one return slip.',
     printNow: 'Print',
     savePdf: 'Save PDF',
     slipSettings: 'Template',
@@ -1255,12 +1274,12 @@ const messages = {
     addCustomerReturn: 'Add Return',
     customerReturnRow: 'Return',
     customerReceiveRow: 'Receive',
-    selectSaleRowToReturn: 'Click Return on a receivable row',
-    selectSaleRowToReceive: 'Click Receive on a receivable row',
+    selectSaleRowToReturn: 'Use Return at the top of the ledger',
+    selectSaleRowToReceive: 'Use Receive at the top of the ledger',
     customerLinkedReceivable: 'Linked receivable',
     customerLinkedPaymentFor: 'For receivable',
     customerLedgerDetail: 'Ledger',
-    customerLedgerDetailSub: 'Stock-out creates receivable rows. On receivable: Receive / Return. On payment/return rows: Edit or Delete.',
+    customerLedgerDetailSub: 'Stock-out creates receivables. Record receipts and returns from the top; select return rows to print a return slip.',
     customerLedgerEmptyHint: 'Receivables are created automatically from stock-out. Reset filters or check Trash if empty.',
     customerRefreshLedger: 'Refresh',
     customerPaymentLinkedHint: 'Record payment for this receivable; partial or overpayment allowed (overpaid shown in remaining column)',
@@ -1271,9 +1290,9 @@ const messages = {
     customerBizReturn: 'Customer Return',
     customerBizPayment: 'Payment',
     customerReturnFormHint: 'Enter qty and price only; product matches linked receivable. Reduces receivable and restores inventory—no stock-out record.',
-    customerPaymentFormHint: 'Record one payment per transfer. Batch collection is not supported.',
+    customerPaymentFormHint: 'Record one payment per transfer. It stays under this customer and does not have to be linked to one receivable.',
     customerOverview: 'Customer Balances',
-    customerOverviewSub: 'Click a customer or 台账 to view details. Register receivables and payments inside the ledger.',
+    customerOverviewSub: 'Open a customer ledger to view details. Stock-out creates receivables; receipts and returns are recorded from the ledger top.',
     amountAutoCalc: 'Auto-calculated (qty × price)',
     materialAmountAutoCalc: 'Auto-calculated (kg × price per kg)',
     finishedUnitPriceHint: 'Finished-goods reference price; unrelated to material cost below',
@@ -1327,7 +1346,7 @@ const messages = {
     supplier: 'Suppliers',
     supplierSub: 'Payables & payments',
     supplierOverview: 'Supplier Payables',
-    supplierOverviewSub: 'Stock-in auto-creates payables. Outsourcing supports returns and payments.',
+    supplierOverviewSub: 'Stock-in auto-creates payables. Record payments and returns from the supplier ledger top.',
     supplierPayable: 'Payable',
     supplierPaid: 'Paid',
     supplierBalance: 'Balance Due',
@@ -1337,7 +1356,7 @@ const messages = {
     supplierBizPayable: 'Payable',
     supplierBizPayment: 'Payment',
     supplierLedgerDetail: 'Ledger',
-    supplierLedgerDetailSub: 'Stock-in with this supplier creates payables. On payable rows: Pay or Return (outsourcing).',
+    supplierLedgerDetailSub: 'Stock-in creates payables. Record payments and returns from the top; select return rows to print a return slip.',
     supplierWorkspaceTitle: 'Supplier Ledger',
     addSupplier: 'Add Supplier',
     addSupplierSub: 'Profile only. Record payables and payments in the ledger.',
@@ -1345,11 +1364,11 @@ const messages = {
     addSupplierPayment: 'Record Payment',
     supplierPaymentRow: 'Pay',
     supplierLinkedPayable: 'Linked payable',
-    selectPayableRowToPay: 'Click Pay on a payable row first',
+    selectPayableRowToPay: 'Use Pay at the top of the ledger',
     supplierPaymentLinkedHint: 'Record payment for this payable; partial or overpayment allowed',
-    supplierPaymentFormHint: 'One payment per transfer. Link from a payable row via Pay.',
+    supplierPaymentFormHint: 'Record one payment per transfer. It stays under this supplier and does not have to be linked to one payable.',
     supplierPayableFormHint: 'Payables are auto-created from stock-in; edit existing rows only.',
-    supplierPayableAutoOnly: 'Payables are created from stock-in. Use Pay or Return on payable rows.',
+    supplierPayableAutoOnly: 'Payables are created from stock-in. Use Pay or Return at the top of the ledger.',
     stockInNoSupplierHint: 'No supplier: record qty, price and amount for inventory; not posted to supplier ledger.',
     stockInOutsourcingHint: 'Outsourcing: with supplier, qty × processing price → payable; goods → inventory.',
     stockInMaterialHint: 'Material supplier: finished goods above (inventory); material kg × price below (payable).',
@@ -2496,6 +2515,8 @@ const LedgerPage = defineComponent({
     const imagePreview = ref<any>(null)
     const printDialog = ref(false)
     const printSettingsDialog = ref(false)
+    const printKind = ref<'stockOut' | 'customerReturn' | 'supplierReturn'>('stockOut')
+    const printIds = ref<number[]>([])
     const printLoading = ref(false)
     const printHtml = ref('')
     const printTemplate = ref<'sales' | 'metal'>('sales')
@@ -2570,8 +2591,21 @@ const LedgerPage = defineComponent({
       opening_balance: 0,
       note: '',
     })
-    const customerLedgerColumnKeys = ['biz_kind', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'remaining_receivable', 'amount_out', 'note']
-    const supplierLedgerColumnKeys = ['biz_kind', 'date', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'note']
+    const productReturnDialog = ref(false)
+    const productReturnKind = ref<'customer' | 'supplier'>('customer')
+    const productReturnLoading = ref(false)
+    const productReturnDate = ref(todayIsoDate())
+    const productReturnNote = ref('退货')
+    const productReturnRows = ref<any[]>([])
+    const materialReturnDialog = ref(false)
+    const materialReturnLoading = ref(false)
+    const materialReturnDate = ref(todayIsoDate())
+    const materialReturnQuantity = ref<any>('')
+    const materialReturnUnitPrice = ref<any>(0)
+    const materialReturnMaxQty = ref(0)
+    const materialReturnNote = ref('原材料退货')
+    const customerLedgerColumnKeys = ['biz_kind', 'date', 'doc_no', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'remaining_receivable', 'amount_out', 'note']
+    const supplierLedgerColumnKeys = ['biz_kind', 'date', 'doc_no', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'note']
     let loadGeneration = 0
     const displayColumns = computed(() => {
       if (props.page === 'customer' && customerDetailDialog.value) {
@@ -3085,6 +3119,96 @@ const LedgerPage = defineComponent({
       await loadRecordOptions()
       dialog.value = true
     }
+    const openSupplierPaymentFromLedger = async () => {
+      await openAdd('payment')
+      linkedPayableRow.value = null
+      form.ref_ledger_id = null
+      form.note = '付款'
+    }
+    const openSupplierProductReturn = async () => {
+      const supplierName = supplierDetailName.value || filterValue.value
+      if (!supplierName) return
+      if (isMaterialSupplierType(supplierDetailType.value)) {
+        await openSupplierMaterialReturn()
+        return
+      }
+      productReturnKind.value = 'supplier'
+      productReturnDate.value = todayIsoDate()
+      productReturnNote.value = '退货'
+      productReturnLoading.value = true
+      productReturnDialog.value = true
+      try {
+        const options = await supplierAPI.returnProductOptions(supplierName)
+        productReturnRows.value = (options || []).map((item: any) => ({
+          ...item,
+          selected: false,
+          quantity: '',
+          unit_price: Number(item.unit_price || 0),
+          note: '',
+        }))
+      } finally {
+        productReturnLoading.value = false
+      }
+    }
+    const openSupplierMaterialReturn = async () => {
+      const supplierName = supplierDetailName.value || filterValue.value
+      if (!supplierName) return
+      materialReturnDate.value = todayIsoDate()
+      materialReturnQuantity.value = ''
+      materialReturnUnitPrice.value = 0
+      materialReturnMaxQty.value = 0
+      materialReturnNote.value = '原材料退货'
+      materialReturnLoading.value = true
+      materialReturnDialog.value = true
+      try {
+        const option = await supplierAPI.materialReturnOption(supplierName)
+        materialReturnMaxQty.value = Number(option?.max_qty || 0)
+        materialReturnUnitPrice.value = Number(option?.unit_price || 0)
+      } catch (error: any) {
+        emit('notify', error?.message || '读取可退公斤数失败', 'error')
+        materialReturnDialog.value = false
+      } finally {
+        materialReturnLoading.value = false
+      }
+    }
+    const saveSupplierMaterialReturn = async () => {
+      const supplierName = supplierDetailName.value || filterValue.value
+      const qty = Math.abs(Number(materialReturnQuantity.value || 0))
+      const price = Math.abs(Number(materialReturnUnitPrice.value || 0))
+      if (!supplierName) return
+      if (qty <= 0) {
+        emit('notify', '请填写退货公斤数', 'warning')
+        return
+      }
+      if (qty - materialReturnMaxQty.value > 0.005) {
+        emit('notify', `最多可退 ${materialReturnMaxQty.value} 公斤`, 'warning')
+        return
+      }
+      if (price <= 0) {
+        emit('notify', '请填写材料单价', 'warning')
+        return
+      }
+      materialReturnLoading.value = true
+      try {
+        const result = await supplierAPI.returnMaterial({
+          supplier_name: supplierName,
+          date: materialReturnDate.value,
+          quantity: qty,
+          unit_price: price,
+          note: materialReturnNote.value,
+        })
+        if (!result?.ok) throw new Error(result?.error || '退货失败')
+        emit('notify', '已登记原材料退货')
+        materialReturnDialog.value = false
+        await load()
+        const newId = Number(result?.row?.id || 0)
+        if (newId > 0) selected.value = [newId]
+      } catch (error: any) {
+        emit('notify', error?.message || '退货失败', 'error')
+      } finally {
+        materialReturnLoading.value = false
+      }
+    }
     const supplierLinkedToPayable = (row: any) => {
       if (isSupplierPayableRecord(row)) {
         return listSupplierLedgerLinkedToPayable(Number(row.id || 0), rows.value)
@@ -3196,6 +3320,85 @@ const LedgerPage = defineComponent({
       await loadRecordOptions()
       dialog.value = true
     }
+    const openCustomerPaymentFromLedger = async () => {
+      await openAdd('payment')
+      linkedReceivableRow.value = null
+      form.ref_ledger_id = null
+      form.note = '收款'
+    }
+    const openCustomerProductReturn = async () => {
+      const customerName = customerDetailName.value || filterValue.value
+      if (!customerName) return
+      productReturnKind.value = 'customer'
+      productReturnDate.value = todayIsoDate()
+      productReturnNote.value = '退货'
+      productReturnLoading.value = true
+      productReturnDialog.value = true
+      try {
+        const options = await customerAPI.returnProductOptions(customerName)
+        productReturnRows.value = (options || []).map((item: any) => ({
+          ...item,
+          selected: false,
+          quantity: '',
+          unit_price: Number(item.unit_price || 0),
+          note: '',
+        }))
+      } finally {
+        productReturnLoading.value = false
+      }
+    }
+    const saveProductReturn = async () => {
+      const partyName = productReturnKind.value === 'customer'
+        ? (customerDetailName.value || filterValue.value)
+        : (supplierDetailName.value || filterValue.value)
+      const items = productReturnRows.value
+        .filter((item: any) => item.selected && Number(item.quantity || 0) > 0)
+        .map((item: any) => ({
+          product_name: item.product_name,
+          spec: item.spec || '',
+          unit: item.unit || '',
+          quantity: Number(item.quantity || 0),
+          unit_price: Number(item.unit_price || 0),
+          note: item.note || '',
+        }))
+      if (!items.length) {
+        emit('notify', '请选择退货产品并填写数量', 'warning')
+        return
+      }
+      for (const item of items) {
+        const option = productReturnRows.value.find((row: any) =>
+          row.product_name === item.product_name && (row.spec || '') === (item.spec || '') && (row.unit || '') === (item.unit || '')
+        )
+        if (Number(item.quantity || 0) - Number(option?.max_qty || 0) > 0.005) {
+          emit('notify', `「${item.product_name}」最多可退 ${option?.max_qty || 0}`, 'warning')
+          return
+        }
+      }
+      productReturnLoading.value = true
+      try {
+        const payload = {
+          date: productReturnDate.value,
+          note: productReturnNote.value,
+          items,
+          ...(productReturnKind.value === 'customer'
+            ? { customer_name: partyName }
+            : { supplier_name: partyName }),
+        }
+        const result = productReturnKind.value === 'customer'
+          ? await customerAPI.returnProducts(payload)
+          : await supplierAPI.returnProducts(payload)
+        if (!result?.ok) throw new Error(result?.error || '退货失败')
+        emit('notify', `已登记 ${result.count || items.length} 条退货`)
+        productReturnDialog.value = false
+        await load()
+        const newIds = (result.rows || []).map((row: any) => Number(row.id || 0)).filter((id: number) => id > 0)
+        if (newIds.length) selected.value = newIds
+      } catch (error: any) {
+        emit('notify', error?.message || '退货失败', 'error')
+      } finally {
+        productReturnLoading.value = false
+      }
+    }
     const canReturnRow = (row: any) => customerRowActions(row).showReturn
     const canReceiveRow = (row: any) => customerRowActions(row).showReceive
     const openEdit = async (row: any) => {
@@ -3274,25 +3477,23 @@ const LedgerPage = defineComponent({
               emit('notify', '请填写收款金额', 'warning')
               return
             }
-            if (!Number(payload.ref_ledger_id || 0) && !editing.value) {
-              emit('notify', props.t('selectSaleRowToReceive'), 'warning')
-              return
-            }
           } else {
             let qty = Number(payload.quantity || 0)
             const price = Number(payload.unit_price || 0)
             if (customerEntryMode.value === 'return') {
-              if (!Number(payload.ref_ledger_id || 0)) {
+              if (!Number(payload.ref_ledger_id || 0) && !editing.value) {
                 emit('notify', props.t('selectSaleRowToReturn'), 'warning')
                 return
               }
-              applyLinkedReturnProductFields(
-                payload,
-                linkedReceivableRow.value
-                  || rows.value.find((item: any) => item.id === Number(payload.ref_ledger_id || 0)),
-              )
+              if (Number(payload.ref_ledger_id || 0)) {
+                applyLinkedReturnProductFields(
+                  payload,
+                  linkedReceivableRow.value
+                    || rows.value.find((item: any) => item.id === Number(payload.ref_ledger_id || 0)),
+                )
+              }
               if (!String(payload.product_name || '').trim()) {
-                emit('notify', '关联应收缺少产品信息', 'warning')
+                emit('notify', '请选择退货产品', 'warning')
                 return
               }
               if (qty <= 0 || price <= 0) {
@@ -3343,10 +3544,6 @@ const LedgerPage = defineComponent({
             payload.amount_in = 0
             if (Number(payload.amount_out || 0) <= 0) {
               emit('notify', '请填写付款金额', 'warning')
-              return
-            }
-            if (!Number(payload.ref_ledger_id || 0) && !editing.value) {
-              emit('notify', props.t('selectPayableRowToPay'), 'warning')
               return
             }
           } else if (supplierEntryMode.value === 'return' || isSupplierReturnRecord(payload)) {
@@ -3433,18 +3630,19 @@ const LedgerPage = defineComponent({
             payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
           }
         }
-        if (props.page === 'stockOut' && !editing.value) {
-          const matched = inventoryOptions.value.find(item =>
-            item.product_name === payload.product_name &&
-            (item.spec || '') === (payload.spec || '') &&
-            (item.unit || '') === (payload.unit || '')
-          )
-          if (!matched) {
+        if (props.page === 'stockOut') {
+          const matched = inventoryOptions.value.find(item => sameProductKey(item, payload))
+          const available = stockOutAvailableQty(payload, inventoryOptions.value, editing.value)
+          if (!editing.value && !matched) {
             emit('notify', props.t('stockOutSelectFromList'), 'warning')
             return
           }
-          if (Number(payload.quantity || 0) > Number(matched.stock_qty || 0)) {
-            emit('notify', `库存不足，当前可出库 ${matched.stock_qty}`, 'warning')
+          if (Number(payload.quantity || 0) <= 0) {
+            emit('notify', '出库数量必须大于 0', 'warning')
+            return
+          }
+          if (available <= 0 || Number(payload.quantity || 0) > available) {
+            emit('notify', `库存不足，当前可出库 ${available}`, 'warning')
             return
           }
         }
@@ -3667,29 +3865,42 @@ const LedgerPage = defineComponent({
         .catch(() => { lodopAvailable.value = false })
     }
     const buildPreviewParams = () => ({
-      ids: [...selected.value],
+      ids: [...printIds.value],
+      kind: printKind.value,
       template: printTemplate.value,
       customerPhone: printForm.customerPhone,
       customerAddress: printForm.customerAddress,
-      paymentReceived: Number(printForm.paymentReceived) || 0,
+      paymentReceived: printKind.value === 'stockOut' ? (Number(printForm.paymentReceived) || 0) : 0,
       overlay: Boolean(printSettings.lodop?.overlayMode),
     })
-    const openPrintPreview = async () => {
-      if (props.page !== 'stockOut') return
-      if (!selected.value.length) {
-        emit('notify', props.t('selectRowsToPrint'), 'error')
+    const openPrintPreviewFor = async (
+      kind: 'stockOut' | 'customerReturn' | 'supplierReturn',
+      ids: number[],
+      partyName = '',
+    ) => {
+      if (!ids.length) {
+        emit('notify', props.t(kind === 'stockOut' ? 'selectRowsToPrint' : 'selectReturnRowsToPrint'), 'error')
         return
       }
+      printKind.value = kind
+      printIds.value = ids
       printLoading.value = true
       try {
-        const customerName = filterValue.value
-          || rows.value.find((row: any) => selected.value.includes(row.id))?.customer_name
+        const name = partyName
+          || rows.value.find((row: any) => ids.includes(row.id))?.[kind === 'supplierReturn' ? 'supplier_name' : 'customer_name']
+          || filterValue.value
           || ''
-        if (customerName) {
-          const profile = await customerAPI.profile(customerName)
+        if (name) {
+          const profile = kind === 'supplierReturn'
+            ? await supplierAPI.profile(name)
+            : await customerAPI.profile(name)
           printForm.customerPhone = profile.phone || ''
           printForm.customerAddress = profile.address || ''
+        } else {
+          printForm.customerPhone = ''
+          printForm.customerAddress = ''
         }
+        if (kind !== 'stockOut') printForm.paymentReceived = ''
         await loadSlipSettings()
         const result = await printAPI.preview(buildPreviewParams())
         if (!result.ok) {
@@ -3705,8 +3916,45 @@ const LedgerPage = defineComponent({
         printLoading.value = false
       }
     }
+    const openPrintPreview = async () => {
+      if (props.page !== 'stockOut') return
+      await openPrintPreviewFor('stockOut', [...selected.value], filterValue.value)
+    }
+    const collectReturnPrintIds = (isReturnRow: (row: any) => boolean) => {
+      const returnIds = selected.value.filter((id) => {
+        const row = rows.value.find((item: any) => item.id === id)
+        return row && isReturnRow(row)
+      })
+      if (!returnIds.length) return []
+      const selectedRows = rows.value.filter((row: any) => returnIds.includes(row.id))
+      const docNos = Array.from(new Set(selectedRows.map((row: any) => String(row.doc_no || '').trim()).filter(Boolean)))
+      if (!docNos.length) return returnIds
+      return Array.from(new Set(
+        rows.value
+          .filter((row: any) => isReturnRow(row) && docNos.includes(String(row.doc_no || '').trim()))
+          .map((row: any) => row.id),
+      ))
+    }
+    const openCustomerReturnPrintPreview = async () => {
+      if (props.page !== 'customer' || !customerDetailDialog.value) return
+      const ids = collectReturnPrintIds(isCustomerReturnRecord)
+      if (!ids.length) {
+        emit('notify', props.t('selectReturnRowsToPrint'), 'warning')
+        return
+      }
+      await openPrintPreviewFor('customerReturn', ids, customerDetailName.value || filterValue.value)
+    }
+    const openSupplierReturnPrintPreview = async () => {
+      if (props.page !== 'supplier' || !supplierDetailDialog.value) return
+      const ids = collectReturnPrintIds(isSupplierReturnRecord)
+      if (!ids.length) {
+        emit('notify', props.t('selectReturnRowsToPrint'), 'warning')
+        return
+      }
+      await openPrintPreviewFor('supplierReturn', ids, supplierDetailName.value || filterValue.value)
+    }
     const refreshPrintPreview = async () => {
-      if (!selected.value.length) return
+      if (!printIds.value.length) return
       printLoading.value = true
       try {
         const result = await printAPI.preview(buildPreviewParams())
@@ -3850,9 +4098,18 @@ const LedgerPage = defineComponent({
       load()
     })
 
+    const ledgerHeaderLabel = (columnKey: string) => {
+      if (props.page === 'supplier' && supplierDetailDialog.value && isMaterialSupplierType(supplierDetailType.value)) {
+        if (columnKey === 'product_name') return '材料'
+        if (columnKey === 'spec') return '材料规格'
+      }
+      return props.t(ledgerColumnLabel(columnKey, config.value.table))
+    }
+
     const formatLedgerCell = (col: string, value: any, row?: any) => {
       if (props.page === 'customer') {
         if (col === 'biz_kind' && row) return renderCustomerBizKindLabel(row, props.t)
+        if (col === 'doc_no') return String(value || '').trim() || '—'
         if (col === 'amount_in') {
           if (row && isCustomerPaymentRecord(row)) return '—'
           return formatCustomerReceivableDisplay(value)
@@ -3870,6 +4127,10 @@ const LedgerPage = defineComponent({
       }
       if (props.page === 'supplier') {
         if (col === 'biz_kind' && row) return renderSupplierBizKindLabel(row, props.t)
+        if (col === 'doc_no') return String(value || '').trim() || '—'
+        if (col === 'product_name' && row && supplierDetailDialog.value && isMaterialSupplierType(supplierDetailType.value) && !isSupplierPaymentRecord(row)) {
+          return String(row.product_name || '').includes('原材料退货') ? '原材料退货' : '原材料'
+        }
         if (col === 'amount_in') return formatCustomerReceivableDisplay(value)
         if (col === 'amount_out') return formatCustomerReceivedDisplay(value)
         if (col === 'balance') return formatSupplierBalanceDisplay(value).text
@@ -3902,38 +4163,6 @@ const LedgerPage = defineComponent({
           ? supplierRowActions(row)
           : { showReceive: canReceiveRow(row), showReturn: canReturnRow(row), showEdit: true, showDelete: true }
       return h('td', { class: 'action-cell sticky-action-col' }, [
-        ...(actions.showReceive
-          ? [h(VBtn, {
-            size: 'small',
-            variant: 'text',
-            color: 'success',
-            onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentForRow(row) },
-          }, () => props.t('customerReceiveRow'))]
-          : []),
-        ...(actions.showReturn && props.page === 'customer' && customerDetailDialog.value
-          ? [h(VBtn, {
-            size: 'small',
-            variant: 'text',
-            color: 'warning',
-            onClick: (event: MouseEvent) => { event.stopPropagation(); openReturnForRow(row) },
-          }, () => props.t('customerReturnRow'))]
-          : []),
-        ...(canPaySupplierRow(row)
-          ? [h(VBtn, {
-            size: 'small',
-            variant: 'text',
-            color: 'success',
-            onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentForPayableRow(row) },
-          }, () => props.t('supplierPaymentRow'))]
-          : []),
-        ...(canReturnSupplierRow(row)
-          ? [h(VBtn, {
-            size: 'small',
-            variant: 'text',
-            color: 'warning',
-            onClick: (event: MouseEvent) => { event.stopPropagation(); openReturnForPayableRow(row) },
-          }, () => props.t('supplierReturnRow'))]
-          : []),
         ...(actions.showEdit
           ? [h(VBtn, { size: 'small', variant: 'text', color: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openEdit(row) } }, () => props.t('edit'))]
           : []),
@@ -3972,7 +4201,7 @@ const LedgerPage = defineComponent({
             options.withSelect
               ? h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected(options.tableRows) }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected(options.tableRows), options.tableRows) } }, isPageAllSelected(options.tableRows) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)])
               : null,
-            ...options.columnKeys.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))),
+            ...options.columnKeys.map((c: string) => h('th', ledgerHeaderLabel(c))),
             h('th', { class: 'sticky-action-col' }, props.t('action')),
           ])]),
           h('tbody', loading.value
@@ -4194,7 +4423,7 @@ const LedgerPage = defineComponent({
       props.page !== 'customer' && props.page !== 'supplier' ? h(VCard, { class: 'data-card table-card' }, () => [
         h('div', { class: 'table-scroll' }, [
           h(VTable, { class: 'ledger-table', hover: true }, () => [
-            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected(rows.value) }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected(rows.value), rows.value) } }, isPageAllSelected(rows.value) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', props.t(ledgerColumnLabel(c, config.value.table)))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
+            h('thead', [h('tr', [h('th', { class: 'select-col' }, [h('button', { type: 'button', class: ['table-check', { checked: isPageAllSelected(rows.value) }], title: '全选当前页', onClick: (event: MouseEvent) => { event.stopPropagation(); toggleAll(!isPageAllSelected(rows.value), rows.value) } }, isPageAllSelected(rows.value) ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null)]), ...displayColumns.value.map((c: string) => h('th', ledgerHeaderLabel(c))), h('th', { class: 'sticky-action-col' }, props.t('action'))])]),
             h('tbody', loading.value ? [h('tr', [h('td', { colspan: displayColumns.value.length + 2, class: 'empty-cell' }, '加载中...')])] : rows.value.map(row => h('tr', {
               key: row.id,
               class: ['selectable-row', { selected: selected.value.includes(row.id) }],
@@ -4399,6 +4628,25 @@ const LedgerPage = defineComponent({
         h('div', { class: 'customer-workspace-dialog__head' }, [
           h('div', { class: 'drawer-title' }, `${props.t('customerWorkspaceTitle')} · ${customerDetailName.value}`),
           h('div', { class: 'customer-workspace-dialog__actions' }, [
+            h(VBtn, { size: 'small', color: 'success', variant: 'tonal', onClick: openCustomerPaymentFromLedger }, () => props.t('customerQuickPayment')),
+            h(VBtn, { size: 'small', color: 'warning', variant: 'tonal', onClick: openCustomerProductReturn }, () => props.t('customerReturnRow')),
+            h(VBtn, {
+              size: 'small',
+              variant: 'tonal',
+              title: selected.value.some((id) => {
+                const row = rows.value.find((item: any) => item.id === id)
+                return row && isCustomerReturnRecord(row)
+              }) ? props.t('printReturnSlip') : props.t('selectReturnRowsToPrint'),
+              loading: printLoading.value,
+              onClick: openCustomerReturnPrintPreview,
+            }, () => {
+              const count = selected.value.filter((id) => {
+                const row = rows.value.find((item: any) => item.id === id)
+                return row && isCustomerReturnRecord(row)
+              }).length
+              return count ? `${props.t('printReturnSlip')}(${count})` : props.t('printReturnSlip')
+            }),
+            h(VBtn, { size: 'small', variant: 'text', onClick: refreshCustomerWorkspace }, () => props.t('customerRefreshLedger')),
             h(VBtn, { size: 'small', variant: 'text', onClick: closeCustomerWorkspace }, () => props.t('cancel')),
           ]),
         ]),
@@ -4420,6 +4668,7 @@ const LedgerPage = defineComponent({
             page: currentPage.value,
             pageSize: config.value.pageSize,
             onPageChange: (v: number) => { currentPage.value = v },
+            withSelect: true,
             emptyAction: () => h(VBtn, {
               size: 'small',
               variant: 'tonal',
@@ -4439,6 +4688,25 @@ const LedgerPage = defineComponent({
         h('div', { class: 'customer-workspace-dialog__head' }, [
           h('div', { class: 'drawer-title' }, `${props.t('supplierWorkspaceTitle')} · ${supplierDetailName.value}`),
           h('div', { class: 'customer-workspace-dialog__actions' }, [
+            h(VBtn, { size: 'small', color: 'success', variant: 'tonal', onClick: openSupplierPaymentFromLedger }, () => props.t('supplierPaymentRow')),
+            h(VBtn, { size: 'small', color: 'warning', variant: 'tonal', onClick: openSupplierProductReturn }, () => props.t('supplierReturnRow')),
+            h(VBtn, {
+              size: 'small',
+              variant: 'tonal',
+              title: selected.value.some((id) => {
+                const row = rows.value.find((item: any) => item.id === id)
+                return row && isSupplierReturnRecord(row)
+              }) ? props.t('printReturnSlip') : props.t('selectReturnRowsToPrint'),
+              loading: printLoading.value,
+              onClick: openSupplierReturnPrintPreview,
+            }, () => {
+              const count = selected.value.filter((id) => {
+                const row = rows.value.find((item: any) => item.id === id)
+                return row && isSupplierReturnRecord(row)
+              }).length
+              return count ? `${props.t('printReturnSlip')}(${count})` : props.t('printReturnSlip')
+            }),
+            h(VBtn, { size: 'small', variant: 'text', onClick: refreshSupplierWorkspace }, () => props.t('customerRefreshLedger')),
             h(VBtn, { size: 'small', variant: 'text', onClick: closeSupplierWorkspace }, () => props.t('cancel')),
           ]),
         ]),
@@ -4446,7 +4714,9 @@ const LedgerPage = defineComponent({
           renderSupplierWorkspaceSummary(supplierDetailSummary.value, props.t, {
             onOpeningBalanceClick: openSupplierProfile,
           }),
-          h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t('supplierLedgerDetailSub')),
+          h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, isMaterialSupplierType(supplierDetailType.value)
+            ? '入库自动生成应付；付款在台账顶部登记，原材料退货按公斤登记，只冲减应付、不影响成品库存。勾选退货行可打印退货单。'
+            : props.t('supplierLedgerDetailSub')),
           renderLedgerTableCard({
             title: props.t('supplierLedgerDetail'),
             tableRows: rows.value,
@@ -4455,6 +4725,7 @@ const LedgerPage = defineComponent({
             page: currentPage.value,
             pageSize: config.value.pageSize,
             onPageChange: (v: number) => { currentPage.value = v },
+            withSelect: true,
             emptyAction: () => h(VBtn, {
               size: 'small',
               variant: 'tonal',
@@ -4465,6 +4736,185 @@ const LedgerPage = defineComponent({
           }),
         ]),
       ])),
+      RecordDialogShell({
+        show: materialReturnDialog.value,
+        maxWidth: 620,
+        zIndex: 3000,
+        title: '登记原材料退货',
+        subtitle: `按公斤登记原材料退货；最多可退 ${money(materialReturnMaxQty.value)} 公斤，只冲减供应商应付，不影响成品库存。`,
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { materialReturnDialog.value = false },
+        onSave: saveSupplierMaterialReturn,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: materialReturnDate.value,
+                  'onUpdate:modelValue': (v: string) => { materialReturnDate.value = normalizeDateValue(v) },
+                  label: props.t('date'),
+                  type: 'date',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: materialReturnQuantity.value,
+                  'onUpdate:modelValue': (v: any) => {
+                    const maxQty = Number(materialReturnMaxQty.value || 0)
+                    let qty = Number(v || 0)
+                    if (qty > maxQty) qty = maxQty
+                    if (qty < 0) qty = 0
+                    materialReturnQuantity.value = qty || ''
+                  },
+                  label: '退货公斤数',
+                  type: 'number',
+                  min: 0,
+                  max: materialReturnMaxQty.value,
+                  suffix: '公斤',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: materialReturnUnitPrice.value,
+                  'onUpdate:modelValue': (v: any) => { materialReturnUnitPrice.value = Number(v || 0) },
+                  label: '材料单价',
+                  type: 'number',
+                  min: 0,
+                  suffix: '元/公斤',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: roundMoneyValue(Number(materialReturnQuantity.value || 0) * Number(materialReturnUnitPrice.value || 0)),
+                  label: '退货金额',
+                  readonly: true,
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: materialReturnNote.value,
+                  'onUpdate:modelValue': (v: string) => { materialReturnNote.value = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
+        ],
+      }),
+      RecordDialogShell({
+        show: productReturnDialog.value,
+        maxWidth: 920,
+        zIndex: 3000,
+        title: productReturnKind.value === 'customer' ? props.t('addCustomerReturn') : props.t('addSupplierReturn'),
+        subtitle: productReturnKind.value === 'customer'
+          ? '按产品登记退货，不绑定某一笔应收单。'
+          : '按产品登记退货，不绑定某一笔应付单；数量受该供应商供货剩余和当前库存限制。',
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { productReturnDialog.value = false },
+        onSave: saveProductReturn,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: productReturnDate.value,
+                  'onUpdate:modelValue': (v: string) => { productReturnDate.value = normalizeDateValue(v) },
+                  label: props.t('date'),
+                  type: 'date',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: productReturnNote.value,
+                  'onUpdate:modelValue': (v: string) => { productReturnNote.value = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
+          h('div', { class: 'table-scroll' }, [
+            h(VTable, { class: 'ledger-table', hover: true }, () => [
+              h('thead', [h('tr', [
+                h('th', { class: 'select-col' }, ''),
+                h('th', props.t('productName')),
+                h('th', props.t('spec')),
+                h('th', props.t('unit')),
+                h('th', '最多可退'),
+                h('th', props.t('quantity')),
+                h('th', props.t('unitPrice')),
+                h('th', props.t('note')),
+              ])]),
+              h('tbody', productReturnLoading.value
+                ? [h('tr', [h('td', { colspan: 8, class: 'empty-cell' }, '加载中...')])]
+                : productReturnRows.value.length
+                  ? productReturnRows.value.map((item: any, index: number) => h('tr', { key: `${item.product_name}-${item.spec}-${item.unit}` }, [
+                    h('td', { class: 'select-cell' }, [
+                      h('button', {
+                        type: 'button',
+                        class: ['table-check', { checked: item.selected }],
+                        onClick: () => {
+                          item.selected = !item.selected
+                        },
+                      }, item.selected ? h('svg', { viewBox: '0 0 24 24', class: 'table-check-icon', 'aria-hidden': 'true' }, [h('path', { d: 'M9.2 16.6 4.9 12.3l-1.4 1.4 5.7 5.7L20.8 7.8l-1.4-1.4z' })]) : null),
+                    ]),
+                    h('td', item.product_name),
+                    h('td', item.spec || '—'),
+                    h('td', item.unit || '—'),
+                    h('td', money(Number(item.max_qty || 0))),
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.quantity,
+                        'onUpdate:modelValue': (v: any) => {
+                          const maxQty = Number(item.max_qty || 0)
+                          let qty = Number(v || 0)
+                          if (qty > maxQty) qty = maxQty
+                          if (qty < 0) qty = 0
+                          item.quantity = qty || ''
+                          item.selected = qty > 0
+                        },
+                        type: 'number',
+                        min: 0,
+                        max: Number(item.max_qty || 0),
+                        density: 'compact',
+                        hideDetails: true,
+                        style: 'width: 110px',
+                      }),
+                    ]),
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.unit_price,
+                        'onUpdate:modelValue': (v: any) => { item.unit_price = Number(v || 0) },
+                        type: 'number',
+                        min: 0,
+                        density: 'compact',
+                        hideDetails: true,
+                        style: 'width: 110px',
+                      }),
+                    ]),
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.note,
+                        'onUpdate:modelValue': (v: string) => { item.note = v },
+                        density: 'compact',
+                        hideDetails: true,
+                        style: 'min-width: 140px',
+                      }),
+                    ]),
+                  ]))
+                  : [h('tr', [h('td', { colspan: 8, class: 'empty-cell' }, '暂无可退产品')])]),
+            ]),
+          ]),
+        ],
+      }),
       RecordDialogShell({
         show: dialog.value,
         maxWidth: ledgerDialogWidths[props.page] || 720,
@@ -4545,6 +4995,7 @@ const LedgerPage = defineComponent({
               profileOptions: profileOptions.value,
               inventoryOptions: inventoryOptions.value,
               productOptions: productOptions.value,
+              editingRow: editing.value,
               lockedCustomerName: customerDetailName.value || filterValue.value,
               lockedSupplierName: supplierDetailName.value || filterValue.value,
               customerEntryMode: customerEntryMode.value,
@@ -4739,10 +5190,19 @@ const LedgerPage = defineComponent({
           ? h('img', { class: 'image-zoom-dialog__img', src: imagePreview.value.dataUrl, alt: imagePreview.value.fileName || props.t('images') })
           : null,
       ])),
-      props.page === 'stockOut' ? h(VDialog, { modelValue: printDialog.value, 'onUpdate:modelValue': (v: boolean) => printDialog.value = v, maxWidth: 980, scrollable: true }, () => h(VCard, { class: 'pa-5 print-dialog-card' }, [
-        h(VCardTitle, props.t('printPreview')),
+      printDialog.value || props.page === 'stockOut' || props.page === 'customer' || props.page === 'supplier' ? h(VDialog, {
+        modelValue: printDialog.value,
+        'onUpdate:modelValue': (v: boolean) => { printDialog.value = v },
+        maxWidth: 980,
+        scrollable: true,
+        zIndex: printKind.value !== 'stockOut' ? 3200 : 2400,
+        class: printKind.value !== 'stockOut' ? 'record-dialog-overlay--elevated' : undefined,
+      }, () => h(VCard, { class: 'pa-5 print-dialog-card' }, [
+        h(VCardTitle, props.t(printKind.value !== 'stockOut' ? 'printReturnPreview' : 'printPreview')),
         h(VCardText, [
-          h(VAlert, { type: 'info', variant: 'tonal', density: 'compact', class: 'mb-3' }, () => `已选择 ${selected.value.length} 条出库记录，将合并生成一张单据。金属材料建议使用「${props.t('templateMetal')}」。`),
+          h(VAlert, { type: 'info', variant: 'tonal', density: 'compact', class: 'mb-3' }, () => printKind.value !== 'stockOut'
+            ? props.t('printReturnHint', { count: printIds.value.length })
+            : `已选择 ${printIds.value.length || selected.value.length} 条出库记录，将合并生成一张单据。金属材料建议使用「${props.t('templateMetal')}」。`),
           h('div', { class: 'print-form-row mb-4' }, [
             h(VSelect, {
               modelValue: printTemplate.value,
@@ -4777,23 +5237,29 @@ const LedgerPage = defineComponent({
               class: 'print-form-field',
               onBlur: refreshPrintPreview,
             }),
-            h(VTextField, {
-              modelValue: printForm.paymentReceived,
-              'onUpdate:modelValue': (v: string) => { printForm.paymentReceived = v },
-              label: props.t('paymentReceived'),
-              type: 'number',
-              density: 'compact',
-              hideDetails: true,
-              class: 'print-form-field',
-              onBlur: refreshPrintPreview,
-            }),
+            printKind.value !== 'stockOut'
+              ? null
+              : h(VTextField, {
+                modelValue: printForm.paymentReceived,
+                'onUpdate:modelValue': (v: string) => { printForm.paymentReceived = v },
+                label: props.t('paymentReceived'),
+                type: 'number',
+                density: 'compact',
+                hideDetails: true,
+                class: 'print-form-field',
+                onBlur: refreshPrintPreview,
+              }),
           ]),
           lodopAvailable.value === false
             ? h(VAlert, { type: 'warning', variant: 'tonal', density: 'compact', class: 'mb-3' }, () => props.t('lodopUnavailable'))
             : null,
           h('div', { class: ['print-preview-shell', printTemplate.value === 'metal' ? 'landscape' : ''].filter(Boolean).join(' ') }, [
             printHtml.value
-              ? h('iframe', { class: 'print-preview-frame', srcdoc: printHtml.value, title: props.t('printPreview') })
+              ? h('iframe', {
+                class: 'print-preview-frame',
+                srcdoc: printHtml.value,
+                title: props.t(printKind.value !== 'stockOut' ? 'printReturnPreview' : 'printPreview'),
+              })
               : h('div', { class: 'empty-cell' }, '加载中...'),
           ]),
         ]),
@@ -4806,9 +5272,10 @@ const LedgerPage = defineComponent({
           h(VBtn, { color: 'primary', loading: printLoading.value, onClick: doPrint }, () => props.t('printNow')),
         ]),
       ])) : null,
-      props.page === 'stockOut' ? RecordDialogShell({
+      props.page === 'stockOut' || props.page === 'customer' || props.page === 'supplier' ? RecordDialogShell({
         show: printSettingsDialog.value,
         maxWidth: 760,
+        zIndex: printKind.value !== 'stockOut' ? 3400 : 2500,
         title: props.t('slipSettings'),
         subtitle: props.t('formEditHint'),
         cancelLabel: props.t('cancel'),
@@ -5216,6 +5683,22 @@ function getFormSections(
   return [{ titleKey: 'formSectionBasic', fields: fields.map(key => ({ key, span: (key === 'note' || key === 'description') ? 'full' : 'half' })) }]
 }
 
+function sameProductKey(a: any, b: any) {
+  return String(a?.product_name || '').trim() === String(b?.product_name || '').trim()
+    && String(a?.spec || '').trim() === String(b?.spec || '').trim()
+    && String(a?.unit || '').trim() === String(b?.unit || '').trim()
+}
+
+/** 出库可填数量：当前库存；编辑时加回本条已占用量 */
+function stockOutAvailableQty(row: any, inventoryOptions: any[] = [], editingRow?: any) {
+  const matched = inventoryOptions.find(item => sameProductKey(item, row))
+  let available = Number(matched?.stock_qty || 0)
+  if (editingRow && sameProductKey(editingRow, row)) {
+    available += Number(editingRow.quantity || 0)
+  }
+  return Math.max(0, roundMoneyValue(available))
+}
+
 function renderRecordFormField(
   field: FormFieldSpec,
   ctx: {
@@ -5225,6 +5708,7 @@ function renderRecordFormField(
     profileOptions?: string[]
     inventoryOptions?: any[]
     productOptions?: any[]
+    editingRow?: any
     lockedCustomerName?: string
     lockedSupplierName?: string
     customerEntryMode?: 'sale' | 'return' | 'payment'
@@ -5243,6 +5727,7 @@ function renderRecordFormField(
     profileOptions = [],
     inventoryOptions = [],
     productOptions = [],
+    editingRow,
     lockedCustomerName = '',
     lockedSupplierName = '',
     customerEntryMode = 'sale',
@@ -5370,6 +5855,11 @@ function renderRecordFormField(
             form.product_name = v.product_name
             form.spec = v.spec || ''
             form.unit = v.unit || ''
+            const available = stockOutAvailableQty(form, inventoryOptions, editingRow)
+            if (Number(form.quantity || 0) > available) {
+              form.quantity = available
+              autoFillAmountFields(form, 'quantity')
+            }
           } else if (!v) {
             form.product_name = ''
             form.spec = ''
@@ -5396,6 +5886,33 @@ function renderRecordFormField(
           label: fieldLabel(key),
         readonly: true,
         hint: t('inventoryFieldAutoHint'),
+        persistentHint: true,
+      }),
+    ])
+  }
+
+  if (config.table === 'stockOut' && key === 'quantity') {
+    const hasProduct = Boolean(String(form.product_name || '').trim())
+    const available = stockOutAvailableQty(form, inventoryOptions, editingRow)
+    return h('div', { class: wrapClass, key }, [
+      h(VTextField, {
+        ...base,
+        modelValue: form.quantity,
+        'onUpdate:modelValue': (v: any) => {
+          let qty = Number(v || 0)
+          if (hasProduct && qty > available) qty = available
+          if (qty < 0) qty = 0
+          form.quantity = qty
+          autoFillAmountFields(form, 'quantity')
+        },
+        label: fieldLabel(key),
+        type: 'number',
+        min: 0,
+        max: hasProduct ? available : undefined,
+        step: 'any',
+        hint: hasProduct
+          ? t('stockOutAvailableHint', { qty: money(available) })
+          : t('stockOutSelectProductFirst'),
         persistentHint: true,
       }),
     ])

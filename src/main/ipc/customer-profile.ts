@@ -8,6 +8,7 @@ export type CustomerProfile = {
   phone: string
   address: string
   opening_balance: number
+  opening_reason: string
   note: string
 }
 
@@ -18,6 +19,7 @@ function normalizeCustomerProfileInput(profile: Partial<CustomerProfile> & { cus
     phone: String(profile.phone || '').trim(),
     address: String(profile.address || '').trim(),
     opening_balance: Number(profile.opening_balance || 0),
+    opening_reason: String((profile as any).opening_reason || '').trim(),
     note: String(profile.note || '').trim(),
   }
 }
@@ -30,6 +32,7 @@ export function ensureCustomerProfilesTable(db: Database.Database): void {
       phone           TEXT DEFAULT '',
       address         TEXT DEFAULT '',
       opening_balance REAL DEFAULT 0,
+      opening_reason  TEXT DEFAULT '',
       note            TEXT DEFAULT '',
       updated_at      TEXT DEFAULT (datetime('now','localtime'))
     );
@@ -43,6 +46,7 @@ export function getCustomerProfile(db: Database.Database, customerName: string):
       COALESCE(phone, '') AS phone,
       COALESCE(address, '') AS address,
       COALESCE(opening_balance, 0) AS opening_balance,
+      COALESCE(opening_reason, '') AS opening_reason,
       COALESCE(note, '') AS note
     FROM customer_profiles
     WHERE customer_name = ?
@@ -54,6 +58,7 @@ export function getCustomerProfile(db: Database.Database, customerName: string):
     phone: '',
     address: '',
     opening_balance: 0,
+    opening_reason: '',
     note: '',
   }
 }
@@ -61,13 +66,14 @@ export function getCustomerProfile(db: Database.Database, customerName: string):
 export function setCustomerProfile(db: Database.Database, profile: Partial<CustomerProfile> & { customer_name: string }): CustomerProfile {
   const payload = normalizeCustomerProfileInput(profile)
   db.prepare(`
-    INSERT INTO customer_profiles (customer_name, contact_person, phone, address, opening_balance, note, updated_at)
-    VALUES (@customer_name, @contact_person, @phone, @address, @opening_balance, @note, datetime('now','localtime'))
+    INSERT INTO customer_profiles (customer_name, contact_person, phone, address, opening_balance, opening_reason, note, updated_at)
+    VALUES (@customer_name, @contact_person, @phone, @address, @opening_balance, @opening_reason, @note, datetime('now','localtime'))
     ON CONFLICT(customer_name) DO UPDATE SET
       contact_person = excluded.contact_person,
       phone = excluded.phone,
       address = excluded.address,
       opening_balance = excluded.opening_balance,
+      opening_reason = excluded.opening_reason,
       note = excluded.note,
       updated_at = datetime('now','localtime')
   `).run(payload)

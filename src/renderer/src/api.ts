@@ -88,6 +88,7 @@ export const attachmentAPI = {
 
 export const stockInAPI = {
   names: () => api.invoke('stockIn:names'),
+  materialOptions: () => api.invoke('stockIn:material-options'),
   list: (params?: any) => api.invoke('stockIn:list', params),
   summary: (params?: any) => api.invoke('stockIn:summary', params),
   add: (row: any) => api.invoke('stockIn:add', row),
@@ -111,6 +112,7 @@ export const supplierAPI = {
     phone?: string
     address?: string
     opening_balance?: number
+    opening_reason?: string
     note?: string
   }) => api.invoke('supplier:create', profile),
   setProfile: (profile: any) => api.invoke('supplier:set-profile', profile),
@@ -120,7 +122,9 @@ export const supplierAPI = {
   returnProductOptions: (supplierName: string) => api.invoke('supplier:return-product-options', supplierName),
   returnProducts: (payload: any) => api.invoke('supplier:return-products', payload),
   materialReturnOption: (supplierName: string) => api.invoke('supplier:material-return-option', supplierName),
+  materialReturnOptions: (supplierName: string) => api.invoke('supplier:material-return-options', supplierName),
   returnMaterial: (payload: any) => api.invoke('supplier:return-material', payload),
+  returnMaterials: (payload: any) => api.invoke('supplier:return-materials', payload),
   add: (row: any) => api.invoke('supplier:add', row),
   update: (row: any) => api.invoke('supplier:update', row),
   delete: (id: number) => api.invoke('supplier:delete', id),

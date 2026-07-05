@@ -24,8 +24,12 @@ function normalizeStockInRow(row: any, fallbackDocNo = '') {
     quantity: Number(row?.quantity || 0),
     unit_price: Number(row?.unit_price || 0),
     amount: Number(row?.amount || 0),
+    material_name: String(row?.material_name || '').trim(),
+    material_spec: String(row?.material_spec || '').trim(),
+    material_unit: String(row?.material_unit || '公斤').trim() || '公斤',
     material_quantity: Number(row?.material_quantity || 0),
     material_unit_price: Number(row?.material_unit_price || 0),
+    material_used_quantity: Number(row?.material_used_quantity || 0),
     tax_rate: Number(row?.tax_rate || 0),
     tax_amount: Number(row?.tax_amount || 0),
     invoice_amount: Number(row?.invoice_amount || 0),
@@ -34,18 +38,95 @@ function normalizeStockInRow(row: any, fallbackDocNo = '') {
   }
 }
 
+function getMaterialAvailableQty(db: ReturnType<typeof getDb>, materialName: string, materialSpec: string, materialUnit: string, excludeStockInId = 0): number {
+  const purchased = db.prepare(`
+    SELECT COALESCE(SUM(material_quantity), 0) AS qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND material_name = ?
+      AND COALESCE(material_spec, '') = ?
+      AND COALESCE(material_unit, '') = ?
+      AND (? = 0 OR id != ?)
+  `).get(materialName, materialSpec, materialUnit, excludeStockInId, excludeStockInId) as { qty?: number }
+  const used = db.prepare(`
+    SELECT COALESCE(SUM(material_used_quantity), 0) AS qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND material_name = ?
+      AND COALESCE(material_spec, '') = ?
+      AND COALESCE(material_unit, '') = ?
+      AND (? = 0 OR id != ?)
+  `).get(materialName, materialSpec, materialUnit, excludeStockInId, excludeStockInId) as { qty?: number }
+  const returned = db.prepare(`
+    SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+    FROM supplier_ledger
+    WHERE deleted_at IS NULL
+      AND COALESCE(quantity, 0) < 0
+      AND product_name = ?
+      AND COALESCE(spec, '') = ?
+      AND COALESCE(unit, '') = ?
+      AND note LIKE '%原材料退货%'
+  `).get(materialName, materialSpec, materialUnit) as { qty?: number }
+  return Math.max(0, Number(purchased?.qty || 0) - Number(used?.qty || 0) - Number(returned?.qty || 0))
+}
+
+function listMaterialOptions(db: ReturnType<typeof getDb>) {
+  return db.prepare(`
+    WITH purchased AS (
+      SELECT material_name, COALESCE(material_spec, '') AS material_spec, COALESCE(material_unit, '公斤') AS material_unit,
+        COALESCE(SUM(material_quantity), 0) AS purchased_qty,
+        MAX(material_unit_price) AS unit_price
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND TRIM(COALESCE(material_name, '')) != ''
+        AND COALESCE(material_quantity, 0) > 0
+      GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ),
+    used AS (
+      SELECT material_name, COALESCE(material_spec, '') AS material_spec, COALESCE(material_unit, '公斤') AS material_unit,
+        COALESCE(SUM(material_used_quantity), 0) AS used_qty
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND TRIM(COALESCE(material_name, '')) != ''
+        AND COALESCE(material_used_quantity, 0) > 0
+      GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ),
+    returned AS (
+      SELECT product_name AS material_name, COALESCE(spec, '') AS material_spec, COALESCE(unit, '公斤') AS material_unit,
+        COALESCE(SUM(ABS(quantity)), 0) AS returned_qty
+      FROM supplier_ledger
+      WHERE deleted_at IS NULL
+        AND COALESCE(quantity, 0) < 0
+        AND note LIKE '%原材料退货%'
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '公斤')
+    )
+    SELECT purchased.material_name, purchased.material_spec, purchased.material_unit,
+      purchased.unit_price,
+      purchased.purchased_qty,
+      COALESCE(used.used_qty, 0) AS used_qty,
+      COALESCE(returned.returned_qty, 0) AS returned_qty,
+      purchased.purchased_qty - COALESCE(used.used_qty, 0) - COALESCE(returned.returned_qty, 0) AS stock_qty
+    FROM purchased
+    LEFT JOIN used ON used.material_name = purchased.material_name
+      AND used.material_spec = purchased.material_spec
+      AND used.material_unit = purchased.material_unit
+    LEFT JOIN returned ON returned.material_name = purchased.material_name
+      AND returned.material_spec = purchased.material_spec
+      AND returned.material_unit = purchased.material_unit
+    WHERE purchased.purchased_qty - COALESCE(used.used_qty, 0) - COALESCE(returned.returned_qty, 0) > 0.005
+    ORDER BY purchased.material_name COLLATE NOCASE ASC, purchased.material_spec COLLATE NOCASE ASC
+  `).all() as Array<Record<string, any>>
+}
+
 function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
   if (!String(row?.date || '').trim()) throw new Error('请填写日期')
 
-  if (!String(row?.product_name || '').trim()) {
-    throw new Error('请填写成品名称')
-  }
-  if (!String(row?.spec || '').trim()) throw new Error('请填写规格（出库须与入库完全一致，用于库存匹配）')
-  if (!String(row?.unit || '').trim()) throw new Error('请填写单位（出库须与入库完全一致，用于库存匹配）')
-  if (Number(row?.quantity || 0) <= 0) throw new Error('请填写成品数量')
-
   const supplierName = String(row?.supplier_name || '').trim()
   if (!supplierName) {
+    if (!String(row?.product_name || '').trim()) throw new Error('请填写成品名称')
+    if (!String(row?.spec || '').trim()) throw new Error('请填写规格（出库须与入库完全一致，用于库存匹配）')
+    if (!String(row?.unit || '').trim()) throw new Error('请填写单位（出库须与入库完全一致，用于库存匹配）')
+    if (Number(row?.quantity || 0) <= 0) throw new Error('请填写成品数量')
     if (Number(row?.unit_price || 0) <= 0) throw new Error('请填写单价')
     if (Number(row?.amount || 0) <= 0) throw new Error('请填写金额')
     return
@@ -55,12 +136,64 @@ function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
   const isMaterial = isMaterialSupplierType(getSupplierType(db, supplierName))
 
   if (isMaterial) {
+    if (!String(row?.material_name || '').trim()) throw new Error('请选择或填写材料名称')
     if (Number(row?.material_quantity || 0) <= 0) throw new Error('请填写材料公斤数')
     if (Number(row?.material_unit_price || 0) <= 0) throw new Error('请填写材料单价（元/公斤）')
     if (Number(row?.amount || 0) <= 0) throw new Error('请填写材料金额')
   } else {
+    if (!String(row?.product_name || '').trim()) throw new Error('请填写成品名称')
+    if (!String(row?.spec || '').trim()) throw new Error('请填写规格（出库须与入库完全一致，用于库存匹配）')
+    if (!String(row?.unit || '').trim()) throw new Error('请填写单位（出库须与入库完全一致，用于库存匹配）')
+    if (Number(row?.quantity || 0) <= 0) throw new Error('请填写成品数量')
     if (Number(row?.unit_price || 0) <= 0) throw new Error('请填写加工单价')
     if (Number(row?.amount || 0) <= 0) throw new Error('请填写加工费用')
+  }
+}
+
+function normalizeStockInBySupplierType(db: ReturnType<typeof getDb>, row: ReturnType<typeof normalizeStockInRow>) {
+  const supplierName = String(row?.supplier_name || '').trim()
+  if (!supplierName) {
+    return {
+      ...row,
+      material_quantity: 0,
+      material_unit_price: 0,
+    }
+  }
+  if (isMaterialSupplierType(getSupplierType(db, supplierName))) {
+    return {
+      ...row,
+      product_name: '',
+      spec: '',
+      unit: '',
+      quantity: 0,
+      unit_price: 0,
+      material_unit: String(row.material_unit || '公斤').trim() || '公斤',
+      material_used_quantity: 0,
+      counts_inventory: 0,
+    }
+  }
+  return {
+    ...row,
+    material_name: '',
+    material_spec: '',
+    material_unit: '',
+    material_quantity: 0,
+    material_unit_price: 0,
+    material_used_quantity: 0,
+  }
+}
+
+function validateMaterialUsage(db: ReturnType<typeof getDb>, row: any, excludeStockInId = 0, required = false) {
+  const materialName = String(row?.material_name || '').trim()
+  const usedQty = Number(row?.material_used_quantity || 0)
+  if (!required && !materialName && usedQty <= 0) return
+  if (!materialName) throw new Error('请选择使用的原材料')
+  if (usedQty <= 0) throw new Error('请填写原材料使用数量')
+  const materialSpec = String(row?.material_spec || '').trim()
+  const materialUnit = String(row?.material_unit || '公斤').trim() || '公斤'
+  const available = getMaterialAvailableQty(db, materialName, materialSpec, materialUnit, excludeStockInId)
+  if (usedQty - available > 0.005) {
+    throw new Error(`「${materialName}」可用库存不足，最多可用 ${available}${materialUnit}`)
   }
 }
 
@@ -80,6 +213,10 @@ export function registerStockInHandlers(): void {
     return listAllSupplierNames(getDb()).map(supplier_name => ({ supplier_name }))
   })
 
+  ipcMain.handle('stockIn:material-options', () => {
+    return listMaterialOptions(getDb())
+  })
+
   ipcMain.handle('stockIn:list', (_e, params = {}) => {
     const { supplierName, page = 1, pageSize = 50, keyword = '' } = params as any
     const db = getDb()
@@ -92,18 +229,18 @@ export function registerStockInHandlers(): void {
       FROM stock_in_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR supplier_name = ?)
-        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
+        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ? OR material_name LIKE ? OR material_spec LIKE ?)
         ${dateWhere.sql}
       ORDER BY ${buildDateOrderBy('stock_in_ledger.date')}
       LIMIT ? OFFSET ?
-    `).all(supplierName || '', supplierName || '', like, like, like, like, like, like, like, ...dateWhere.params, pageSize, offset)
+    `).all(supplierName || '', supplierName || '', like, like, like, like, like, like, like, like, like, ...dateWhere.params, pageSize, offset)
     const { total } = db.prepare(`
       SELECT COUNT(*) as total FROM stock_in_ledger
       WHERE deleted_at IS NULL
         AND (? = '' OR supplier_name = ?)
-        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?)
+        AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ? OR material_name LIKE ? OR material_spec LIKE ?)
         ${dateWhere.sql}
-    `).get(supplierName || '', supplierName || '', like, like, like, like, like, like, like, ...dateWhere.params) as { total: number }
+    `).get(supplierName || '', supplierName || '', like, like, like, like, like, like, like, like, like, ...dateWhere.params) as { total: number }
     return { rows: withAttachmentPreviews(rows), total }
   })
 
@@ -116,7 +253,7 @@ export function registerStockInHandlers(): void {
       return db.prepare(`
         SELECT
           COUNT(*) as totalRecords,
-          SUM(quantity) as totalQuantity,
+          SUM(CASE WHEN COALESCE(counts_inventory, 1) = 1 THEN quantity ELSE material_quantity END) as totalQuantity,
           SUM(amount) as totalAmount
         FROM stock_in_ledger
         WHERE deleted_at IS NULL AND supplier_name = ? ${dateWhere.sql}
@@ -125,7 +262,7 @@ export function registerStockInHandlers(): void {
     return db.prepare(`
       SELECT
         COUNT(*) as totalRecords,
-        SUM(quantity) as totalQuantity,
+        SUM(CASE WHEN COALESCE(counts_inventory, 1) = 1 THEN quantity ELSE material_quantity END) as totalQuantity,
         SUM(amount) as totalAmount,
         COUNT(DISTINCT supplier_name) as supplierCount
       FROM stock_in_ledger WHERE deleted_at IS NULL ${dateWhere.sql}
@@ -136,21 +273,24 @@ export function registerStockInHandlers(): void {
     const db = getDb()
     const supplierName = String(row?.supplier_name || '').trim()
     const countsInventory = resolveStockInCountsInventory(db, supplierName)
-    const payload = {
+    const payload = normalizeStockInBySupplierType(db, {
       ...normalizeStockInRow(row, generateDocNo('RK', 'stock_in_ledger', row?.date)),
       counts_inventory: countsInventory,
-    }
+    })
     validateStockInRow(db, payload)
+    if (!supplierName) validateMaterialUsage(db, payload, 0, false)
 
     const newRow = db.transaction(() => {
       const result = db.prepare(`
         INSERT INTO stock_in_ledger (
           doc_no, supplier_name, category, date, contract_no, product_name, spec, unit,
-          quantity, unit_price, amount, material_quantity, material_unit_price,
+          quantity, unit_price, amount, material_name, material_spec, material_unit,
+          material_quantity, material_unit_price, material_used_quantity,
           tax_rate, tax_amount, invoice_amount, note, counts_inventory
         ) VALUES (
           @doc_no, @supplier_name, @category, @date, @contract_no, @product_name, @spec, @unit,
-          @quantity, @unit_price, @amount, @material_quantity, @material_unit_price,
+          @quantity, @unit_price, @amount, @material_name, @material_spec, @material_unit,
+          @material_quantity, @material_unit_price, @material_used_quantity,
           @tax_rate, @tax_amount, @invoice_amount, @note, @counts_inventory
         )
       `).run(payload)
@@ -171,11 +311,12 @@ export function registerStockInHandlers(): void {
     const oldRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(id) as any
     const supplierName = String(row?.supplier_name || oldRow?.supplier_name || '').trim()
     const countsInventory = resolveStockInCountsInventory(db, supplierName)
-    const payload = {
+    const payload = normalizeStockInBySupplierType(db, {
       ...normalizeStockInRow(row, oldRow?.doc_no || generateDocNo('RK', 'stock_in_ledger', row?.date)),
       counts_inventory: countsInventory,
-    }
+    })
     validateStockInRow(db, payload)
+    if (!supplierName) validateMaterialUsage(db, payload, Number(id || 0), false)
 
     const newRow = db.transaction(() => {
       db.prepare(`
@@ -183,7 +324,9 @@ export function registerStockInHandlers(): void {
           doc_no=@doc_no, supplier_name=@supplier_name, category=@category, date=@date,
           contract_no=@contract_no, product_name=@product_name, spec=@spec, unit=@unit,
           quantity=@quantity, unit_price=@unit_price, amount=@amount,
+          material_name=@material_name, material_spec=@material_spec, material_unit=@material_unit,
           material_quantity=@material_quantity, material_unit_price=@material_unit_price,
+          material_used_quantity=@material_used_quantity,
           tax_rate=@tax_rate, tax_amount=@tax_amount, invoice_amount=@invoice_amount,
           note=@note, counts_inventory=@counts_inventory, updated_at=datetime('now','localtime')
         WHERE id=@id

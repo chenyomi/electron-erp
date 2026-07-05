@@ -87,11 +87,17 @@ function migrateSchema(): void {
   addColumnIfMissing('customer_profiles', "phone TEXT DEFAULT ''")
   addColumnIfMissing('customer_profiles', "address TEXT DEFAULT ''")
   addColumnIfMissing('supplier_profiles', "opening_balance REAL DEFAULT 0")
+  addColumnIfMissing('supplier_profiles', "opening_reason TEXT DEFAULT ''")
   addColumnIfMissing('supplier_profiles', "supplier_type TEXT DEFAULT 'outsourcing'")
   addColumnIfMissing('stock_in_ledger', 'ledger_id INTEGER')
   addColumnIfMissing('stock_in_ledger', 'counts_inventory INTEGER DEFAULT 1')
+  addColumnIfMissing('stock_in_ledger', "material_name TEXT DEFAULT ''")
+  addColumnIfMissing('stock_in_ledger', "material_spec TEXT DEFAULT ''")
+  addColumnIfMissing('stock_in_ledger', "material_unit TEXT DEFAULT '公斤'")
   addColumnIfMissing('stock_in_ledger', 'material_quantity REAL DEFAULT 0')
   addColumnIfMissing('stock_in_ledger', 'material_unit_price REAL DEFAULT 0')
+  addColumnIfMissing('stock_in_ledger', 'material_used_quantity REAL DEFAULT 0')
+  addColumnIfMissing('customer_profiles', "opening_reason TEXT DEFAULT ''")
   addColumnIfMissing('supplier_ledger', "doc_no TEXT DEFAULT ''")
   addColumnIfMissing('supplier_ledger', 'ref_ledger_id INTEGER')
   addColumnIfMissing('supplier_ledger', 'return_stock_out_id INTEGER')
@@ -111,6 +117,7 @@ function migrateSchema(): void {
   syncSupplierProfilesFromLedger(db!)
   inferLegacySupplierTypes(db!)
   backfillStockInInventoryFlags(db!)
+  backfillLegacyMaterialFields()
   backfillSupplierPayablesFromStockIn(db!)
   recalculateAllSupplierBalances()
   purgeDeprecatedLedgerData()
@@ -123,6 +130,18 @@ function migrateSchema(): void {
   }).catch(error => {
     console.error('Legacy image recompress failed:', error)
   })
+}
+
+function backfillLegacyMaterialFields(): void {
+  db!.prepare(`
+    UPDATE stock_in_ledger
+    SET material_name = '原材料',
+        material_unit = '公斤',
+        updated_at = datetime('now','localtime')
+    WHERE deleted_at IS NULL
+      AND COALESCE(material_quantity, 0) > 0
+      AND TRIM(COALESCE(material_name, '')) = ''
+  `).run()
 }
 
 function recalculateAllSupplierBalances(): void {
@@ -302,8 +321,12 @@ function createTables(): void {
       note            TEXT    DEFAULT '',
       ledger_id       INTEGER, -- 关联 supplier_ledger 应付 id
       counts_inventory INTEGER DEFAULT 1, -- 0=不计库存（保留兼容），1=成品入库
+      material_name TEXT DEFAULT '', -- 原材料名称
+      material_spec TEXT DEFAULT '', -- 原材料规格
+      material_unit TEXT DEFAULT '公斤', -- 原材料单位
       material_quantity REAL DEFAULT 0, -- 原材料公斤（应付）
       material_unit_price REAL DEFAULT 0, -- 原材料元/公斤（应付）
+      material_used_quantity REAL DEFAULT 0, -- 自加工使用原材料数量
       deleted_at      TEXT    DEFAULT NULL,
       created_at      TEXT    DEFAULT (datetime('now','localtime')),
       updated_at      TEXT    DEFAULT (datetime('now','localtime'))
@@ -390,6 +413,7 @@ function createTables(): void {
       phone           TEXT DEFAULT '',
       address         TEXT DEFAULT '',
       opening_balance REAL DEFAULT 0,
+      opening_reason  TEXT DEFAULT '',
       note            TEXT DEFAULT '',
       updated_at      TEXT DEFAULT (datetime('now','localtime'))
     );
@@ -402,6 +426,7 @@ function createTables(): void {
       phone           TEXT DEFAULT '',
       address         TEXT DEFAULT '',
       opening_balance REAL DEFAULT 0,
+      opening_reason  TEXT DEFAULT '',
       note            TEXT DEFAULT '',
       updated_at      TEXT DEFAULT (datetime('now','localtime'))
     );

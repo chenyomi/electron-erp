@@ -158,6 +158,90 @@ function getSupplierMaterialReturnOption(db: ReturnType<typeof getDb>, supplierN
   }
 }
 
+function listSupplierMaterialReturnOptions(db: ReturnType<typeof getDb>, supplierName: string) {
+  const name = String(supplierName || '').trim()
+  if (!name) return []
+  return db.prepare(`
+    WITH supplied AS (
+      SELECT material_name, COALESCE(material_spec, '') AS material_spec, COALESCE(material_unit, '公斤') AS material_unit,
+        COALESCE(SUM(material_quantity), 0) AS supplied_qty,
+        MAX(material_unit_price) AS unit_price
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND supplier_name = ?
+        AND TRIM(COALESCE(material_name, '')) != ''
+        AND COALESCE(material_quantity, 0) > 0
+      GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ),
+    returned AS (
+      SELECT product_name AS material_name, COALESCE(spec, '') AS material_spec, COALESCE(unit, '公斤') AS material_unit,
+        COALESCE(SUM(ABS(quantity)), 0) AS returned_qty
+      FROM supplier_ledger
+      WHERE deleted_at IS NULL
+        AND supplier_name = ?
+        AND COALESCE(quantity, 0) < 0
+        AND note LIKE '%原材料退货%'
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '公斤')
+    ),
+    total_purchased AS (
+      SELECT material_name, COALESCE(material_spec, '') AS material_spec, COALESCE(material_unit, '公斤') AS material_unit,
+        COALESCE(SUM(material_quantity), 0) AS purchased_qty
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND TRIM(COALESCE(material_name, '')) != ''
+        AND COALESCE(material_quantity, 0) > 0
+      GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ),
+    used AS (
+      SELECT material_name, COALESCE(material_spec, '') AS material_spec, COALESCE(material_unit, '公斤') AS material_unit,
+        COALESCE(SUM(material_used_quantity), 0) AS used_qty
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND TRIM(COALESCE(material_name, '')) != ''
+        AND COALESCE(material_used_quantity, 0) > 0
+      GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ),
+    total_returned AS (
+      SELECT product_name AS material_name, COALESCE(spec, '') AS material_spec, COALESCE(unit, '公斤') AS material_unit,
+        COALESCE(SUM(ABS(quantity)), 0) AS returned_qty
+      FROM supplier_ledger
+      WHERE deleted_at IS NULL
+        AND COALESCE(quantity, 0) < 0
+        AND note LIKE '%原材料退货%'
+      GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '公斤')
+    )
+    SELECT supplied.material_name AS product_name,
+      supplied.material_spec AS spec,
+      supplied.material_unit AS unit,
+      supplied.unit_price,
+      supplied.supplied_qty,
+      COALESCE(returned.returned_qty, 0) AS returned_qty,
+      COALESCE(used.used_qty, 0) AS used_qty,
+      MIN(
+        supplied.supplied_qty - COALESCE(returned.returned_qty, 0),
+        COALESCE(total_purchased.purchased_qty, 0) - COALESCE(used.used_qty, 0) - COALESCE(total_returned.returned_qty, 0)
+      ) AS max_qty
+    FROM supplied
+    LEFT JOIN returned ON returned.material_name = supplied.material_name
+      AND returned.material_spec = supplied.material_spec
+      AND returned.material_unit = supplied.material_unit
+    LEFT JOIN used ON used.material_name = supplied.material_name
+      AND used.material_spec = supplied.material_spec
+      AND used.material_unit = supplied.material_unit
+    LEFT JOIN total_purchased ON total_purchased.material_name = supplied.material_name
+      AND total_purchased.material_spec = supplied.material_spec
+      AND total_purchased.material_unit = supplied.material_unit
+    LEFT JOIN total_returned ON total_returned.material_name = supplied.material_name
+      AND total_returned.material_spec = supplied.material_spec
+      AND total_returned.material_unit = supplied.material_unit
+    WHERE MIN(
+        supplied.supplied_qty - COALESCE(returned.returned_qty, 0),
+        COALESCE(total_purchased.purchased_qty, 0) - COALESCE(used.used_qty, 0) - COALESCE(total_returned.returned_qty, 0)
+      ) > 0.005
+    ORDER BY supplied.material_name COLLATE NOCASE ASC, supplied.material_spec COLLATE NOCASE ASC
+  `).all(name, name) as Array<Record<string, any>>
+}
+
 function getSupplierProductReturnMax(
   db: ReturnType<typeof getDb>,
   supplierName: string,
@@ -396,6 +480,16 @@ export function registerSupplierHandlers(): void {
     return getSupplierMaterialReturnOption(db, name)
   })
 
+  ipcMain.handle('supplier:material-return-options', (_e, supplierName: string) => {
+    const db = getDb()
+    const name = String(supplierName || '').trim()
+    if (!name) throw new Error('请选择供应商')
+    if (!isMaterialSupplierType(getSupplierType(db, name))) {
+      throw new Error('只有原材料供应商按材料退货')
+    }
+    return listSupplierMaterialReturnOptions(db, name)
+  })
+
   ipcMain.handle('supplier:create', (_e, profile: {
     supplier_name: string
     supplier_type?: string
@@ -403,15 +497,54 @@ export function registerSupplierHandlers(): void {
     phone?: string
     address?: string
     opening_balance?: number
+    opening_reason?: string
     note?: string
   }) => {
     const name = String(profile?.supplier_name || '').trim()
     if (!name) throw new Error('请填写供应商名称')
     const db = getDb()
+    const openingBalance = Number(profile?.opening_balance || 0)
+    const openingReason = String(profile?.opening_reason || '').trim()
+    if (Math.abs(openingBalance) > 0.005 && !openingReason) {
+      throw new Error('请填写期初应付原因')
+    }
     if (supplierNameExists(db, name)) {
       throw new Error(`供应商「${name}」已存在`)
     }
     const saved = setSupplierProfile(db, profile)
+    if (Math.abs(openingBalance) > 0.005) {
+      const row = {
+        supplier_name: name,
+        date: new Date().toISOString().slice(0, 10),
+        description: '期初应付',
+        contract_no: '',
+        product_name: '期初应付',
+        spec: '',
+        unit: '',
+        quantity: 0,
+        unit_price: 0,
+        amount_in: 0,
+        amount_out: 0,
+        balance: 0,
+        note: `期初应付 ${openingBalance}；原因：${openingReason}`,
+        stock_in_id: null,
+        ref_ledger_id: null,
+        return_stock_out_id: null,
+      }
+      const result = db.prepare(`
+        INSERT INTO supplier_ledger (
+          supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+          amount_in, amount_out, balance, note, stock_in_id, ref_ledger_id, return_stock_out_id
+        ) VALUES (
+          @supplier_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+          @amount_in, @amount_out, @balance, @note, @stock_in_id, @ref_ledger_id, @return_stock_out_id
+        )
+      `).run(row)
+      const ledgerId = Number(result.lastInsertRowid)
+      const newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(ledgerId) as Record<string, any>
+      logOperation('supplier_ledger', ledgerId, 'INSERT', null, newRow as object)
+      recalculateSupplierBalances(db, name)
+    }
     logOperation('supplier_profiles', 0, 'INSERT', null, saved as object)
     return saved
   })
@@ -423,9 +556,15 @@ export function registerSupplierHandlers(): void {
     phone?: string
     address?: string
     opening_balance?: number
+    opening_reason?: string
     note?: string
   }) => {
     const db = getDb()
+    const openingBalance = Number(profile?.opening_balance || 0)
+    const openingReason = String(profile?.opening_reason || '').trim()
+    if (Math.abs(openingBalance) > 0.005 && !openingReason) {
+      throw new Error('请填写期初应付原因')
+    }
     const saved = setSupplierProfile(db, profile)
     const currentBalance = recalculateSupplierBalances(db, profile.supplier_name)
     logOperation('supplier_profiles', 0, 'UPDATE', null, saved as object)
@@ -671,6 +810,76 @@ export function registerSupplierHandlers(): void {
     const newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
     logOperation('supplier_ledger', id, 'INSERT', null, newRow as object)
     return { ok: true, row: newRow }
+  })
+
+  ipcMain.handle('supplier:return-materials', (_e, payload: { supplier_name?: string; date?: string; note?: string; items?: any[] }) => {
+    const db = getDb()
+    const supplierName = String(payload?.supplier_name || '').trim()
+    if (!supplierName) throw new Error('请选择供应商')
+    if (!isMaterialSupplierType(getSupplierType(db, supplierName))) {
+      throw new Error('只有原材料供应商按材料退货')
+    }
+    const date = String(payload?.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请填写退货日期')
+    const options = listSupplierMaterialReturnOptions(db, supplierName)
+    const optionMap = new Map(options.map(item => [`${item.product_name}\u0000${item.spec || ''}\u0000${item.unit || ''}`, item]))
+    const items = (payload?.items || []).filter(item => Number(item.quantity || 0) > 0)
+    if (!items.length) throw new Error('请选择退货材料并填写数量')
+    const inserted: Record<string, any>[] = []
+    const tx = db.transaction(() => {
+      for (const item of items) {
+        const materialName = String(item.product_name || '').trim()
+        const spec = String(item.spec || '').trim()
+        const unit = String(item.unit || '公斤').trim() || '公斤'
+        const key = `${materialName}\u0000${spec}\u0000${unit}`
+        const option = optionMap.get(key)
+        if (!option) throw new Error(`材料「${materialName} ${spec}」不可退或库存不足`)
+        const qty = Math.abs(Number(item.quantity || 0))
+        const maxQty = Number(option.max_qty || 0)
+        if (qty <= 0) throw new Error(`请填写「${materialName}」退货数量`)
+        if (qty - maxQty > 0.005) throw new Error(`「${materialName}」最多可退 ${maxQty}${unit}`)
+        const price = Math.abs(Number(item.unit_price || option.unit_price || 0))
+        if (price <= 0) throw new Error(`请填写「${materialName}」单价`)
+        const noteText = String(item.note || payload.note || MATERIAL_RETURN_PRODUCT_NAME).includes(MATERIAL_RETURN_PRODUCT_NAME)
+          ? String(item.note || payload.note || MATERIAL_RETURN_PRODUCT_NAME).trim()
+          : `${String(item.note || payload.note || '').trim()} ${MATERIAL_RETURN_PRODUCT_NAME}`.trim()
+        const row = {
+          supplier_name: supplierName,
+          date,
+          description: '',
+          contract_no: '',
+          product_name: materialName,
+          spec,
+          unit,
+          quantity: -qty,
+          unit_price: price,
+          amount_in: -Math.round(qty * price * 100) / 100,
+          amount_out: 0,
+          balance: 0,
+          note: noteText,
+          stock_in_id: null,
+          ref_ledger_id: null,
+          return_stock_out_id: null,
+        }
+        row.description = buildSupplierDescription(row)
+        const result = db.prepare(`
+          INSERT INTO supplier_ledger (
+            supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+            amount_in, amount_out, balance, note, stock_in_id, ref_ledger_id, return_stock_out_id
+          ) VALUES (
+            @supplier_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+            @amount_in, @amount_out, @balance, @note, @stock_in_id, @ref_ledger_id, @return_stock_out_id
+          )
+        `).run(row)
+        const id = Number(result.lastInsertRowid)
+        const newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
+        logOperation('supplier_ledger', id, 'INSERT', null, newRow as object)
+        inserted.push(newRow)
+      }
+      recalculateSupplierBalances(db, supplierName)
+    })
+    tx()
+    return { ok: true, count: inserted.length, rows: inserted }
   })
 
   ipcMain.handle('supplier:update', (_e, { id, ...row }) => {

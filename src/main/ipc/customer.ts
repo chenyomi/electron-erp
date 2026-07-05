@@ -126,15 +126,55 @@ export function registerCustomerHandlers(): void {
     phone?: string
     address?: string
     opening_balance?: number
+    opening_reason?: string
     note?: string
   }) => {
     const name = String(profile?.customer_name || '').trim()
     if (!name) throw new Error('请填写客户名称')
     const db = getDb()
+    const openingBalance = Number(profile?.opening_balance || 0)
+    const openingReason = String(profile?.opening_reason || '').trim()
+    if (Math.abs(openingBalance) > 0.005 && !openingReason) {
+      throw new Error('请填写上期欠款原因')
+    }
     if (customerNameExists(db, name)) {
       throw new Error(`客户「${name}」已存在，请直接打开台账`)
     }
     const saved = setCustomerProfile(db, profile)
+    if (Math.abs(openingBalance) > 0.005) {
+      const row = {
+        customer_name: name,
+        date: new Date().toISOString().slice(0, 10),
+        description: '期初欠款',
+        contract_no: '',
+        product_name: '期初欠款',
+        spec: '',
+        unit: '',
+        quantity: 0,
+        unit_price: 0,
+        amount_in: 0,
+        amount_out: 0,
+        balance: 0,
+        note: `上期欠款 ${openingBalance}；原因：${openingReason}`,
+        month_label: '',
+        stock_out_id: null,
+        ref_ledger_id: null,
+        return_stock_in_id: null,
+      }
+      const result = db.prepare(`
+        INSERT INTO customer_ledger (
+          customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+          amount_in, amount_out, balance, note, month_label, stock_out_id, ref_ledger_id, return_stock_in_id
+        ) VALUES (
+          @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+          @amount_in, @amount_out, @balance, @note, @month_label, @stock_out_id, @ref_ledger_id, @return_stock_in_id
+        )
+      `).run(row)
+      const ledgerId = Number(result.lastInsertRowid)
+      const newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(ledgerId) as Record<string, any>
+      logOperation('customer_ledger', ledgerId, 'INSERT', null, newRow as object)
+      recalculateCustomerBalances(db, name)
+    }
     logOperation('customer_profiles', 0, 'INSERT', null, saved as object)
     return saved
   })
@@ -314,6 +354,7 @@ export function registerCustomerHandlers(): void {
     phone?: string
     address?: string
     opening_balance?: number
+    opening_reason?: string
     note?: string
   }) => {
     const db = getDb()

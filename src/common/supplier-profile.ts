@@ -19,8 +19,8 @@ export function isOutsourcingSupplierType(value: unknown): boolean {
 }
 
 export function stockInCountsInventoryForSupplierType(supplierType: SupplierType): boolean {
-  // 原材料、外协加工入库均计入成品库存
-  return supplierType === SUPPLIER_TYPE_MATERIAL || supplierType === SUPPLIER_TYPE_OUTSOURCING
+  // 原材料供应商只增加材料库存；外协加工才增加成品库存。
+  return supplierType === SUPPLIER_TYPE_OUTSOURCING
 }
 
 export function supplierTypeLabelKey(type: SupplierType): string {

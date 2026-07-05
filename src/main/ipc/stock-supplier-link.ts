@@ -28,15 +28,18 @@ export function buildPayablePayloadFromStockIn(db: Database.Database, stockInRow
     const materialQty = Number(stockInRow.material_quantity || 0)
     const materialPrice = Number(stockInRow.material_unit_price || 0)
     const materialAmount = Number(stockInRow.amount || 0)
+    const materialName = String(stockInRow.material_name || '原材料').trim()
+    const materialSpec = String(stockInRow.material_spec || '').trim()
+    const materialUnit = String(stockInRow.material_unit || '公斤').trim() || '公斤'
     const materialNote = [
       String(stockInRow.note || '').trim(),
       finishedName ? `成品 ${finishedName}${finishedSpec ? ` ${finishedSpec}` : ''}${finishedQty ? ` ×${finishedQty}${finishedUnit}` : ''}` : '',
     ].filter(Boolean).join(' · ')
     const ledgerFields = {
       contract_no: String(stockInRow.contract_no || '').trim(),
-      product_name: '原材料',
-      spec: '',
-      unit: '公斤',
+      product_name: materialName,
+      spec: materialSpec,
+      unit: materialUnit,
       quantity: materialQty,
       unit_price: materialPrice,
     }

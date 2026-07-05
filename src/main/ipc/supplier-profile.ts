@@ -10,6 +10,7 @@ export type SupplierProfile = {
   phone: string
   address: string
   opening_balance: number
+  opening_reason: string
   note: string
 }
 
@@ -21,6 +22,7 @@ function normalizeSupplierProfileInput(profile: Partial<SupplierProfile> & { sup
     phone: String(profile.phone || '').trim(),
     address: String(profile.address || '').trim(),
     opening_balance: Number(profile.opening_balance || 0),
+    opening_reason: String((profile as any).opening_reason || '').trim(),
     note: String(profile.note || '').trim(),
   }
 }
@@ -34,6 +36,7 @@ export function ensureSupplierProfilesTable(db: Database.Database): void {
       phone           TEXT DEFAULT '',
       address         TEXT DEFAULT '',
       opening_balance REAL DEFAULT 0,
+      opening_reason  TEXT DEFAULT '',
       note            TEXT DEFAULT '',
       updated_at      TEXT DEFAULT (datetime('now','localtime'))
     );
@@ -113,6 +116,7 @@ export function getSupplierProfile(db: Database.Database, supplierName: string):
       COALESCE(phone, '') AS phone,
       COALESCE(address, '') AS address,
       COALESCE(opening_balance, 0) AS opening_balance,
+      COALESCE(opening_reason, '') AS opening_reason,
       COALESCE(note, '') AS note
     FROM supplier_profiles
     WHERE supplier_name = ?
@@ -125,6 +129,7 @@ export function getSupplierProfile(db: Database.Database, supplierName: string):
     phone: '',
     address: '',
     opening_balance: 0,
+    opening_reason: '',
     note: '',
   }
 }
@@ -149,14 +154,15 @@ export function setSupplierProfile(db: Database.Database, profile: Partial<Suppl
   `).get(payload.supplier_name) as { supplier_type?: string } | undefined
   const oldType = existing ? normalizeSupplierType(existing.supplier_type) : null
   db.prepare(`
-    INSERT INTO supplier_profiles (supplier_name, supplier_type, contact_person, phone, address, opening_balance, note, updated_at)
-    VALUES (@supplier_name, @supplier_type, @contact_person, @phone, @address, @opening_balance, @note, datetime('now','localtime'))
+    INSERT INTO supplier_profiles (supplier_name, supplier_type, contact_person, phone, address, opening_balance, opening_reason, note, updated_at)
+    VALUES (@supplier_name, @supplier_type, @contact_person, @phone, @address, @opening_balance, @opening_reason, @note, datetime('now','localtime'))
     ON CONFLICT(supplier_name) DO UPDATE SET
       supplier_type = excluded.supplier_type,
       contact_person = excluded.contact_person,
       phone = excluded.phone,
       address = excluded.address,
       opening_balance = excluded.opening_balance,
+      opening_reason = excluded.opening_reason,
       note = excluded.note,
       updated_at = datetime('now','localtime')
   `).run(payload)

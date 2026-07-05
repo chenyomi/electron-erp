@@ -2482,7 +2482,7 @@ const formSections: Record<string, FormSectionSpec[]> = {
     { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
     { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
     { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount', span: 'half' }] },
-    { titleKey: 'formSectionMaterialCost', fields: [{ key: 'material_name', span: 'half' }, { key: 'material_spec', span: 'half' }, { key: 'material_unit', span: 'half' }, { key: 'material_used_quantity', span: 'half' }] },
+    { titleKey: 'formSectionMaterialCost', fields: [{ key: 'material_name', span: 'half' }, { key: 'material_spec', span: 'half' }, { key: 'material_used_quantity', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   stockInMaterial: [
@@ -3718,27 +3718,23 @@ const LedgerPage = defineComponent({
             payload.material_quantity = 0
             payload.material_unit_price = 0
             if (!hasSupplier) {
-              const hasMaterial = Boolean(String(payload.material_name || '').trim())
-              if (hasMaterial) {
-                const matchedMaterial = materialOptions.value.find((item: any) =>
-                  item.material_name === payload.material_name &&
-                  (item.material_spec || '') === (payload.material_spec || '') &&
-                  (item.material_unit || '公斤') === (payload.material_unit || '公斤')
-                )
-                if (!matchedMaterial) {
-                  emit('notify', '请从库存材料中选择原材料', 'warning')
-                  return
-                }
-                payload.material_unit = payload.material_unit || '公斤'
-                if (Number(payload.material_used_quantity || 0) <= 0) {
-                  emit('notify', '请填写原材料使用数量', 'warning')
-                  return
-                }
-              } else {
-                payload.material_name = ''
-                payload.material_spec = ''
-                payload.material_unit = ''
-                payload.material_used_quantity = 0
+              if (!String(payload.material_name || '').trim()) {
+                emit('notify', '请选择使用的原材料', 'warning')
+                return
+              }
+              const matchedMaterial = materialOptions.value.find((item: any) =>
+                item.material_name === payload.material_name &&
+                (item.material_spec || '') === (payload.material_spec || '') &&
+                (item.material_unit || '公斤') === (payload.material_unit || '公斤')
+              )
+              if (!matchedMaterial) {
+                emit('notify', '请从库存材料中选择原材料', 'warning')
+                return
+              }
+              payload.material_unit = payload.material_unit || '公斤'
+              if (Number(payload.material_used_quantity || 0) <= 0) {
+                emit('notify', '请填写原材料使用数量', 'warning')
+                return
               }
             } else {
               payload.material_name = ''

@@ -12,6 +12,8 @@ import {
   acknowledgeRemoteManifest,
   getCloudSyncPrefs,
   isRemoteManifestAcknowledged,
+  isRemoteManifestSynced,
+  markRemoteManifestSynced,
   manifestFingerprint,
 } from './cloud-sync-prefs'
 import {
@@ -165,6 +167,14 @@ function manifestsMatch(local: SyncManifest, remote: SyncManifest): boolean {
   const localKeys = Object.keys(localFiles)
   if (localKeys.length !== Object.keys(remoteFiles).length) return false
   return localKeys.every(path => remoteFiles[path]?.hash === localFiles[path]?.hash)
+}
+
+function assertAutoUploadCanUseRemote(local: SyncManifest, remote: SyncManifest): void {
+  const remoteFiles = remote.files || {}
+  if (!Object.keys(remoteFiles).length) return
+  if (manifestsMatch(local, remote)) return
+  if (isRemoteManifestSynced(remoteFiles)) return
+  throw new Error('云端已有本机尚未确认的新数据，已阻止退出自动上传。请先从云端恢复/同步，确认无误后再上传，避免旧电脑数据覆盖云端。')
 }
 
 function parseQiniuError(body: string, fallback: string): string {
@@ -787,7 +797,10 @@ export async function getCloudSyncStatus(): Promise<CloudSyncStatus> {
   }
 }
 
-export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): Promise<CloudSyncResult> {
+export async function syncCloudUpload(
+  onProgress?: CloudSyncProgressReporter,
+  options: { protectUnacknowledgedRemote?: boolean } = {},
+): Promise<CloudSyncResult> {
   try {
     const config = requireConfig()
     reportSyncProgress(onProgress, {
@@ -816,6 +829,9 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
       message: '正在对比云端差异…',
     })
     const remoteManifest = await fetchRemoteManifest(config)
+    if (options.protectUnacknowledgedRemote) {
+      assertAutoUploadCanUseRemote(localManifest, remoteManifest)
+    }
     const tempRoot = mkdtempSync(join(tmpdir(), 'donghao-cloud-up-'))
     let uploaded = 0
     let skipped = 0
@@ -879,6 +895,7 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
       }
 
       if (uploaded === 0 && prunedRemote === 0 && manifestsMatch(localManifest, remoteManifest)) {
+        markRemoteManifestSynced(remoteManifest.updatedAt, remoteManifest.files || {})
         reportSyncProgress(onProgress, {
           mode: 'upload',
           phase: 'done',
@@ -912,6 +929,7 @@ export async function syncCloudUpload(onProgress?: CloudSyncProgressReporter): P
         'manifest.json',
         'application/json',
       )
+      markRemoteManifestSynced(localManifest.updatedAt, localManifest.files || {})
 
       reportSyncProgress(onProgress, {
         mode: 'upload',
@@ -1000,7 +1018,7 @@ export async function syncCloudDownload(
       : toDownload.filter(({ relativePath }) => relativePath === 'ledger.db')
 
     if (!filesToApply.length) {
-      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
+      markRemoteManifestSynced(remoteManifest.updatedAt, remoteManifest.files || {})
       reportSyncProgress(onProgress, {
         mode: 'download',
         phase: 'done',
@@ -1106,7 +1124,7 @@ export async function syncCloudDownload(
       message: '恢复完成',
     })
 
-    acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteManifest.files || {})
+    markRemoteManifestSynced(remoteManifest.updatedAt, remoteManifest.files || {})
 
     return {
       ok: true,
@@ -1259,7 +1277,7 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
     const localLedger = needsLedgerCompare ? await hashLiveLedgerDbEntry() : undefined
     const pending = countPendingRemoteFilesSplit(remoteEntries, localLedger)
     if (!pending.total) {
-      acknowledgeRemoteManifest(remoteManifest.updatedAt, remoteFiles)
+      markRemoteManifestSynced(remoteManifest.updatedAt, remoteFiles)
       return {
         configured: true,
         localEmpty: false,
@@ -1384,7 +1402,7 @@ export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadS
 export async function runExitCloudUpload(): Promise<CloudSyncResult> {
   if (!getQiniuConfigView().configured) return { ok: true, uploaded: 0, skipped: 0, totalFiles: 0 }
   try {
-    const result = await syncCloudUpload()
+    const result = await syncCloudUpload(undefined, { protectUnacknowledgedRemote: true })
     if (!result.ok && result.error) {
       console.warn('Exit cloud upload:', result.error)
     }

@@ -10,6 +10,8 @@ export interface CloudSyncPrefs {
   startupAutoDownload: boolean
   acknowledgedRemoteUpdatedAt?: string
   acknowledgedRemoteFingerprint?: string
+  syncedRemoteUpdatedAt?: string
+  syncedRemoteFingerprint?: string
 }
 
 const DEFAULT_PREFS: CloudSyncPrefs = {
@@ -34,11 +36,29 @@ export function isRemoteManifestAcknowledged(files: Record<string, SyncFileEntry
   return prefs.acknowledgedRemoteFingerprint === manifestFingerprint(files)
 }
 
+export function isRemoteManifestSynced(files: Record<string, SyncFileEntry>): boolean {
+  const prefs = getCloudSyncPrefs()
+  if (!prefs.syncedRemoteFingerprint) return false
+  return prefs.syncedRemoteFingerprint === manifestFingerprint(files)
+}
+
 export function acknowledgeRemoteManifest(
   updatedAt: string | undefined,
   files: Record<string, SyncFileEntry>,
 ): CloudSyncPrefs {
   return saveCloudSyncPrefs({
+    acknowledgedRemoteUpdatedAt: updatedAt,
+    acknowledgedRemoteFingerprint: manifestFingerprint(files),
+  })
+}
+
+export function markRemoteManifestSynced(
+  updatedAt: string | undefined,
+  files: Record<string, SyncFileEntry>,
+): CloudSyncPrefs {
+  return saveCloudSyncPrefs({
+    syncedRemoteUpdatedAt: updatedAt,
+    syncedRemoteFingerprint: manifestFingerprint(files),
     acknowledgedRemoteUpdatedAt: updatedAt,
     acknowledgedRemoteFingerprint: manifestFingerprint(files),
   })
@@ -62,6 +82,8 @@ export function getCloudSyncPrefs(): CloudSyncPrefs {
       startupAutoDownload: parsed.startupAutoDownload !== false,
       acknowledgedRemoteUpdatedAt: parsed.acknowledgedRemoteUpdatedAt,
       acknowledgedRemoteFingerprint: parsed.acknowledgedRemoteFingerprint,
+      syncedRemoteUpdatedAt: parsed.syncedRemoteUpdatedAt,
+      syncedRemoteFingerprint: parsed.syncedRemoteFingerprint,
     }
   } catch {
     return { ...DEFAULT_PREFS }
@@ -82,6 +104,14 @@ export function saveCloudSyncPrefs(input: Partial<CloudSyncPrefs>): CloudSyncPre
       input.acknowledgedRemoteFingerprint !== undefined
         ? input.acknowledgedRemoteFingerprint
         : current.acknowledgedRemoteFingerprint,
+    syncedRemoteUpdatedAt:
+      input.syncedRemoteUpdatedAt !== undefined
+        ? input.syncedRemoteUpdatedAt
+        : current.syncedRemoteUpdatedAt,
+    syncedRemoteFingerprint:
+      input.syncedRemoteFingerprint !== undefined
+        ? input.syncedRemoteFingerprint
+        : current.syncedRemoteFingerprint,
   }
   fs.writeFileSync(prefsPath(), JSON.stringify(next, null, 2), 'utf8')
   return next

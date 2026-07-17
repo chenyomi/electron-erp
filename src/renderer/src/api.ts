@@ -125,6 +125,7 @@ export const supplierAPI = {
   materialReturnOptions: (supplierName: string) => api.invoke('supplier:material-return-options', supplierName),
   returnMaterial: (payload: any) => api.invoke('supplier:return-material', payload),
   returnMaterials: (payload: any) => api.invoke('supplier:return-materials', payload),
+  scrapRecover: (payload: any) => api.invoke('supplier:scrap-recover', payload),
   add: (row: any) => api.invoke('supplier:add', row),
   update: (row: any) => api.invoke('supplier:update', row),
   delete: (id: number) => api.invoke('supplier:delete', id),

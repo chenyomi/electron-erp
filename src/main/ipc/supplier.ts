@@ -7,12 +7,21 @@ import {
   isSupplierPayableRecord,
   isSupplierPaymentRecord,
   isSupplierReturnRecord,
+  isSupplierScrapRecord,
   sqlSupplierNetPayableSum,
   sqlSupplierPaymentWhere,
   validateSupplierPaymentAmount,
   validateSupplierReturnAgainstPayments,
 } from '../../common/supplier-ledger'
+import {
+  buildScrapNote,
+  normalizeScrapSettlementMode,
+  parseScrapLinkedCashId,
+  parseScrapLinkedStockInIds,
+  SCRAP_NOTE_MARKER,
+} from '../../common/supplier-scrap'
 import { isMaterialSupplierType } from '../../common/supplier-profile'
+import { recalculateCashBalances } from './ledger-balance'
 import {
   getSupplierProfile,
   getSupplierRemovePreview,
@@ -30,6 +39,7 @@ import {
   backfillSupplierPayablesFromStockIn,
   cleanupSupplierReturnStockOut,
   createPayableFromStockIn,
+  deletePayableForStockIn,
   listLinkedSupplierLedgerRows as listLinkedRows,
   recalcInventoryForSupplierReturnRow,
   resolvePayableReference,
@@ -882,10 +892,171 @@ export function registerSupplierHandlers(): void {
     return { ok: true, count: inserted.length, rows: inserted }
   })
 
+  ipcMain.handle('supplier:scrap-recover', (_e, payload: {
+    supplier_name?: string
+    date?: string
+    settlement?: string
+    scrap_name?: string
+    quantity?: number
+    unit_price?: number
+    note?: string
+    exchange_items?: Array<{
+      material_name?: string
+      material_spec?: string
+      material_unit?: string
+      material_quantity?: number
+      material_unit_price?: number
+    }>
+  }) => {
+    const db = getDb()
+    const supplierName = String(payload?.supplier_name || '').trim()
+    if (!supplierName) throw new Error('请选择供应商')
+    if (!isMaterialSupplierType(getSupplierType(db, supplierName))) {
+      throw new Error('只有原材料供应商可登记废料回收')
+    }
+    const date = String(payload?.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请填写回收日期')
+    const mode = normalizeScrapSettlementMode(payload?.settlement)
+    const scrapName = String(payload?.scrap_name || '').trim() || '废料'
+    const qty = Math.abs(Number(payload?.quantity || 0))
+    const price = Math.abs(Number(payload?.unit_price || 0))
+    if (qty <= 0) throw new Error('请填写废料公斤数')
+    if (price <= 0) throw new Error('请填写废料回收单价')
+    const scrapAmount = Math.round(qty * price * 100) / 100
+    const userNote = String(payload?.note || '').trim()
+    const exchangeItems = (payload?.exchange_items || [])
+      .map(item => ({
+        material_name: String(item?.material_name || '').trim(),
+        material_spec: String(item?.material_spec || '').trim(),
+        material_unit: String(item?.material_unit || '公斤').trim() || '公斤',
+        material_quantity: Math.abs(Number(item?.material_quantity || 0)),
+        material_unit_price: Math.abs(Number(item?.material_unit_price || 0)),
+      }))
+      .filter(item => item.material_quantity > 0)
+
+    if (mode === 'exchange') {
+      if (!exchangeItems.length) throw new Error('换新料请填写置换的材料')
+      for (const item of exchangeItems) {
+        if (!item.material_name) throw new Error('请填写置换材料名称')
+        if (item.material_unit_price <= 0) throw new Error(`请填写「${item.material_name}」单价`)
+      }
+    }
+
+    const docNo = generateDocNo('FL', 'supplier_ledger', date)
+    let cashId = 0
+    const stockInIds: number[] = []
+
+    const result = db.transaction(() => {
+      if (mode === 'cash') {
+        const cashResult = db.prepare(`
+          INSERT INTO cash_ledger (date, income, description, expense, operator, balance, note)
+          VALUES (?, ?, ?, 0, '', 0, ?)
+        `).run(
+          date,
+          scrapAmount,
+          `废料回收 ${supplierName} ${scrapName}`,
+          `${SCRAP_NOTE_MARKER} ${supplierName} ${docNo}`.trim(),
+        )
+        cashId = Number(cashResult.lastInsertRowid)
+        recalculateCashBalances(db)
+        const cashRow = db.prepare('SELECT * FROM cash_ledger WHERE id = ?').get(cashId) as Record<string, any>
+        logOperation('cash_ledger', cashId, 'INSERT', null, cashRow as object)
+      }
+
+      if (mode === 'exchange') {
+        for (const item of exchangeItems) {
+          const amount = Math.round(item.material_quantity * item.material_unit_price * 100) / 100
+          const stockInResult = db.prepare(`
+            INSERT INTO stock_in_ledger (
+              doc_no, supplier_name, category, date, contract_no, product_name, spec, unit,
+              quantity, unit_price, amount, material_name, material_spec, material_unit,
+              material_quantity, material_unit_price, material_used_quantity,
+              tax_rate, tax_amount, invoice_amount, note, counts_inventory
+            ) VALUES (
+              ?, ?, '', ?, '', '', '', '',
+              0, 0, ?, ?, ?, ?,
+              ?, ?, 0,
+              0, 0, 0, ?, 0
+            )
+          `).run(
+            generateDocNo('RK', 'stock_in_ledger', date),
+            supplierName,
+            date,
+            amount,
+            item.material_name,
+            item.material_spec,
+            item.material_unit,
+            item.material_quantity,
+            item.material_unit_price,
+            `废料换料 · ${docNo}`,
+          )
+          const stockInId = Number(stockInResult.lastInsertRowid)
+          const stockInRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId) as Record<string, any>
+          createPayableFromStockIn(db, stockInRow)
+          logOperation('stock_in_ledger', stockInId, 'INSERT', null, stockInRow as object)
+          stockInIds.push(stockInId)
+        }
+      }
+
+      const linkSuffix = mode === 'cash' && cashId
+        ? `cash:${cashId}`
+        : mode === 'exchange' && stockInIds.length
+          ? `stock_in:${stockInIds.join(',')}`
+          : ''
+      const noteText = buildScrapNote(mode, userNote, linkSuffix)
+      const amountIn = mode === 'cash' ? 0 : -scrapAmount
+      const row = {
+        supplier_name: supplierName,
+        date,
+        description: '',
+        contract_no: '',
+        product_name: scrapName,
+        spec: '',
+        unit: '公斤',
+        quantity: -qty,
+        unit_price: price,
+        amount_in: amountIn,
+        amount_out: 0,
+        balance: 0,
+        note: noteText,
+        doc_no: docNo,
+        stock_in_id: null,
+        ref_ledger_id: null,
+        return_stock_out_id: null,
+      }
+      row.description = buildSupplierDescription(row)
+      const insertResult = db.prepare(`
+        INSERT INTO supplier_ledger (
+          supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+          amount_in, amount_out, balance, note, doc_no, stock_in_id, ref_ledger_id, return_stock_out_id
+        ) VALUES (
+          @supplier_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+          @amount_in, @amount_out, @balance, @note, @doc_no, @stock_in_id, @ref_ledger_id, @return_stock_out_id
+        )
+      `).run(row)
+      const id = Number(insertResult.lastInsertRowid)
+      recalculateSupplierBalances(db, supplierName)
+      const newRow = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
+      logOperation('supplier_ledger', id, 'INSERT', null, newRow as object)
+      return newRow
+    })()
+
+    return {
+      ok: true,
+      row: result,
+      settlement: mode,
+      cash_id: cashId || null,
+      stock_in_ids: stockInIds,
+    }
+  })
+
   ipcMain.handle('supplier:update', (_e, { id, ...row }) => {
     const db = getDb()
     const old = db.prepare('SELECT * FROM supplier_ledger WHERE id = ?').get(id) as Record<string, any>
     if (!old) throw new Error('记录不存在')
+    if (isSupplierScrapRecord(old)) {
+      throw new Error('废料回收请删除后重新登记')
+    }
     if (Number(old.stock_in_id || 0) > 0) {
       throw new Error('入库关联的应付请在「产品入库」中修改')
     }
@@ -1037,8 +1208,29 @@ export function registerSupplierHandlers(): void {
     }
     const wasReturn = isSupplierReturnRecord(row)
     const wasMaterialReturn = isSupplierMaterialReturnRow(row)
-    softDelete('supplier_ledger', id)
-    recalculateSupplierBalances(db, row.supplier_name)
+    const wasScrap = isSupplierScrapRecord(row)
+
+    db.transaction(() => {
+      if (wasScrap) {
+        const cashId = parseScrapLinkedCashId(String(row.note || ''))
+        if (cashId > 0) {
+          const cashRow = db.prepare('SELECT * FROM cash_ledger WHERE id = ? AND deleted_at IS NULL').get(cashId) as Record<string, any> | undefined
+          if (cashRow) {
+            softDelete('cash_ledger', cashId)
+            recalculateCashBalances(db)
+          }
+        }
+        for (const stockInId of parseScrapLinkedStockInIds(String(row.note || ''))) {
+          const stockInRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ? AND deleted_at IS NULL').get(stockInId) as Record<string, any> | undefined
+          if (!stockInRow) continue
+          deletePayableForStockIn(db, stockInRow)
+          softDelete('stock_in_ledger', stockInId)
+        }
+      }
+      softDelete('supplier_ledger', id)
+      recalculateSupplierBalances(db, row.supplier_name)
+    })()
+
     if (wasReturn && !wasMaterialReturn) recalcInventoryForSupplierReturnRow(db, row)
     return { ok: true }
   })

@@ -745,6 +745,63 @@ body {
   background: color-mix(in srgb, rgb(var(--v-theme-warning)) 16%, transparent);
 }
 
+.customer-biz-tag--scrap {
+  color: rgb(var(--v-theme-secondary));
+  background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 14%, transparent);
+}
+
+.scrap-settlement-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scrap-settlement-field__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.scrap-settlement-field__options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scrap-settlement-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.16);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.scrap-settlement-option:hover {
+  border-color: rgba(var(--v-theme-primary), 0.45);
+}
+
+.scrap-settlement-option--active {
+  border-color: rgb(var(--v-theme-primary));
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
+}
+
+.scrap-settlement-option__title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.scrap-settlement-option__hint {
+  font-size: 11px;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+}
+
 .customer-biz-tag--payment {
   color: rgb(var(--v-theme-success));
   background: color-mix(in srgb, rgb(var(--v-theme-success)) 14%, transparent);

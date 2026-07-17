@@ -425,7 +425,8 @@
 import { computed, defineComponent, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { buildCustomerDescription, calcCustomerReceivableRemaining, calcCustomerReceivableSettlement, customerLedgerFinancialFieldsLocked, getCustomerLedgerRowActions, isCustomerPaymentDescription, isCustomerPaymentRecord, isCustomerReceivableRecord, isCustomerReturnRecord, listCustomerLedgerLinkedToReceivable, parseCustomerDescription, sortCustomerLedgerGrouped } from '../../common/customer-ledger'
 import { getStockInKind, getStockInProductDisplay, getStockInQuantityDisplay, getStockInSpecDisplay, getStockInSupplierDisplay, getStockInUnitDisplay, getStockInUnitPriceDisplay } from '../../common/stock-in-display'
-import { buildSupplierDescription, calcSupplierPayableRemaining, getSupplierLedgerRowActions, isSupplierPayableRecord, isSupplierPaymentDescription, isSupplierPaymentRecord, isSupplierReturnRecord, listSupplierLedgerLinkedToPayable, sortSupplierLedgerGrouped } from '../../common/supplier-ledger'
+import { buildSupplierDescription, calcSupplierPayableRemaining, getSupplierLedgerRowActions, isSupplierPayableRecord, isSupplierPaymentDescription, isSupplierPaymentRecord, isSupplierReturnRecord, isSupplierScrapRecord, listSupplierLedgerLinkedToPayable, sortSupplierLedgerGrouped } from '../../common/supplier-ledger'
+import { DEFAULT_SCRAP_NAME_OPTIONS, scrapBizKindLabel, type ScrapSettlementMode } from '../../common/supplier-scrap'
 import { isMaterialSupplierType, isOutsourcingSupplierType, normalizeSupplierType, supplierTypeLabelKey, type SupplierType } from '../../common/supplier-profile'
 import { parseLedgerDate } from '../../common/ledger-date'
 import {
@@ -890,7 +891,7 @@ const messages = {
     supplierPayableFormHint: '应付由入库自动生成；此处仅可编辑已有明细。',
     supplierPayableAutoOnly: '应付由入库自动生成；付款和退货请在台账顶部登记。',
     supplierLedgerEmptyHint: '成品入库并选择该供应商后会自动生成应付。若仍为空，请重置筛选或到回收站恢复。',
-    supplierWorkspaceSummaryHint: '尚欠 = 期初应付 + 应付 − 退货 − 付款',
+    supplierWorkspaceSummaryHint: '尚欠 = 期初应付 + 应付 − 退货 − 废料 − 付款',
     supplierType: '供应商类别',
     supplierTypeMaterial: '原材料',
     supplierTypeOutsourcing: '外协加工',
@@ -911,9 +912,11 @@ const messages = {
     finishedStockAmountHint: '仅供参考（数量×单价），不入应付',
     addSupplierReturn: '登记退货',
     supplierReturnRow: '退货',
+    supplierScrapRow: '废料回收',
     selectPayableRowToReturn: '请在台账顶部点击「退货」',
     supplierReturnFormHint: '填写退货数量与单价（正数）；冲减应付，并按退货数量直接减库存（不生成出库单）。',
     supplierBizReturn: '退供应商',
+    supplierBizScrap: '废料',
     supplierDebtTag: '尚欠',
     supplierOverpaidTag: '多付',
     supplierLinkedPaymentFor: '针对应付',
@@ -1377,6 +1380,10 @@ const messages = {
     supplierBizKind: 'Type',
     supplierBizPayable: 'Payable',
     supplierBizPayment: 'Payment',
+    supplierBizReturn: 'Return',
+    supplierBizScrap: 'Scrap',
+    supplierReturnRow: 'Return',
+    supplierScrapRow: 'Scrap Recovery',
     supplierLedgerDetail: 'Ledger',
     supplierLedgerDetailSub: 'Stock-in creates payables. Record payments and returns from the top; select return rows to print a return slip.',
     supplierWorkspaceTitle: 'Supplier Ledger',
@@ -1405,7 +1412,7 @@ const messages = {
     finishedStockAmount: 'Finished Amount',
     finishedStockAmountHint: 'Reference only (qty × price); not payable',
     supplierLedgerEmptyHint: 'Payables are created automatically from stock-in with this supplier. Reset filters or check Trash if empty.',
-    supplierWorkspaceSummaryHint: 'Due = opening + payables − payments',
+    supplierWorkspaceSummaryHint: 'Due = opening + payables − returns − scrap − payments',
     supplierDebtTag: 'Due',
     supplierOverpaidTag: 'Overpaid',
     supplierLinkedPaymentFor: 'For payable',
@@ -2647,6 +2654,21 @@ const LedgerPage = defineComponent({
     const materialReturnUnitPrice = ref<any>(0)
     const materialReturnMaxQty = ref(0)
     const materialReturnNote = ref('原材料退货')
+    const scrapRecoverDialog = ref(false)
+    const scrapRecoverLoading = ref(false)
+    const scrapRecoverDate = ref(todayIsoDate())
+    const scrapRecoverSettlement = ref<ScrapSettlementMode>('offset')
+    const scrapRecoverName = ref('铜屑')
+    const scrapRecoverQuantity = ref<any>('')
+    const scrapRecoverUnitPrice = ref<any>('')
+    const scrapRecoverNote = ref('')
+    const scrapExchangeRows = ref<Array<{
+      material_name: string
+      material_spec: string
+      material_unit: string
+      material_quantity: any
+      material_unit_price: any
+    }>>([])
     const customerLedgerColumnKeys = ['biz_kind', 'date', 'doc_no', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'remaining_receivable', 'amount_out', 'note']
     const supplierLedgerColumnKeys = ['biz_kind', 'date', 'doc_no', 'contract_no', 'product_name', 'spec', 'unit', 'quantity', 'unit_price', 'amount_in', 'amount_out', 'note']
     let loadGeneration = 0
@@ -3288,6 +3310,100 @@ const LedgerPage = defineComponent({
         emit('notify', error?.message || '退货失败', 'error')
       } finally {
         materialReturnLoading.value = false
+      }
+    }
+    const openSupplierScrapRecover = () => {
+      const supplierName = supplierDetailName.value || filterValue.value
+      if (!supplierName) return
+      scrapRecoverDate.value = todayIsoDate()
+      scrapRecoverSettlement.value = 'offset'
+      scrapRecoverName.value = '铜屑'
+      scrapRecoverQuantity.value = ''
+      scrapRecoverUnitPrice.value = ''
+      scrapRecoverNote.value = ''
+      scrapExchangeRows.value = [{
+        material_name: '',
+        material_spec: '',
+        material_unit: '公斤',
+        material_quantity: '',
+        material_unit_price: '',
+      }]
+      scrapRecoverDialog.value = true
+    }
+    const scrapRecoverAmount = () => roundMoneyValue(
+      Math.abs(Number(scrapRecoverQuantity.value || 0)) * Math.abs(Number(scrapRecoverUnitPrice.value || 0)),
+    )
+    const saveSupplierScrapRecover = async () => {
+      const supplierName = supplierDetailName.value || filterValue.value
+      const qty = Math.abs(Number(scrapRecoverQuantity.value || 0))
+      const price = Math.abs(Number(scrapRecoverUnitPrice.value || 0))
+      if (!supplierName) return
+      if (!String(scrapRecoverName.value || '').trim()) {
+        emit('notify', '请填写废料名称', 'warning')
+        return
+      }
+      if (qty <= 0) {
+        emit('notify', '请填写废料公斤数', 'warning')
+        return
+      }
+      if (price <= 0) {
+        emit('notify', '请填写废料回收单价', 'warning')
+        return
+      }
+      const exchangeItems = scrapRecoverSettlement.value === 'exchange'
+        ? scrapExchangeRows.value
+          .map(item => ({
+            material_name: String(item.material_name || '').trim(),
+            material_spec: String(item.material_spec || '').trim(),
+            material_unit: String(item.material_unit || '公斤').trim() || '公斤',
+            material_quantity: Math.abs(Number(item.material_quantity || 0)),
+            material_unit_price: Math.abs(Number(item.material_unit_price || 0)),
+          }))
+          .filter(item => item.material_quantity > 0)
+        : []
+      if (scrapRecoverSettlement.value === 'exchange') {
+        if (!exchangeItems.length) {
+          emit('notify', '换新料请填写置换材料', 'warning')
+          return
+        }
+        for (const item of exchangeItems) {
+          if (!item.material_name) {
+            emit('notify', '请填写置换材料名称', 'warning')
+            return
+          }
+          if (item.material_unit_price <= 0) {
+            emit('notify', `请填写「${item.material_name}」单价`, 'warning')
+            return
+          }
+        }
+      }
+      scrapRecoverLoading.value = true
+      try {
+        const result = await supplierAPI.scrapRecover({
+          supplier_name: supplierName,
+          date: scrapRecoverDate.value,
+          settlement: scrapRecoverSettlement.value,
+          scrap_name: String(scrapRecoverName.value || '').trim(),
+          quantity: qty,
+          unit_price: price,
+          note: scrapRecoverNote.value,
+          exchange_items: exchangeItems,
+        })
+        if (!result?.ok) throw new Error(result?.error || '废料回收失败')
+        const modeLabel = scrapRecoverSettlement.value === 'exchange'
+          ? '废料换料'
+          : scrapRecoverSettlement.value === 'cash'
+            ? '废料兑现'
+            : '废料回收'
+        emit('notify', `已登记${modeLabel}`)
+        scrapRecoverDialog.value = false
+        await load()
+        const newId = Number(result?.row?.id || 0)
+        if (newId > 0) selected.value = [newId]
+      } catch (error: any) {
+        emit('notify', error?.message || '废料回收失败', 'error')
+      } finally {
+        scrapRecoverLoading.value = false
       }
     }
     const supplierLinkedToPayable = (row: any) => {
@@ -4249,7 +4365,8 @@ const LedgerPage = defineComponent({
         if (col === 'biz_kind' && row) return renderSupplierBizKindLabel(row, props.t)
         if (col === 'doc_no') return String(value || '').trim() || '—'
         if (col === 'product_name' && row && supplierDetailDialog.value && isMaterialSupplierType(supplierDetailType.value) && !isSupplierPaymentRecord(row)) {
-          return String(row.product_name || '').includes('原材料退货') ? '原材料退货' : '原材料'
+          if (isSupplierScrapRecord(row)) return String(row.product_name || '').trim() || '废料'
+          return String(row.product_name || '').includes('原材料退货') ? '原材料退货' : (String(row.product_name || '').trim() || '原材料')
         }
         if (col === 'amount_in') return formatCustomerReceivableDisplay(value)
         if (col === 'amount_out') return formatCustomerReceivedDisplay(value)
@@ -4849,6 +4966,9 @@ const LedgerPage = defineComponent({
           h('div', { class: 'customer-workspace-dialog__actions' }, [
             h(VBtn, { size: 'small', color: 'success', variant: 'tonal', onClick: openSupplierPaymentFromLedger }, () => props.t('supplierPaymentRow')),
             h(VBtn, { size: 'small', color: 'warning', variant: 'tonal', onClick: openSupplierProductReturn }, () => props.t('supplierReturnRow')),
+            isMaterialSupplierType(supplierDetailType.value)
+              ? h(VBtn, { size: 'small', color: 'secondary', variant: 'tonal', onClick: openSupplierScrapRecover }, () => props.t('supplierScrapRow'))
+              : null,
             h(VBtn, {
               size: 'small',
               variant: 'tonal',
@@ -4874,7 +4994,7 @@ const LedgerPage = defineComponent({
             onOpeningBalanceClick: openSupplierProfile,
           }),
           h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, isMaterialSupplierType(supplierDetailType.value)
-            ? '入库自动生成应付；付款在台账顶部登记，原材料退货按公斤登记，只冲减应付、不影响成品库存。勾选退货行可打印退货单。'
+            ? '入库自动生成应付；付款在台账顶部登记。好料退货冲减应付并扣材料库存；废料回收按称重登记，可选抵应付、换新料或兑现金，不扣好料库存。'
             : props.t('supplierLedgerDetailSub')),
           renderLedgerTableCard({
             title: props.t('supplierLedgerDetail'),
@@ -4964,6 +5084,190 @@ const LedgerPage = defineComponent({
               ]),
             ]),
           ]),
+        ],
+      }),
+      RecordDialogShell({
+        show: scrapRecoverDialog.value,
+        maxWidth: scrapRecoverSettlement.value === 'exchange' ? 860 : 640,
+        zIndex: 3000,
+        title: '登记废料回收',
+        subtitle: scrapRecoverSettlement.value === 'exchange'
+          ? '称重登记废料，并同时入库置换的新材料；废料金额冲减应付，新料按采购价增加应付。'
+          : scrapRecoverSettlement.value === 'cash'
+            ? '称重登记废料并记现金收入；不冲减供应商应付，也不扣好料库存。'
+            : '称重登记废料（如铜屑），按回收价冲减供应商应付；不扣好料库存，无需领用。',
+        cancelLabel: props.t('cancel'),
+        saveLabel: props.t('save'),
+        onClose: () => { scrapRecoverDialog.value = false },
+        onSave: saveSupplierScrapRecover,
+        default: () => [
+          h('div', { class: 'record-dialog__section' }, [
+            h('div', { class: 'record-dialog__grid' }, [
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: scrapRecoverDate.value,
+                  'onUpdate:modelValue': (v: string) => { scrapRecoverDate.value = normalizeDateValue(v) },
+                  label: props.t('date'),
+                  type: 'date',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h('div', { class: 'scrap-settlement-field' }, [
+                  h('div', { class: 'scrap-settlement-field__label' }, '结算方式（3种，点选切换）'),
+                  h('div', { class: 'scrap-settlement-field__options' }, [
+                    { value: 'offset' as ScrapSettlementMode, title: '抵应付', hint: '冲减尚欠' },
+                    { value: 'exchange' as ScrapSettlementMode, title: '换新料', hint: '抵账并入新料' },
+                    { value: 'cash' as ScrapSettlementMode, title: '兑现金', hint: '记现金收入' },
+                  ].map(option => h('button', {
+                    type: 'button',
+                    class: [
+                      'scrap-settlement-option',
+                      scrapRecoverSettlement.value === option.value ? 'scrap-settlement-option--active' : '',
+                    ],
+                    onClick: () => { scrapRecoverSettlement.value = option.value },
+                  }, [
+                    h('span', { class: 'scrap-settlement-option__title' }, option.title),
+                    h('span', { class: 'scrap-settlement-option__hint' }, option.hint),
+                  ]))),
+                ]),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VCombobox, {
+                  ...commonFormFieldProps(),
+                  modelValue: scrapRecoverName.value,
+                  'onUpdate:modelValue': (v: string) => { scrapRecoverName.value = String(v || '').trim() },
+                  items: DEFAULT_SCRAP_NAME_OPTIONS,
+                  label: '废料名称',
+                  hint: '粉末/切屑按金属种类登记，不写直径',
+                  persistentHint: true,
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: scrapRecoverQuantity.value,
+                  'onUpdate:modelValue': (v: any) => {
+                    const qty = Math.max(0, Number(v || 0))
+                    scrapRecoverQuantity.value = qty || ''
+                  },
+                  label: '废料公斤数',
+                  type: 'number',
+                  min: 0,
+                  suffix: '公斤',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: scrapRecoverUnitPrice.value,
+                  'onUpdate:modelValue': (v: any) => { scrapRecoverUnitPrice.value = Number(v || 0) || '' },
+                  label: '回收单价',
+                  type: 'number',
+                  min: 0,
+                  suffix: '元/公斤',
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: scrapRecoverAmount(),
+                  label: '废料金额',
+                  readonly: true,
+                }),
+              ]),
+              h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                h(VTextField, {
+                  ...commonFormFieldProps(),
+                  modelValue: scrapRecoverNote.value,
+                  'onUpdate:modelValue': (v: string) => { scrapRecoverNote.value = v },
+                  label: props.t('note'),
+                }),
+              ]),
+            ]),
+          ]),
+          scrapRecoverSettlement.value === 'exchange'
+            ? h('div', { class: 'record-dialog__section' }, [
+              h('div', { class: 'record-dialog__section-title', style: 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px' }, [
+                h('span', '置换新料'),
+                h(VBtn, {
+                  size: 'x-small',
+                  variant: 'tonal',
+                  onClick: () => {
+                    scrapExchangeRows.value.push({
+                      material_name: '',
+                      material_spec: '',
+                      material_unit: '公斤',
+                      material_quantity: '',
+                      material_unit_price: '',
+                    })
+                  },
+                }, () => '添加材料'),
+              ]),
+              h('div', { class: 'table-scroll' }, [
+                h(VTable, { class: 'ledger-table', hover: true }, () => [
+                  h('thead', [h('tr', [
+                    h('th', '材料名称'),
+                    h('th', '规格'),
+                    h('th', '公斤数'),
+                    h('th', '元/公斤'),
+                    h('th', '金额'),
+                    h('th', { style: 'width: 64px' }, ''),
+                  ])]),
+                  h('tbody', scrapExchangeRows.value.map((item, index) => h('tr', { key: `scrap-ex-${index}` }, [
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.material_name,
+                        'onUpdate:modelValue': (v: string) => { item.material_name = v },
+                        density: 'compact',
+                        hideDetails: true,
+                        placeholder: '如铜管',
+                      }),
+                    ]),
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.material_spec,
+                        'onUpdate:modelValue': (v: string) => { item.material_spec = v },
+                        density: 'compact',
+                        hideDetails: true,
+                        placeholder: '直径等',
+                      }),
+                    ]),
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.material_quantity,
+                        'onUpdate:modelValue': (v: any) => { item.material_quantity = Math.max(0, Number(v || 0)) || '' },
+                        type: 'number',
+                        density: 'compact',
+                        hideDetails: true,
+                        min: 0,
+                      }),
+                    ]),
+                    h('td', [
+                      h(VTextField, {
+                        modelValue: item.material_unit_price,
+                        'onUpdate:modelValue': (v: any) => { item.material_unit_price = Math.max(0, Number(v || 0)) || '' },
+                        type: 'number',
+                        density: 'compact',
+                        hideDetails: true,
+                        min: 0,
+                      }),
+                    ]),
+                    h('td', money(roundMoneyValue(Number(item.material_quantity || 0) * Number(item.material_unit_price || 0)))),
+                    h('td', [
+                      h(VBtn, {
+                        size: 'x-small',
+                        variant: 'text',
+                        color: 'error',
+                        disabled: scrapExchangeRows.value.length <= 1,
+                        onClick: () => { scrapExchangeRows.value.splice(index, 1) },
+                      }, () => '删'),
+                    ]),
+                  ]))),
+                ]),
+              ]),
+            ])
+            : null,
         ],
       }),
       RecordDialogShell({
@@ -5647,6 +5951,9 @@ function renderCustomerBizKindLabel(row: Record<string, any>, t: (key: string) =
 function renderSupplierBizKindLabel(row: Record<string, any>, t: (key: string) => string) {
   if (isSupplierPaymentRecord(row) || isSupplierPaymentDescription(String(row.description || ''))) {
     return h('span', { class: 'customer-biz-tag customer-biz-tag--payment' }, t('supplierBizPayment'))
+  }
+  if (isSupplierScrapRecord(row)) {
+    return h('span', { class: 'customer-biz-tag customer-biz-tag--scrap' }, scrapBizKindLabel(row))
   }
   if (isSupplierReturnRecord(row)) {
     return h('span', { class: 'customer-biz-tag customer-biz-tag--return' }, t('supplierBizReturn'))

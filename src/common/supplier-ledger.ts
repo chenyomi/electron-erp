@@ -1,4 +1,5 @@
 import { sortLedgerGrouped } from './ledger-group-sort'
+import { isSupplierScrapRecord, scrapBizKindLabel } from './supplier-scrap'
 
 export type SupplierLedgerFields = {
   description?: string
@@ -11,14 +12,17 @@ export type SupplierLedgerFields = {
   amount_out?: number
 }
 
+export { isSupplierScrapRecord } from './supplier-scrap'
+
 export function isSupplierPaymentDescription(description: string): boolean {
   return String(description || '').trim() === '付款'
 }
 
 /** 应付行（可登记付款） */
-/** 供应商退货行：负应付，或备注含「退货」 */
+/** 供应商退货行：负应付，或备注含「退货」（不含废料回收） */
 export function isSupplierReturnRecord(row: Record<string, any>): boolean {
   if (isSupplierPaymentRecord(row)) return false
+  if (isSupplierScrapRecord(row)) return false
   const amountIn = Number(row.amount_in || 0)
   if (amountIn < 0) return true
   return String(row.note || '').includes('退货')
@@ -210,6 +214,15 @@ export function getSupplierLedgerRowActions(
           : undefined,
     }
   }
+  if (isSupplierScrapRecord(row)) {
+    return {
+      showPay: false,
+      showReturn: false,
+      showEdit: false,
+      showDelete: true,
+      editTip: '废料回收请删除后重新登记',
+    }
+  }
   if (isSupplierReturnRecord(row)) {
     const hasPayment = linkedToPayable.some(isSupplierPaymentRecord)
     return {
@@ -235,6 +248,7 @@ export function sortSupplierLedgerGrouped(rows: Array<Record<string, any>>): Arr
 
 export function supplierLedgerBizKindLabel(row: Record<string, any>): string {
   if (isSupplierPaymentRecord(row)) return '付款'
+  if (isSupplierScrapRecord(row)) return scrapBizKindLabel(row)
   if (isSupplierReturnRecord(row)) return '退货'
   return '应付'
 }

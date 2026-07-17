@@ -25,7 +25,7 @@ export function ensureProductCatalog(row: any) {
 }
 
 export function generateDocNo(
-  prefix: 'RK' | 'CK' | 'TH' | 'GT',
+  prefix: 'RK' | 'CK' | 'TH' | 'GT' | 'FL',
   tableName: 'stock_in_ledger' | 'stock_out_ledger' | 'customer_ledger' | 'supplier_ledger',
   dateValue?: string,
 ) {

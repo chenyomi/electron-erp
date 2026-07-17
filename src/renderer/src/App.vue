@@ -80,6 +80,23 @@
     </div>
 
     <div v-else class="app-shell">
+      <div ref="ambientRootEl" class="app-ambient" aria-hidden="true">
+        <div class="app-ambient__grid" />
+        <div
+          v-for="shape in ambientShapes"
+          :key="shape.id"
+          class="app-ambient__shape"
+          :class="`app-ambient__shape--${shape.kind}`"
+          :style="shape.style"
+        />
+        <div
+          v-for="orb in ambientOrbs"
+          :key="orb.id"
+          class="app-ambient__orb"
+          :class="`app-ambient__orb--${orb.kind}`"
+          :style="orb.style"
+        />
+      </div>
       <aside class="nav-drawer">
         <div class="drawer-brand">
           <div class="brand-mark small">东</div>
@@ -1475,6 +1492,268 @@ const messages = {
   },
 } as const
 
+function ambientRand(min: number, max: number) {
+  return Math.round(min + Math.random() * (max - min))
+}
+
+function ambientRandFloat(min: number, max: number) {
+  return min + Math.random() * (max - min)
+}
+
+type AmbientShapeBody = {
+  id: string
+  kind: number
+  x: number
+  y: number
+  vx: number
+  vy: number
+  w: number
+  h: number
+  rot: number
+  vr: number
+  radius: number
+  style: Record<string, string>
+}
+
+const ambientShapeBases = new Map<string, Record<string, string>>()
+
+function buildAmbientShapeStyle(body: AmbientShapeBody, base: Record<string, string>) {
+  return {
+    ...base,
+    left: '0px',
+    top: '0px',
+    right: 'auto',
+    bottom: 'auto',
+    transform: `translate3d(${body.x - body.w / 2}px, ${body.y - body.h / 2}px, 0) rotate(${body.rot}deg)`,
+  }
+}
+
+function createAmbientShapes(boundsW: number, boundsH: number): AmbientShapeBody[] {
+  const shapes: AmbientShapeBody[] = []
+  ambientShapeBases.clear()
+  for (let index = 0; index < 12; index += 1) {
+    const kind = index + 1
+    const isTriangle = kind === 3 || kind === 8
+    const isCapsule = kind === 4 || kind === 10
+    let width = ambientRand(28, 160)
+    let height = isCapsule ? ambientRand(22, 64) : ambientRand(28, 160)
+    if (!isCapsule && Math.random() > 0.45) {
+      height = Math.round(width * (0.55 + Math.random() * 0.9))
+    }
+
+    let baseStyle: Record<string, string>
+    if (isTriangle) {
+      const base = ambientRand(36, 120)
+      const tip = ambientRand(48, 150)
+      width = base
+      height = tip
+      baseStyle = {
+        '--ambient-w': `${base}px`,
+        '--ambient-h': `${tip}px`,
+        width: '0px',
+        height: '0px',
+        borderLeftWidth: `${Math.round(base / 2)}px`,
+        borderRightWidth: `${Math.round(base / 2)}px`,
+        borderBottomWidth: `${tip}px`,
+      }
+    } else {
+      baseStyle = {
+        '--ambient-w': `${width}px`,
+        '--ambient-h': `${height}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+      }
+    }
+
+    const radius = Math.max(16, Math.min(width, height) * 0.48)
+    const x = ambientRandFloat(radius, Math.max(radius + 8, boundsW - radius - 8))
+    const y = ambientRandFloat(radius, Math.max(radius + 8, boundsH - radius - 8))
+    const speed = ambientRandFloat(28, 72)
+    const angle = ambientRandFloat(0, Math.PI * 2)
+    const body: AmbientShapeBody = {
+      id: `shape-${kind}`,
+      kind,
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      w: width,
+      h: height,
+      rot: ambientRandFloat(-40, 40),
+      vr: ambientRandFloat(-28, 28),
+      radius,
+      style: {},
+    }
+    ambientShapeBases.set(body.id, baseStyle)
+    body.style = buildAmbientShapeStyle(body, baseStyle)
+    shapes.push(body)
+  }
+  return shapes
+}
+
+const ambientRootEl = ref<HTMLElement | null>(null)
+const ambientShapes = reactive<AmbientShapeBody[]>(
+  createAmbientShapes(typeof window !== 'undefined' ? window.innerWidth : 1280, typeof window !== 'undefined' ? window.innerHeight : 800),
+)
+
+const ambientOrbs = ([
+  { kind: 'a', min: 280, max: 520 },
+  { kind: 'b', min: 220, max: 460 },
+  { kind: 'c', min: 160, max: 340 },
+] as const).map((orb) => {
+  const size = ambientRand(orb.min, orb.max)
+  return {
+    id: `orb-${orb.kind}`,
+    kind: orb.kind,
+    style: {
+      width: `${size}px`,
+      height: `${size}px`,
+    } as Record<string, string>,
+  }
+})
+
+let ambientRaf = 0
+let ambientLastTs = 0
+let ambientBounds = { w: 1280, h: 800 }
+let ambientResizeObserver: ResizeObserver | null = null
+const AMBIENT_BOUNCE = 0.94
+
+function syncAmbientBounds() {
+  const el = ambientRootEl.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  ambientBounds = { w: Math.max(320, rect.width), h: Math.max(240, rect.height) }
+}
+
+function syncAmbientShapeStyle(shape: AmbientShapeBody) {
+  shape.style.transform = `translate3d(${shape.x - shape.w / 2}px, ${shape.y - shape.h / 2}px, 0) rotate(${shape.rot}deg)`
+}
+
+function stepAmbientPhysics(dt: number) {
+  const { w: bw, h: bh } = ambientBounds
+  const bodies = ambientShapes
+
+  for (const body of bodies) {
+    body.x += body.vx * dt
+    body.y += body.vy * dt
+    body.rot += body.vr * dt
+
+    if (body.x - body.radius < 0) {
+      body.x = body.radius
+      body.vx = Math.abs(body.vx) * AMBIENT_BOUNCE
+      body.vr *= -0.85
+    } else if (body.x + body.radius > bw) {
+      body.x = bw - body.radius
+      body.vx = -Math.abs(body.vx) * AMBIENT_BOUNCE
+      body.vr *= -0.85
+    }
+
+    if (body.y - body.radius < 0) {
+      body.y = body.radius
+      body.vy = Math.abs(body.vy) * AMBIENT_BOUNCE
+      body.vr *= -0.85
+    } else if (body.y + body.radius > bh) {
+      body.y = bh - body.radius
+      body.vy = -Math.abs(body.vy) * AMBIENT_BOUNCE
+      body.vr *= -0.85
+    }
+  }
+
+  for (let i = 0; i < bodies.length; i += 1) {
+    for (let j = i + 1; j < bodies.length; j += 1) {
+      const a = bodies[i]
+      const b = bodies[j]
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const distSq = dx * dx + dy * dy
+      const minDist = a.radius + b.radius
+      if (distSq >= minDist * minDist || distSq === 0) continue
+
+      const dist = Math.sqrt(distSq)
+      const nx = dx / dist
+      const ny = dy / dist
+      const overlap = minDist - dist
+      const totalMass = a.radius + b.radius
+      a.x -= nx * overlap * (b.radius / totalMass)
+      a.y -= ny * overlap * (b.radius / totalMass)
+      b.x += nx * overlap * (a.radius / totalMass)
+      b.y += ny * overlap * (a.radius / totalMass)
+
+      const avn = a.vx * nx + a.vy * ny
+      const bvn = b.vx * nx + b.vy * ny
+      const aRest = {
+        x: a.vx - avn * nx,
+        y: a.vy - avn * ny,
+      }
+      const bRest = {
+        x: b.vx - bvn * nx,
+        y: b.vy - bvn * ny,
+      }
+      // 交换法向速度，带一点回弹损耗
+      a.vx = aRest.x + bvn * nx * AMBIENT_BOUNCE
+      a.vy = aRest.y + bvn * ny * AMBIENT_BOUNCE
+      b.vx = bRest.x + avn * nx * AMBIENT_BOUNCE
+      b.vy = bRest.y + avn * ny * AMBIENT_BOUNCE
+      a.vr += (bvn - avn) * 0.08
+      b.vr += (avn - bvn) * 0.08
+    }
+  }
+
+  // 避免越撞越慢：偶尔补一点动能
+  for (const body of bodies) {
+    const speed = Math.hypot(body.vx, body.vy)
+    if (speed < 18) {
+      const boost = 22 / Math.max(speed, 0.001)
+      body.vx *= boost
+      body.vy *= boost
+    } else if (speed > 110) {
+      body.vx *= 110 / speed
+      body.vy *= 110 / speed
+    }
+    syncAmbientShapeStyle(body)
+  }
+}
+
+function ambientTick(ts: number) {
+  if (!ambientLastTs) ambientLastTs = ts
+  const dt = Math.min(0.033, (ts - ambientLastTs) / 1000)
+  ambientLastTs = ts
+  stepAmbientPhysics(dt)
+  ambientRaf = window.requestAnimationFrame(ambientTick)
+}
+
+function stopAmbientPhysics() {
+  if (ambientRaf) {
+    window.cancelAnimationFrame(ambientRaf)
+    ambientRaf = 0
+  }
+  ambientLastTs = 0
+  ambientResizeObserver?.disconnect()
+  ambientResizeObserver = null
+}
+
+function startAmbientPhysics() {
+  stopAmbientPhysics()
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return
+  }
+  nextTick(() => {
+    syncAmbientBounds()
+    for (const shape of ambientShapes) {
+      shape.x = Math.min(Math.max(shape.radius, shape.x), ambientBounds.w - shape.radius)
+      shape.y = Math.min(Math.max(shape.radius, shape.y), ambientBounds.h - shape.radius)
+      syncAmbientShapeStyle(shape)
+    }
+    if (ambientRootEl.value && typeof ResizeObserver !== 'undefined') {
+      ambientResizeObserver = new ResizeObserver(() => {
+        syncAmbientBounds()
+      })
+      ambientResizeObserver.observe(ambientRootEl.value)
+    }
+    ambientRaf = window.requestAnimationFrame(ambientTick)
+  })
+}
+
 const page = ref<PageKey>('dashboard')
 const currentUser = ref<LoginUser | null>(null)
 const checkingAuth = ref(true)
@@ -2108,6 +2387,7 @@ onMounted(async () => {
     if (currentUser.value) {
       await runCloudBootstrap()
       void runStartupPromptSequence()
+      startAmbientPhysics()
     }
   } finally {
     checkingAuth.value = false
@@ -2115,10 +2395,16 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopAmbientPhysics()
   offUpdateState?.()
   offUpdateOpenDialog?.()
   offHeaderCloudProgress?.()
   if (headerCloudProgressTimer) clearTimeout(headerCloudProgressTimer)
+})
+
+watch(currentUser, (user) => {
+  if (user) startAmbientPhysics()
+  else stopAmbientPhysics()
 })
 
 function money(value: any) {
@@ -3312,7 +3598,31 @@ const LedgerPage = defineComponent({
         materialReturnLoading.value = false
       }
     }
-    const openSupplierScrapRecover = () => {
+    const scrapMaterialOptions = ref<any[]>([])
+    const loadScrapMaterialOptions = async (supplierName: string) => {
+      const name = String(supplierName || '').trim()
+      if (!name) {
+        scrapMaterialOptions.value = []
+        return
+      }
+      try {
+        const rows = await supplierAPI.materialCatalog(name)
+        scrapMaterialOptions.value = Array.isArray(rows) ? rows : []
+      } catch {
+        try {
+          const fallback = await stockInAPI.materialCatalog(name)
+          scrapMaterialOptions.value = Array.isArray(fallback) ? fallback : []
+        } catch {
+          scrapMaterialOptions.value = []
+        }
+      }
+    }
+    const applyScrapExchangeMaterial = (item: any, opt: any) => {
+      item.material_name = String(opt?.material_name || '').trim()
+      item.material_spec = String(opt?.material_spec || '').trim()
+      item.material_unit = String(opt?.material_unit || '公斤').trim() || '公斤'
+    }
+    const openSupplierScrapRecover = async () => {
       const supplierName = supplierDetailName.value || filterValue.value
       if (!supplierName) return
       scrapRecoverDate.value = todayIsoDate()
@@ -3328,7 +3638,9 @@ const LedgerPage = defineComponent({
         material_quantity: '',
         material_unit_price: '',
       }]
+      scrapMaterialOptions.value = []
       scrapRecoverDialog.value = true
+      await loadScrapMaterialOptions(supplierName)
     }
     const scrapRecoverAmount = () => roundMoneyValue(
       Math.abs(Number(scrapRecoverQuantity.value || 0)) * Math.abs(Number(scrapRecoverUnitPrice.value || 0)),
@@ -3346,7 +3658,7 @@ const LedgerPage = defineComponent({
         emit('notify', '请填写废料公斤数', 'warning')
         return
       }
-      if (price <= 0) {
+      if (scrapRecoverSettlement.value !== 'exchange' && price <= 0) {
         emit('notify', '请填写废料回收单价', 'warning')
         return
       }
@@ -3357,7 +3669,7 @@ const LedgerPage = defineComponent({
             material_spec: String(item.material_spec || '').trim(),
             material_unit: String(item.material_unit || '公斤').trim() || '公斤',
             material_quantity: Math.abs(Number(item.material_quantity || 0)),
-            material_unit_price: Math.abs(Number(item.material_unit_price || 0)),
+            material_unit_price: 0,
           }))
           .filter(item => item.material_quantity > 0)
         : []
@@ -3371,10 +3683,6 @@ const LedgerPage = defineComponent({
             emit('notify', '请填写置换材料名称', 'warning')
             return
           }
-          if (item.material_unit_price <= 0) {
-            emit('notify', `请填写「${item.material_name}」单价`, 'warning')
-            return
-          }
         }
       }
       scrapRecoverLoading.value = true
@@ -3385,7 +3693,7 @@ const LedgerPage = defineComponent({
           settlement: scrapRecoverSettlement.value,
           scrap_name: String(scrapRecoverName.value || '').trim(),
           quantity: qty,
-          unit_price: price,
+          unit_price: scrapRecoverSettlement.value === 'exchange' ? 0 : price,
           note: scrapRecoverNote.value,
           exchange_items: exchangeItems,
         })
@@ -5088,11 +5396,11 @@ const LedgerPage = defineComponent({
       }),
       RecordDialogShell({
         show: scrapRecoverDialog.value,
-        maxWidth: scrapRecoverSettlement.value === 'exchange' ? 860 : 640,
-        zIndex: 3000,
+        maxWidth: scrapRecoverSettlement.value === 'exchange' ? 760 : 640,
+        zIndex: 3600,
         title: '登记废料回收',
         subtitle: scrapRecoverSettlement.value === 'exchange'
-          ? '称重登记废料，并同时入库置换的新材料；废料金额冲减应付，新料按采购价增加应付。'
+          ? '以废料换新料：称重登记废料，下方填置换材料即可；新料入库免付，不冲减应付、不记金额。'
           : scrapRecoverSettlement.value === 'cash'
             ? '称重登记废料并记现金收入；不冲减供应商应付，也不扣好料库存。'
             : '称重登记废料（如铜屑），按回收价冲减供应商应付；不扣好料库存，无需领用。',
@@ -5117,7 +5425,7 @@ const LedgerPage = defineComponent({
                   h('div', { class: 'scrap-settlement-field__label' }, '结算方式（3种，点选切换）'),
                   h('div', { class: 'scrap-settlement-field__options' }, [
                     { value: 'offset' as ScrapSettlementMode, title: '抵应付', hint: '冲减尚欠' },
-                    { value: 'exchange' as ScrapSettlementMode, title: '换新料', hint: '抵账并入新料' },
+                    { value: 'exchange' as ScrapSettlementMode, title: '换新料', hint: '以废换料入库' },
                     { value: 'cash' as ScrapSettlementMode, title: '兑现金', hint: '记现金收入' },
                   ].map(option => h('button', {
                     type: 'button',
@@ -5125,7 +5433,15 @@ const LedgerPage = defineComponent({
                       'scrap-settlement-option',
                       scrapRecoverSettlement.value === option.value ? 'scrap-settlement-option--active' : '',
                     ],
-                    onClick: () => { scrapRecoverSettlement.value = option.value },
+                    onClick: async () => {
+                      scrapRecoverSettlement.value = option.value
+                      if (option.value === 'exchange') {
+                        const supplierName = supplierDetailName.value || filterValue.value
+                        if (supplierName && !scrapMaterialOptions.value.length) {
+                          await loadScrapMaterialOptions(supplierName)
+                        }
+                      }
+                    },
                   }, [
                     h('span', { class: 'scrap-settlement-option__title' }, option.title),
                     h('span', { class: 'scrap-settlement-option__hint' }, option.hint),
@@ -5157,25 +5473,29 @@ const LedgerPage = defineComponent({
                   suffix: '公斤',
                 }),
               ]),
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
-                h(VTextField, {
-                  ...commonFormFieldProps(),
-                  modelValue: scrapRecoverUnitPrice.value,
-                  'onUpdate:modelValue': (v: any) => { scrapRecoverUnitPrice.value = Number(v || 0) || '' },
-                  label: '回收单价',
-                  type: 'number',
-                  min: 0,
-                  suffix: '元/公斤',
-                }),
-              ]),
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
-                h(VTextField, {
-                  ...commonFormFieldProps(),
-                  modelValue: scrapRecoverAmount(),
-                  label: '废料金额',
-                  readonly: true,
-                }),
-              ]),
+              ...(scrapRecoverSettlement.value === 'exchange'
+                ? []
+                : [
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: scrapRecoverUnitPrice.value,
+                      'onUpdate:modelValue': (v: any) => { scrapRecoverUnitPrice.value = Number(v || 0) || '' },
+                      label: '回收单价',
+                      type: 'number',
+                      min: 0,
+                      suffix: '元/公斤',
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: scrapRecoverAmount(),
+                      label: '废料金额',
+                      readonly: true,
+                    }),
+                  ]),
+                ]),
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
                 h(VTextField, {
                   ...commonFormFieldProps(),
@@ -5187,11 +5507,16 @@ const LedgerPage = defineComponent({
             ]),
           ]),
           scrapRecoverSettlement.value === 'exchange'
-            ? h('div', { class: 'record-dialog__section' }, [
+            ? h('div', { class: 'record-dialog__section scrap-exchange-section' }, [
               h('div', { class: 'record-dialog__section-title', style: 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px' }, [
-                h('span', '置换新料'),
+                h('div', [
+                  h('div', '置换新料（入库免付）'),
+                  h('div', { class: 'muted tiny', style: 'margin-top: 2px; font-weight: 400' }, scrapMaterialOptions.value.length
+                    ? `该供应商历史材料 ${scrapMaterialOptions.value.length} 种：可下拉选择，也可直接输入新材料`
+                    : '未读到历史材料时可直接输入；也可关闭后重开本窗口再试'),
+                ]),
                 h(VBtn, {
-                  size: 'x-small',
+                  size: 'small',
                   variant: 'tonal',
                   onClick: () => {
                     scrapExchangeRows.value.push({
@@ -5204,68 +5529,114 @@ const LedgerPage = defineComponent({
                   },
                 }, () => '添加材料'),
               ]),
-              h('div', { class: 'table-scroll' }, [
-                h(VTable, { class: 'ledger-table', hover: true }, () => [
-                  h('thead', [h('tr', [
-                    h('th', '材料名称'),
-                    h('th', '规格'),
-                    h('th', '公斤数'),
-                    h('th', '元/公斤'),
-                    h('th', '金额'),
-                    h('th', { style: 'width: 64px' }, ''),
-                  ])]),
-                  h('tbody', scrapExchangeRows.value.map((item, index) => h('tr', { key: `scrap-ex-${index}` }, [
-                    h('td', [
-                      h(VTextField, {
-                        modelValue: item.material_name,
-                        'onUpdate:modelValue': (v: string) => { item.material_name = v },
-                        density: 'compact',
-                        hideDetails: true,
-                        placeholder: '如铜管',
+              ...scrapExchangeRows.value.map((item, index) => {
+                const selectItems = scrapMaterialOptions.value.map((opt: any) => ({
+                  ...opt,
+                  label: `${opt.material_name}${opt.material_spec ? ` / ${opt.material_spec}` : ''}${opt.material_unit ? ` ${opt.material_unit}` : ''}`,
+                }))
+                const selectedMaterial = selectItems.find((opt: any) =>
+                  opt.material_name === item.material_name
+                  && (opt.material_spec || '') === (item.material_spec || '')
+                  && (opt.material_unit || '') === (item.material_unit || '')
+                ) || null
+                return h('div', { class: 'scrap-exchange-row', key: `scrap-ex-${index}` }, [
+                  h('div', { class: 'scrap-exchange-row__head' }, [
+                    h('span', { class: 'scrap-exchange-row__index' }, `材料 ${index + 1}`),
+                    h(VBtn, {
+                      size: 'x-small',
+                      variant: 'text',
+                      color: 'error',
+                      disabled: scrapExchangeRows.value.length <= 1,
+                      onClick: () => { scrapExchangeRows.value.splice(index, 1) },
+                    }, () => '删除'),
+                  ]),
+                  h('div', { class: 'record-dialog__grid' }, [
+                    h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                      h(VCombobox, {
+                        ...commonFormFieldProps(),
+                        modelValue: selectedMaterial || (item.material_name ? item.material_name : null),
+                        'onUpdate:modelValue': (v: any) => {
+                          if (v == null || v === '') {
+                            item.material_name = ''
+                            item.material_spec = ''
+                            item.material_unit = '公斤'
+                            return
+                          }
+                          if (typeof v === 'object') {
+                            applyScrapExchangeMaterial(item, v)
+                            return
+                          }
+                          const text = String(v || '').trim()
+                          const matched = selectItems.find((opt: any) =>
+                            opt.label === text || opt.material_name === text
+                          )
+                          if (matched) {
+                            applyScrapExchangeMaterial(item, matched)
+                            return
+                          }
+                          item.material_name = text
+                        },
+                        items: selectItems,
+                        itemTitle: 'label',
+                        returnObject: true,
+                        clearable: true,
+                        hideNoData: false,
+                        autoSelectFirst: false,
+                        label: '材料名称',
+                        placeholder: scrapMaterialOptions.value.length ? '下拉选择或直接输入' : '填写材料名称',
+                        hint: scrapMaterialOptions.value.length
+                          ? `可选 ${scrapMaterialOptions.value.length} 种历史材料，也可输入新名称`
+                          : '可直接输入材料名称',
+                        persistentHint: true,
+                        noDataText: '无匹配材料，回车即可使用当前输入',
+                        menuProps: {
+                          zIndex: 10000,
+                          class: 'scrap-combobox-menu',
+                          contentClass: 'scrap-combobox-menu',
+                          maxHeight: 360,
+                          closeOnContentClick: true,
+                          scrim: false,
+                        },
+                      }, {
+                        item: ({ props: listItemProps, item: listItem }: any) => h(VListItem, {
+                          ...listItemProps,
+                          title: String((listItem?.raw ?? listItem)?.label
+                            || materialOptionTitle(listItem?.raw ?? listItem)
+                            || ''),
+                        }),
                       }),
                     ]),
-                    h('td', [
+                    h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
                       h(VTextField, {
+                        ...commonFormFieldProps(),
                         modelValue: item.material_spec,
                         'onUpdate:modelValue': (v: string) => { item.material_spec = v },
-                        density: 'compact',
-                        hideDetails: true,
-                        placeholder: '直径等',
+                        label: '规格 / 直径',
+                        placeholder: '如 Ø12',
                       }),
                     ]),
-                    h('td', [
+                    h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
                       h(VTextField, {
+                        ...commonFormFieldProps(),
                         modelValue: item.material_quantity,
                         'onUpdate:modelValue': (v: any) => { item.material_quantity = Math.max(0, Number(v || 0)) || '' },
+                        label: '公斤数',
                         type: 'number',
-                        density: 'compact',
-                        hideDetails: true,
                         min: 0,
+                        suffix: '公斤',
                       }),
                     ]),
-                    h('td', [
+                    h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
                       h(VTextField, {
-                        modelValue: item.material_unit_price,
-                        'onUpdate:modelValue': (v: any) => { item.material_unit_price = Math.max(0, Number(v || 0)) || '' },
-                        type: 'number',
-                        density: 'compact',
-                        hideDetails: true,
-                        min: 0,
+                        ...commonFormFieldProps(),
+                        modelValue: '0（免付，不入应付）',
+                        label: '入库金额',
+                        readonly: true,
                       }),
                     ]),
-                    h('td', money(roundMoneyValue(Number(item.material_quantity || 0) * Number(item.material_unit_price || 0)))),
-                    h('td', [
-                      h(VBtn, {
-                        size: 'x-small',
-                        variant: 'text',
-                        color: 'error',
-                        disabled: scrapExchangeRows.value.length <= 1,
-                        onClick: () => { scrapExchangeRows.value.splice(index, 1) },
-                      }, () => '删'),
-                    ]),
-                  ]))),
-                ]),
-              ]),
+                  ]),
+                ])
+              }),
             ])
             : null,
         ],
@@ -6014,7 +6385,9 @@ function materialOptionTitle(item: any) {
   if (!item || typeof item !== 'object') return String(item || '')
   const spec = item.material_spec ? ` / ${item.material_spec}` : ''
   const unit = item.material_unit ? ` ${item.material_unit}` : ''
-  const stock = Number(item.stock_qty || 0) ? ` · 可用 ${money(item.stock_qty)}${item.material_unit || ''}` : ''
+  const stock = Number(item.stock_qty || 0)
+    ? ` · 可用 ${money(item.stock_qty)}${item.material_unit || ''}`
+    : (Number(item.purchased_qty || 0) ? ` · 累计供料 ${money(item.purchased_qty)}${item.material_unit || ''}` : '')
   const price = Number(item.unit_price || 0) ? ` · 参考单价 ${money(item.unit_price)}` : ''
   return `${item.material_name}${spec}${unit}${stock}${price}`
 }

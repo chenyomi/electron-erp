@@ -49,6 +49,44 @@ import { generateDocNo, recalcInventoryForRows } from './stock-business'
 
 const MATERIAL_RETURN_PRODUCT_NAME = '原材料退货'
 
+function listSupplierMaterialCatalog(db: ReturnType<typeof getDb>, supplierName: string) {
+  const name = String(supplierName || '').trim()
+  if (!name) return []
+  const fromStockIn = db.prepare(`
+    SELECT material_name,
+      COALESCE(material_spec, '') AS material_spec,
+      COALESCE(material_unit, '公斤') AS material_unit,
+      MAX(material_unit_price) AS unit_price,
+      COALESCE(SUM(material_quantity), 0) AS purchased_qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND TRIM(COALESCE(material_name, '')) != ''
+      AND COALESCE(material_quantity, 0) > 0
+    GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ORDER BY material_name COLLATE NOCASE ASC, material_spec COLLATE NOCASE ASC
+  `).all(name) as Array<Record<string, any>>
+  if (fromStockIn.length) return fromStockIn
+
+  // 兼容：仅有台账应付、入库 material_name 为空时，从供应商应付行取材料
+  return db.prepare(`
+    SELECT product_name AS material_name,
+      COALESCE(spec, '') AS material_spec,
+      COALESCE(unit, '公斤') AS material_unit,
+      MAX(unit_price) AS unit_price,
+      COALESCE(SUM(quantity), 0) AS purchased_qty
+    FROM supplier_ledger
+    WHERE deleted_at IS NULL
+      AND supplier_name = ?
+      AND COALESCE(quantity, 0) > 0
+      AND TRIM(COALESCE(product_name, '')) != ''
+      AND TRIM(COALESCE(product_name, '')) NOT IN ('付款', '原材料退货')
+      AND TRIM(COALESCE(note, '')) NOT LIKE '%废料回收%'
+    GROUP BY product_name, COALESCE(spec, ''), COALESCE(unit, '公斤')
+    ORDER BY product_name COLLATE NOCASE ASC, spec COLLATE NOCASE ASC
+  `).all(name) as Array<Record<string, any>>
+}
+
 function isSupplierMaterialReturnRow(row: Record<string, any>): boolean {
   if (isSupplierPaymentRecord(row)) return false
   return Number(row.quantity || 0) < 0 && (
@@ -500,6 +538,13 @@ export function registerSupplierHandlers(): void {
     return listSupplierMaterialReturnOptions(db, name)
   })
 
+  ipcMain.handle('supplier:material-catalog', (_e, supplierName: string) => {
+    const db = getDb()
+    const name = String(supplierName || '').trim()
+    if (!name) throw new Error('请选择供应商')
+    return listSupplierMaterialCatalog(db, name)
+  })
+
   ipcMain.handle('supplier:create', (_e, profile: {
     supplier_name: string
     supplier_type?: string
@@ -921,8 +966,8 @@ export function registerSupplierHandlers(): void {
     const qty = Math.abs(Number(payload?.quantity || 0))
     const price = Math.abs(Number(payload?.unit_price || 0))
     if (qty <= 0) throw new Error('请填写废料公斤数')
-    if (price <= 0) throw new Error('请填写废料回收单价')
-    const scrapAmount = Math.round(qty * price * 100) / 100
+    if (mode !== 'exchange' && price <= 0) throw new Error('请填写废料回收单价')
+    const scrapAmount = mode === 'exchange' ? 0 : Math.round(qty * price * 100) / 100
     const userNote = String(payload?.note || '').trim()
     const exchangeItems = (payload?.exchange_items || [])
       .map(item => ({
@@ -938,7 +983,6 @@ export function registerSupplierHandlers(): void {
       if (!exchangeItems.length) throw new Error('换新料请填写置换的材料')
       for (const item of exchangeItems) {
         if (!item.material_name) throw new Error('请填写置换材料名称')
-        if (item.material_unit_price <= 0) throw new Error(`请填写「${item.material_name}」单价`)
       }
     }
 
@@ -965,7 +1009,7 @@ export function registerSupplierHandlers(): void {
 
       if (mode === 'exchange') {
         for (const item of exchangeItems) {
-          const amount = Math.round(item.material_quantity * item.material_unit_price * 100) / 100
+          // 置换新料：只入库数量，金额为 0，不生成应付（换料免付）
           const stockInResult = db.prepare(`
             INSERT INTO stock_in_ledger (
               doc_no, supplier_name, category, date, contract_no, product_name, spec, unit,
@@ -974,24 +1018,23 @@ export function registerSupplierHandlers(): void {
               tax_rate, tax_amount, invoice_amount, note, counts_inventory
             ) VALUES (
               ?, ?, '', ?, '', '', '', '',
-              0, 0, ?, ?, ?, ?,
-              ?, ?, 0,
+              0, 0, 0, ?, ?, ?,
+              ?, 0, 0,
               0, 0, 0, ?, 0
             )
           `).run(
             generateDocNo('RK', 'stock_in_ledger', date),
             supplierName,
             date,
-            amount,
             item.material_name,
             item.material_spec,
             item.material_unit,
             item.material_quantity,
-            item.material_unit_price,
-            `废料换料 · ${docNo}`,
+            `废料换料（免付） · ${docNo}`,
           )
           const stockInId = Number(stockInResult.lastInsertRowid)
           const stockInRow = db.prepare('SELECT * FROM stock_in_ledger WHERE id = ?').get(stockInId) as Record<string, any>
+          // amount=0 → 不会生成供应商应付
           createPayableFromStockIn(db, stockInRow)
           logOperation('stock_in_ledger', stockInId, 'INSERT', null, stockInRow as object)
           stockInIds.push(stockInId)
@@ -1004,7 +1047,8 @@ export function registerSupplierHandlers(): void {
           ? `stock_in:${stockInIds.join(',')}`
           : ''
       const noteText = buildScrapNote(mode, userNote, linkSuffix)
-      const amountIn = mode === 'cash' ? 0 : -scrapAmount
+      // 换新料：以废换料，不冲减应付；抵应付/兑现才按回收价记账
+      const amountIn = mode === 'cash' || mode === 'exchange' ? 0 : -scrapAmount
       const row = {
         supplier_name: supplierName,
         date,
@@ -1014,7 +1058,7 @@ export function registerSupplierHandlers(): void {
         spec: '',
         unit: '公斤',
         quantity: -qty,
-        unit_price: price,
+        unit_price: mode === 'exchange' ? 0 : price,
         amount_in: amountIn,
         amount_out: 0,
         balance: 0,

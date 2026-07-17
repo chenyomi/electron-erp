@@ -118,6 +118,41 @@ function listMaterialOptions(db: ReturnType<typeof getDb>) {
   `).all() as Array<Record<string, any>>
 }
 
+/** 材料档案（含库存为 0）：用于废料换料等「选历史材料」场景 */
+function listMaterialCatalog(db: ReturnType<typeof getDb>, supplierName = '') {
+  const name = String(supplierName || '').trim()
+  if (name) {
+    const rows = db.prepare(`
+      SELECT material_name,
+        COALESCE(material_spec, '') AS material_spec,
+        COALESCE(material_unit, '公斤') AS material_unit,
+        MAX(material_unit_price) AS unit_price,
+        COALESCE(SUM(material_quantity), 0) AS purchased_qty
+      FROM stock_in_ledger
+      WHERE deleted_at IS NULL
+        AND supplier_name = ?
+        AND TRIM(COALESCE(material_name, '')) != ''
+        AND COALESCE(material_quantity, 0) > 0
+      GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+      ORDER BY material_name COLLATE NOCASE ASC, material_spec COLLATE NOCASE ASC
+    `).all(name) as Array<Record<string, any>>
+    if (rows.length) return rows
+  }
+  return db.prepare(`
+    SELECT material_name,
+      COALESCE(material_spec, '') AS material_spec,
+      COALESCE(material_unit, '公斤') AS material_unit,
+      MAX(material_unit_price) AS unit_price,
+      COALESCE(SUM(material_quantity), 0) AS purchased_qty
+    FROM stock_in_ledger
+    WHERE deleted_at IS NULL
+      AND TRIM(COALESCE(material_name, '')) != ''
+      AND COALESCE(material_quantity, 0) > 0
+    GROUP BY material_name, COALESCE(material_spec, ''), COALESCE(material_unit, '公斤')
+    ORDER BY material_name COLLATE NOCASE ASC, material_spec COLLATE NOCASE ASC
+  `).all() as Array<Record<string, any>>
+}
+
 function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
   if (!String(row?.date || '').trim()) throw new Error('请填写日期')
 
@@ -215,6 +250,10 @@ export function registerStockInHandlers(): void {
 
   ipcMain.handle('stockIn:material-options', () => {
     return listMaterialOptions(getDb())
+  })
+
+  ipcMain.handle('stockIn:material-catalog', (_e, supplierName = '') => {
+    return listMaterialCatalog(getDb(), String(supplierName || ''))
   })
 
   ipcMain.handle('stockIn:list', (_e, params = {}) => {

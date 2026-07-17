@@ -50,7 +50,22 @@ export interface CloudBackupItem {
   name: string
   size: number
   updatedAt: string
+  hash?: string
+  kind?: 'history' | 'current'
 }
+
+interface CloudLedgerHistoryIndex {
+  version: 1
+  items: Array<{
+    id: string
+    key: string
+    size: number
+    hash: string
+    createdAt: string
+  }>
+}
+
+const MAX_CLOUD_LEDGER_HISTORY = 10
 
 export interface CloudSyncResult {
   ok: boolean
@@ -153,10 +168,15 @@ function urlSafeBase64(input: Buffer | string): string {
   return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_')
 }
 
-function createUploadToken(config: QiniuCloudConfig, key: string): string {
+function createUploadToken(config: QiniuCloudConfig, key: string, options?: { cacheControl?: string }): string {
   const deadline = Math.floor(Date.now() / 1000) + 3600
-  const putPolicy = JSON.stringify({ scope: `${config.bucket}:${key}`, deadline })
-  const encoded = urlSafeBase64(putPolicy)
+  const putPolicy: Record<string, unknown> = {
+    scope: `${config.bucket}:${key}`,
+    deadline,
+  }
+  // 账本/清单禁止 CDN 长期缓存，否则上传后客户端仍读到旧 manifest
+  if (options?.cacheControl) putPolicy.cacheControl = options.cacheControl
+  const encoded = urlSafeBase64(JSON.stringify(putPolicy))
   const sign = urlSafeBase64(crypto.createHmac('sha1', config.secretKey).update(encoded).digest())
   return `${config.accessKey}:${sign}:${encoded}`
 }
@@ -172,9 +192,42 @@ function manifestsMatch(local: SyncManifest, remote: SyncManifest): boolean {
 function assertAutoUploadCanUseRemote(local: SyncManifest, remote: SyncManifest): void {
   const remoteFiles = remote.files || {}
   if (!Object.keys(remoteFiles).length) return
+  assertUploadNotOverwritingNewerRemote(local, remote)
   if (manifestsMatch(local, remote)) return
   if (isRemoteManifestSynced(remoteFiles)) return
+  // 用户已在启动提示里选择「保留本机」——允许把本机更新上传上去
+  if (isRemoteManifestAcknowledged(remoteFiles)) return
+  // 本机账本明显更新：允许退出上传，避免旧云端卡住新数据
+  if (isLocalLedgerPreferKeep(local.files?.['ledger.db'], remoteFiles['ledger.db'], remote.updatedAt)) return
   throw new Error('云端已有本机尚未确认的新数据，已阻止退出自动上传。请先从云端恢复/同步，确认无误后再上传，避免旧电脑数据覆盖云端。')
+}
+
+/** 禁止用更旧的本机账本覆盖更新的云端账本（手动上传、退出上传都要拦） */
+function assertUploadNotOverwritingNewerRemote(local: SyncManifest, remote: SyncManifest): void {
+  const remoteLedger = remote.files?.['ledger.db']
+  const localLedger = local.files?.['ledger.db']
+  if (!remoteLedger || !localLedger) return
+  if (remoteLedger.hash && localLedger.hash && remoteLedger.hash === localLedger.hash) return
+  // 把「云端」当作第一参数：若云端比本机新，则禁止上传覆盖
+  if (isLocalLedgerPreferKeep(remoteLedger, localLedger, local.updatedAt)) {
+    throw new Error('云端账本比本机更新，已禁止用本机覆盖云端。请先「从云端恢复」，或确认本机才是最新后再操作。')
+  }
+}
+
+function isLocalLedgerPreferKeep(
+  localLedger?: SyncFileEntry,
+  remoteLedger?: SyncFileEntry,
+  remoteUpdatedAt?: string,
+): boolean {
+  if (!localLedger) return false
+  if (!remoteLedger) return true
+  const localTime = Date.parse(String(localLedger.updatedAt || '')) || 0
+  const remoteTime = Date.parse(String(remoteLedger.updatedAt || remoteUpdatedAt || '')) || 0
+  if (localTime && remoteTime && localTime > remoteTime + 60_000) return true
+  const localSize = Number(localLedger.size || 0)
+  const remoteSize = Number(remoteLedger.size || 0)
+  if (localSize > 0 && remoteSize > 0 && localSize > remoteSize * 1.05) return true
+  return false
 }
 
 function parseQiniuError(body: string, fallback: string): string {
@@ -272,6 +325,7 @@ async function resolveDownloadDomainBases(config: QiniuCloudConfig, queryData?: 
     }
   }
 
+  // 优先源站 IO 域名，避免自定义 CDN 域名缓存旧的 manifest/ledger
   try {
     const data = queryData || await fetchRegionQueryData(config)
     for (const host of extractIoDownloadHosts(data)) pushDomain(host, true)
@@ -279,13 +333,14 @@ async function resolveDownloadDomainBases(config: QiniuCloudConfig, queryData?: 
     // ignore
   }
 
+  pushDomain(config.domain, false)
+
   try {
-    for (const domain of await fetchBucketDomainList(config)) pushDomain(domain, true)
+    for (const domain of await fetchBucketDomainList(config)) pushDomain(domain, false)
   } catch {
     // ignore
   }
 
-  pushDomain(config.domain, false)
   return ordered
 }
 
@@ -487,9 +542,10 @@ function encodeObjectKey(key: string): string {
 
 function buildPrivateDownloadUrl(domainBase: string, key: string, deadlineSec: number, config: QiniuCloudConfig): string {
   const base = `${domainBase.replace(/\/+$/, '')}/${encodeObjectKey(key)}`
-  const withDeadline = `${base}?e=${deadlineSec}`
-  const sign = urlSafeBase64(crypto.createHmac('sha1', config.secretKey).update(withDeadline).digest())
-  return `${withDeadline}&token=${config.accessKey}:${sign}`
+  // e + r 都参与签名；r 用于尽量绕过按路径缓存的 CDN
+  const withQuery = `${base}?e=${deadlineSec}&r=${Date.now()}`
+  const sign = urlSafeBase64(crypto.createHmac('sha1', config.secretKey).update(withQuery).digest())
+  return `${withQuery}&token=${config.accessKey}:${sign}`
 }
 
 function formatDownloadError(body: Buffer, statusCode: number, domain: string): string {
@@ -502,23 +558,161 @@ function formatDownloadError(body: Buffer, statusCode: number, domain: string): 
 }
 
 export async function listCloudBackups(): Promise<CloudBackupItem[]> {
-  const status = await getCloudSyncStatus()
-  if (!status.configured || !status.remoteUpdatedAt) return []
+  const view = getQiniuConfigView()
+  if (!view.configured) return []
   try {
     const config = requireConfig()
-    return [{
-      key: manifestObjectKey(config),
-      name: '差异化同步快照',
-      size: 0,
-      updatedAt: status.remoteUpdatedAt,
-    }]
+    const items: CloudBackupItem[] = []
+    const remote = await fetchRemoteManifest(config)
+    if (remote.files?.['ledger.db']) {
+      items.push({
+        key: fileObjectKey(config, 'ledger.db'),
+        name: '当前云端账本',
+        size: Number(remote.files['ledger.db'].size || 0),
+        updatedAt: remote.updatedAt || remote.files['ledger.db'].updatedAt || new Date().toISOString(),
+        hash: remote.files['ledger.db'].hash,
+        kind: 'current',
+      })
+    }
+    const history = await fetchCloudLedgerHistory(config)
+    for (const entry of history.items) {
+      items.push({
+        key: entry.key,
+        name: `历史快照 ${formatCloudHistoryLabel(entry.createdAt)}`,
+        size: entry.size,
+        updatedAt: entry.createdAt,
+        hash: entry.hash,
+        kind: 'history',
+      })
+    }
+    return items
   } catch {
     return []
   }
 }
 
+function formatCloudHistoryLabel(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
 function syncRootPrefix(config: QiniuCloudConfig): string {
   return `${config.prefix}sync/`
+}
+
+function historyRootPrefix(config: QiniuCloudConfig): string {
+  return `${syncRootPrefix(config)}history/`
+}
+
+function historyIndexObjectKey(config: QiniuCloudConfig): string {
+  return `${historyRootPrefix(config)}index.json`
+}
+
+function historyLedgerObjectKey(config: QiniuCloudConfig, id: string): string {
+  return `${historyRootPrefix(config)}ledger_${id}.db`
+}
+
+function cloudHistoryId(): string {
+  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+}
+
+function emptyHistoryIndex(): CloudLedgerHistoryIndex {
+  return { version: 1, items: [] }
+}
+
+async function fetchCloudLedgerHistory(config: QiniuCloudConfig): Promise<CloudLedgerHistoryIndex> {
+  const tempPath = join(getDataDir(), 'cloud-history-index.tmp.json')
+  try {
+    await downloadCloudFile(config, historyIndexObjectKey(config), tempPath)
+    const parsed = JSON.parse(fs.readFileSync(tempPath, 'utf8')) as CloudLedgerHistoryIndex
+    if (!parsed || !Array.isArray(parsed.items)) return emptyHistoryIndex()
+    return {
+      version: 1,
+      items: parsed.items
+        .filter(item => item?.key && item?.id)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
+    }
+  } catch {
+    return emptyHistoryIndex()
+  } finally {
+    fs.rmSync(tempPath, { force: true })
+  }
+}
+
+async function saveCloudLedgerHistory(config: QiniuCloudConfig, index: CloudLedgerHistoryIndex): Promise<void> {
+  const buffer = Buffer.from(JSON.stringify(index, null, 2), 'utf8')
+  await uploadObjectBuffer(config, historyIndexObjectKey(config), buffer, 'index.json', 'application/json')
+}
+
+async function copyCloudObject(config: QiniuCloudConfig, srcKey: string, destKey: string): Promise<void> {
+  const path = `/copy/${encodedEntryUri(config.bucket, srcKey)}/${encodedEntryUri(config.bucket, destKey)}/force/true`
+  const sign = urlSafeBase64(crypto.createHmac('sha1', config.secretKey).update(`${path}\n`).digest())
+  const response = await requestText(`https://rs.qiniu.com${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `QBox ${config.accessKey}:${sign}`,
+      'Content-Length': '0',
+    },
+  })
+  if (response.statusCode >= 400) {
+    throw new Error(`复制云端对象失败：${parseQiniuError(response.body, String(response.statusCode))}`)
+  }
+}
+
+/** 上传新账本前，把云端当前 ledger.db 另存一份历史快照（对象存储本身不自带版本） */
+async function archiveRemoteLedgerBeforeOverwrite(
+  config: QiniuCloudConfig,
+  remoteLedger: SyncFileEntry,
+  onProgress?: CloudSyncProgressReporter,
+): Promise<void> {
+  const id = cloudHistoryId()
+  const destKey = historyLedgerObjectKey(config, id)
+  const srcKey = fileObjectKey(config, 'ledger.db')
+  reportSyncProgress(onProgress, {
+    mode: 'upload',
+    phase: 'preparing',
+    current: 0,
+    total: 0,
+    message: '正在保存云端账本历史快照…',
+  })
+  try {
+    await copyCloudObject(config, srcKey, destKey)
+  } catch (copyError) {
+    // 复制失败时降级：下载后再上传到 history 路径
+    const tempPath = join(getDataDir(), `cloud-history-ledger-${id}.tmp.db`)
+    try {
+      await downloadCloudFile(config, srcKey, tempPath)
+      await uploadObjectFile(config, destKey, tempPath)
+    } finally {
+      fs.rmSync(tempPath, { force: true })
+    }
+    if (copyError) {
+      console.warn('Cloud ledger copy failed, used download/upload fallback:', copyError)
+    }
+  }
+
+  const history = await fetchCloudLedgerHistory(config)
+  history.items = [
+    {
+      id,
+      key: destKey,
+      size: Number(remoteLedger.size || 0),
+      hash: String(remoteLedger.hash || ''),
+      createdAt: new Date().toISOString(),
+    },
+    ...history.items.filter(item => item.hash !== remoteLedger.hash),
+  ]
+  const overflow = history.items.slice(MAX_CLOUD_LEDGER_HISTORY)
+  history.items = history.items.slice(0, MAX_CLOUD_LEDGER_HISTORY)
+  await saveCloudLedgerHistory(config, history)
+  if (overflow.length) {
+    try {
+      await deleteCloudObjectKeys(config, overflow.map(item => item.key))
+    } catch (error) {
+      console.warn('Prune cloud ledger history failed:', error)
+    }
+  }
 }
 
 function manifestObjectKey(config: QiniuCloudConfig): string {
@@ -529,8 +723,24 @@ function fileObjectKey(config: QiniuCloudConfig, relativePath: string): string {
   return `${syncRootPrefix(config)}${relativePath.replace(/\\/g, '/')}`
 }
 
-function emptyManifest(): SyncManifest {
-  return { version: 2, type: 'incremental', updatedAt: '', files: {} }
+function pickNewestIso(...values: Array<string | undefined>): string | undefined {
+  let best: string | undefined
+  let bestTs = -1
+  for (const value of values) {
+    const raw = String(value || '').trim()
+    if (!raw) continue
+    const ts = Date.parse(raw)
+    if (!Number.isFinite(ts)) continue
+    if (ts >= bestTs) {
+      bestTs = ts
+      best = raw
+    }
+  }
+  return best
+}
+
+function remoteManifestDisplayTime(remote: SyncManifest): string | undefined {
+  return pickNewestIso(remote.updatedAt, remote.files?.['ledger.db']?.updatedAt)
 }
 
 function reportSyncProgress(onProgress: CloudSyncProgressReporter | undefined, progress: CloudSyncProgress): void {
@@ -562,9 +772,18 @@ async function runConcurrent<T>(
   await Promise.all(Array.from({ length: workers }, () => next()))
 }
 
+function uploadCacheControlForKey(key: string): string | undefined {
+  const base = key.split('/').pop() || key
+  if (base === 'manifest.json' || base === 'ledger.db' || base === 'index.json') {
+    return 'no-store'
+  }
+  return undefined
+}
+
 async function uploadObjectFile(config: QiniuCloudConfig, key: string, filePath: string): Promise<void> {
   const { uploadUrl } = await resolveBucketHosts(config)
-  const token = createUploadToken(config, key)
+  const cacheControl = uploadCacheControlForKey(key)
+  const token = createUploadToken(config, key, cacheControl ? { cacheControl } : undefined)
   const fileBuffer = fs.readFileSync(filePath)
   const fileName = key.split('/').pop() || 'file'
   const ext = fileName.split('.').pop()?.toLowerCase() || ''
@@ -590,7 +809,8 @@ async function uploadObjectFile(config: QiniuCloudConfig, key: string, filePath:
 
 async function uploadObjectBuffer(config: QiniuCloudConfig, key: string, buffer: Buffer, fileName: string, contentType: string): Promise<void> {
   const { uploadUrl } = await resolveBucketHosts(config)
-  const token = createUploadToken(config, key)
+  const cacheControl = uploadCacheControlForKey(key)
+  const token = createUploadToken(config, key, cacheControl ? { cacheControl } : undefined)
   const multipart = buildMultipartBody({ token, key }, 'file', fileName, buffer, contentType)
   const response = await requestText(uploadUrl, {
     method: 'POST',
@@ -617,7 +837,13 @@ function downloadCloudFileOnce(
   return new Promise((resolve) => {
     const target = new URL(url)
     const client = target.protocol === 'https:' ? https : http
-    const req = client.request(target, { method: 'GET' }, (res) => {
+    const req = client.request(target, {
+      method: 'GET',
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+    }, (res) => {
       if (cancel?.canceled) {
         res.destroy()
         fs.rmSync(destPath, { force: true })
@@ -768,8 +994,13 @@ async function fetchRemoteManifest(config: QiniuCloudConfig): Promise<SyncManife
   try {
     await downloadCloudFile(config, manifestObjectKey(config), tempPath)
     return JSON.parse(fs.readFileSync(tempPath, 'utf8')) as SyncManifest
-  } catch {
-    return emptyManifest()
+  } catch (error: any) {
+    const message = String(error?.message || '')
+    // 仅「确实没有清单」视为空云端；网络/鉴权/CDN 失败必须上抛，避免误判为空后覆盖云端
+    if (/HTTP 404|404\b|not\s*found|不存在|无此文件|no such file/i.test(message)) {
+      return emptyManifest()
+    }
+    throw error instanceof Error ? error : new Error(message || '读取云端清单失败')
   } finally {
     fs.rmSync(tempPath, { force: true })
   }
@@ -784,7 +1015,7 @@ export async function getCloudSyncStatus(): Promise<CloudSyncStatus> {
     const local = await buildLiveDataManifest()
     return {
       configured: true,
-      remoteUpdatedAt: remote.updatedAt || undefined,
+      remoteUpdatedAt: remoteManifestDisplayTime(remote),
       remoteFileCount: Object.keys(remote.files || {}).length,
       localFileCount: Object.keys(local.files || {}).length,
     }
@@ -829,6 +1060,8 @@ export async function syncCloudUpload(
       message: '正在对比云端差异…',
     })
     const remoteManifest = await fetchRemoteManifest(config)
+    // 手动上传也禁止用更旧本机盖掉更新的云端
+    assertUploadNotOverwritingNewerRemote(localManifest, remoteManifest)
     if (options.protectUnacknowledgedRemote) {
       assertAutoUploadCanUseRemote(localManifest, remoteManifest)
     }
@@ -861,6 +1094,17 @@ export async function syncCloudUpload(
           message: `正在上传 (${transferCompleted + 1}/${total - skipped})`,
         })
         await flushSyncProgress()
+        if (relativePath === 'ledger.db') {
+          const remoteLedger = remoteManifest.files?.['ledger.db']
+          if (remoteLedger?.hash && remoteLedger.hash !== entry.hash) {
+            try {
+              await archiveRemoteLedgerBeforeOverwrite(config, remoteLedger, onProgress)
+            } catch (error) {
+              console.warn('Archive remote ledger before overwrite failed:', error)
+              // 快照失败不阻断上传，但尽量保留本机 pre_cloud 备份
+            }
+          }
+        }
         const tempFile = join(tempRoot, relativePath)
         await exportLiveSyncFile(relativePath, tempFile)
         await uploadObjectFile(config, fileObjectKey(config, relativePath), tempFile)
@@ -1109,7 +1353,7 @@ export async function syncCloudDownload(
       phase: 'applying',
       current: total,
       total,
-      message: '正在合并到本地账本…',
+      message: '正在写入本地账本…',
     })
     await flushSyncProgress()
     assertCloudSyncNotCanceled(cancel)
@@ -1177,6 +1421,8 @@ export interface CloudStartupPlan {
   pendingMediaFiles?: number
   /** 启动自动恢复时是否包含图片/附件；默认仅有账本数据时不拉图片 */
   downloadIncludeMedia?: boolean
+  /** 本机账本时间/体积更像是更新的一方，启动提示应默认保留本机 */
+  localPreferKeep?: boolean
   remoteUpdatedAt?: string
   remoteFingerprint?: string
   offline?: boolean
@@ -1234,7 +1480,7 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         action: 'auto_download',
         pendingFiles: remoteEntries.length,
         downloadIncludeMedia: true,
-        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
         remoteFingerprint,
       }
     }
@@ -1268,7 +1514,7 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         remoteHasData: true,
         action: 'skip',
         pendingFiles: 0,
-        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
         remoteFingerprint,
       }
     }
@@ -1286,7 +1532,7 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         pendingFiles: 0,
         pendingLedgerFiles: 0,
         pendingMediaFiles: 0,
-        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
         remoteFingerprint,
       }
     }
@@ -1301,22 +1547,29 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
         pendingFiles: pending.total,
         pendingLedgerFiles: pending.ledger,
         pendingMediaFiles: pending.media,
-        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
         remoteFingerprint,
       }
     }
 
+    // 本机已有账本时：绝不自动下载覆盖，只提示用户确认（云端可能是旧数据）
     if (pending.ledger > 0) {
+      const localPreferKeep = isLocalLedgerPreferKeep(
+        localLedger,
+        remoteFiles['ledger.db'],
+        remoteManifest.updatedAt,
+      )
       return {
         configured: true,
         localEmpty: false,
         remoteHasData: true,
-        action: prefs.startupAutoDownload ? 'auto_download' : 'prompt_download',
+        action: 'prompt_download',
         pendingFiles: pending.total,
         pendingLedgerFiles: pending.ledger,
         pendingMediaFiles: pending.media,
         downloadIncludeMedia: true,
-        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        localPreferKeep,
+        remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
         remoteFingerprint,
       }
     }
@@ -1325,12 +1578,13 @@ export async function evaluateCloudStartupSync(): Promise<CloudStartupPlan> {
       configured: true,
       localEmpty: false,
       remoteHasData: true,
-      action: prefs.startupAutoDownload ? 'auto_download' : 'prompt_download',
+      action: 'prompt_download',
       pendingFiles: pending.media,
       pendingLedgerFiles: 0,
       pendingMediaFiles: pending.media,
       downloadIncludeMedia: false,
-      remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+      localPreferKeep: false,
+      remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
       remoteFingerprint,
       message: '云端图片/附件与本地不一致；启动时仅同步账本，不自动拉回图片',
     }
@@ -1377,7 +1631,7 @@ export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadS
         configured: true,
         hasUpdates: false,
         pendingFiles: 0,
-        remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+        remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
         remoteFingerprint,
       }
     }
@@ -1391,7 +1645,7 @@ export async function checkCloudPendingDownload(): Promise<CloudPendingDownloadS
       configured: true,
       hasUpdates: pendingFiles > 0,
       pendingFiles,
-      remoteUpdatedAt: remoteManifest.updatedAt || undefined,
+      remoteUpdatedAt: remoteManifestDisplayTime(remoteManifest),
       remoteFingerprint,
     }
   } catch {
@@ -1417,9 +1671,42 @@ export async function uploadCloudBackup(_backupName?: string, onProgress?: Cloud
   return syncCloudUpload(onProgress)
 }
 
-export async function restoreCloudBackup(_key?: string, onProgress?: CloudSyncProgressReporter): Promise<{ ok: boolean; error?: string }> {
-  const result = await syncCloudDownload(onProgress)
-  return { ok: result.ok, error: result.error }
+export async function restoreCloudBackup(key?: string, onProgress?: CloudSyncProgressReporter): Promise<{ ok: boolean; error?: string; replacedLedger?: boolean }> {
+  const config = requireConfig()
+  const objectKey = String(key || '').trim() || fileObjectKey(config, 'ledger.db')
+  const tempRoot = mkdtempSync(join(tmpdir(), 'donghao-cloud-hist-'))
+  try {
+    reportSyncProgress(onProgress, {
+      mode: 'download',
+      phase: 'preparing',
+      current: 0,
+      total: 1,
+      message: '正在下载云端账本快照…',
+    })
+    const destLedger = join(tempRoot, 'ledger.db')
+    await downloadCloudFile(config, objectKey, destLedger, undefined)
+    reportSyncProgress(onProgress, {
+      mode: 'download',
+      phase: 'applying',
+      current: 1,
+      total: 1,
+      message: '正在写入本地账本…',
+    })
+    const applied = await applyIncrementalSync(['ledger.db'], tempRoot, { preBackup: 'db-only' })
+    if (!applied.ok) return { ok: false, error: applied.error || '恢复云端快照失败' }
+    reportSyncProgress(onProgress, {
+      mode: 'download',
+      phase: 'done',
+      current: 1,
+      total: 1,
+      message: '快照已恢复到本机',
+    })
+    return { ok: true, replacedLedger: true }
+  } catch (error: any) {
+    return { ok: false, error: error?.message || '恢复云端快照失败' }
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
 }
 
 export async function testCloudConnection(): Promise<{ ok: boolean; error?: string; count?: number; region?: string }> {

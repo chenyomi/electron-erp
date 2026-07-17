@@ -11,7 +11,9 @@ const BUSINESS_TABLES = [
   'cash_ledger',
   'bank_ledger',
   'acceptance_bills',
+  'other_ledger',
   'customer_ledger',
+  'supplier_ledger',
   'stock_in_ledger',
   'stock_out_ledger',
   'product_catalog',
@@ -50,7 +52,10 @@ export interface BackupInfo {
 }
 
 function backupTimestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  // 用本地时间命名，避免 UTC 文件名在东八区看起来「差 8 小时 / 顺序错乱」
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`
 }
 
 function countFiles(dir: string): number {
@@ -399,13 +404,31 @@ function hashFileSync(filePath: string): string {
 export function isLocalDataEmpty(): boolean {
   const db = getDb()
   for (const table of BUSINESS_TABLES) {
-    const { total } = db.prepare(`SELECT COUNT(*) as total FROM ${table} WHERE deleted_at IS NULL`).get() as { total: number }
-    if (total > 0) return false
+    try {
+      const { total } = db.prepare(`SELECT COUNT(*) as total FROM ${table} WHERE deleted_at IS NULL`).get() as { total: number }
+      if (total > 0) return false
+    } catch {
+      // 旧库缺表时忽略
+    }
   }
-  const { total: profileTotal } = db.prepare(`SELECT COUNT(*) as total FROM customer_profiles`).get() as { total: number }
-  if (profileTotal > 0) return false
-  const { total: attachmentTotal } = db.prepare(`SELECT COUNT(*) as total FROM attachments`).get() as { total: number }
-  if (attachmentTotal > 0) return false
+  try {
+    const { total: profileTotal } = db.prepare(`SELECT COUNT(*) as total FROM customer_profiles`).get() as { total: number }
+    if (profileTotal > 0) return false
+  } catch {
+    // ignore
+  }
+  try {
+    const { total: supplierProfileTotal } = db.prepare(`SELECT COUNT(*) as total FROM supplier_profiles`).get() as { total: number }
+    if (supplierProfileTotal > 0) return false
+  } catch {
+    // ignore
+  }
+  try {
+    const { total: attachmentTotal } = db.prepare(`SELECT COUNT(*) as total FROM attachments`).get() as { total: number }
+    if (attachmentTotal > 0) return false
+  } catch {
+    // ignore
+  }
   for (const dirName of DATA_DIRS) {
     if (countFiles(join(getDataDir(), dirName)) > 0) return false
   }
@@ -523,9 +546,15 @@ export async function applyIncrementalSync(
   try {
     const preBackup = options.preBackup ?? 'full'
     if (preBackup === 'full') {
-      await autoBackup({ automatic: true, force: true })
+      const backup = await autoBackup({ automatic: true, force: true })
+      if (!backup.ok) {
+        return { ok: false, error: backup.error || '覆盖前备份失败，已中止云端恢复' }
+      }
     } else if (preBackup === 'db-only') {
-      await autoBackupDbOnly()
+      const backup = await autoBackupDbOnly()
+      if (!backup.ok) {
+        return { ok: false, error: backup.error || '覆盖前备份失败，已中止云端恢复' }
+      }
     }
     const dataDir = getDataDir()
     const needsDb = relativePaths.includes('ledger.db')

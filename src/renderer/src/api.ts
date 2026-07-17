@@ -249,4 +249,5 @@ export const cloudAPI = {
   cancelSync: () => api.invoke('cloud:cancel-sync'),
   onSyncProgress: (listener: (progress: any) => void) => window.electronAPI.on('cloud:sync-progress', listener),
   list: () => api.invoke('cloud:list'),
+  restoreSnapshot: (key: string) => api.invoke('cloud:restore', key),
 }

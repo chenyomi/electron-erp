@@ -768,15 +768,22 @@ const messages = {
     cloudSyncProgressTitleDownload: '正在从云端恢复',
     cloudStatusLine: '本地 {local} 个文件 · 云端 {remote} 个文件 · 云端更新 {time}',
     cloudStatusEmpty: '云端尚无同步数据',
-    confirmCloudRestore: '确定从云端拉取差异并合并到本机吗？会先自动备份当前数据。',
+    cloudHistoryTitle: '云端账本快照',
+    cloudHistoryHint: '每次上传覆盖账本前，会自动把旧账本另存到七牛 history 目录（最多 10 份）。对象存储本身没有版本，快照是软件创建的额外文件。',
+    cloudHistoryEmpty: '暂无云端快照。下次「上传到云端」且账本有变化时会自动生成。',
+    cloudHistoryRefresh: '刷新快照列表',
+    cloudHistoryRestore: '恢复此快照',
+    cloudHistoryRestored: '已从云端快照恢复到本机',
+    confirmCloudHistoryRestore: '确定用这份云端快照覆盖本机账本吗？会先自动备份本机数据。',
+    confirmCloudRestore: '确定用云端账本覆盖本机吗？会先自动备份当前数据。若本机数据更新，请选「取消」并先备份/上传本机。',
     confirmCloudUpload: '确定将本机账本差异上传到七牛云吗？只会传输有变化的文件。',
     confirmCloudUploadTitle: '上传到云端',
     confirmCloudUploadMessage: '上传会覆盖云端已有差异文件。请输入登录密码确认。',
     cloudExitAutoUpload: '退出软件时自动上传到云端',
     cloudStartupCheck: '启动时检查云端是否有更新',
-    cloudStartupAutoDownload: '检测到云端更新时自动拉取（会先备份本机）',
+    cloudStartupAutoDownload: '本机无数据时才自动从云端拉取（本机有账本时始终要确认）',
     cloudBootstrapTitle: '正在从云端同步账本',
-    cloudBootstrapSubtitle: '首次在本机使用或云端有更新，正在拉取最新数据…',
+    cloudBootstrapSubtitle: '首次在本机使用或本机尚无账本，正在拉取云端数据…',
     cloudBootstrapDone: '云端数据已同步到本机',
     cloudBootstrapCancel: '跳过，先用本机账',
     cloudBootstrapCancelHint: '下载较慢时可跳过，稍后在数据管理手动恢复',
@@ -786,8 +793,11 @@ const messages = {
     cloudLocalOnlyHint: '云端尚无同步数据，当前使用本机账本。',
     cloudOfflineHint: '无法连接云端，当前使用本机账本。',
     cloudOfflineEmptyHint: '无法连接云端，且本机尚无账本数据。请检查网络或七牛云配置。',
-    cloudStartupUpdateTitle: '云端有更新',
-    cloudStartupUpdateMessage: '检测到云端有 {count} 个文件与本地不一致（云端更新于 {time}）。是否从云端拉取合并？会先自动备份本机数据。',
+    cloudStartupUpdateTitle: '云端与本机账本不一致',
+    cloudStartupUpdateMessage: '云端有 {count} 个文件与本机不同（云端更新于 {time}）。\n\n默认请点「保留本机」。只有确定要用云端旧数据覆盖时，才选「用云端覆盖」。',
+    cloudStartupUpdateMessageLocalNewer: '检测到本机账本比云端更新（云端更新于 {time}）。\n\n请点「保留本机」，关闭软件时会自动上传。不要点「用云端覆盖」，否则刚录入的数据会被旧云端盖掉。',
+    cloudStartupKeepLocal: '保留本机',
+    cloudStartupOverwriteLocal: '用云端覆盖',
     total: '共 {count} 条',
     totalIncome: '总收入',
     totalExpense: '总支出',
@@ -1276,15 +1286,22 @@ const messages = {
     cloudSyncProgressTitleDownload: 'Restoring from cloud',
     cloudStatusLine: 'Local {local} files · Cloud {remote} files · Cloud updated {time}',
     cloudStatusEmpty: 'No cloud sync data yet',
-    confirmCloudRestore: 'Pull cloud differences and merge into this computer? A local backup runs first.',
+    cloudHistoryTitle: 'Cloud ledger snapshots',
+    cloudHistoryHint: 'Before overwriting the cloud ledger, the previous copy is saved under a history/ prefix (up to 10). Object storage has no versions by itself.',
+    cloudHistoryEmpty: 'No cloud snapshots yet. The next upload that changes the ledger will create one.',
+    cloudHistoryRefresh: 'Refresh snapshots',
+    cloudHistoryRestore: 'Restore this snapshot',
+    cloudHistoryRestored: 'Restored local ledger from cloud snapshot',
+    confirmCloudHistoryRestore: 'Overwrite local ledger with this cloud snapshot? A local backup runs first.',
+    confirmCloudRestore: 'Overwrite local ledger with cloud? A local backup runs first. Cancel if this computer has newer data.',
     confirmCloudUpload: 'Upload local ledger changes to Qiniu Cloud? Only changed files will be transferred.',
     confirmCloudUploadTitle: 'Upload to Cloud',
     confirmCloudUploadMessage: 'Upload will apply local changes to the cloud. Enter your login password to confirm.',
     cloudExitAutoUpload: 'Auto-upload to cloud on exit',
     cloudStartupCheck: 'Check cloud updates on startup',
-    cloudStartupAutoDownload: 'Auto-pull cloud updates on startup (backs up local first)',
+    cloudStartupAutoDownload: 'Auto-pull only when local ledger is empty (always confirm when local has data)',
     cloudBootstrapTitle: 'Syncing from cloud',
-    cloudBootstrapSubtitle: 'Pulling the latest ledger data for this device…',
+    cloudBootstrapSubtitle: 'First use on this computer, or local ledger is empty. Pulling cloud data…',
     cloudBootstrapDone: 'Cloud data synced to this device',
     cloudBootstrapCancel: 'Skip and use local data',
     cloudBootstrapCancelHint: 'If download is slow, skip and restore manually later in Data Management',
@@ -1294,8 +1311,11 @@ const messages = {
     cloudLocalOnlyHint: 'No cloud data yet. Using local ledger.',
     cloudOfflineHint: 'Cannot reach cloud. Using local ledger.',
     cloudOfflineEmptyHint: 'Cannot reach cloud and local ledger is empty. Check network or Qiniu config.',
-    cloudStartupUpdateTitle: 'Cloud updates available',
-    cloudStartupUpdateMessage: '{count} file(s) differ from local (cloud updated at {time}). Pull and merge from cloud? A local backup runs first.',
+    cloudStartupUpdateTitle: 'Cloud and local ledger differ',
+    cloudStartupUpdateMessage: '{count} file(s) differ from local (cloud updated at {time}).\n\nKeep local by default. Only overwrite with cloud if you are sure.',
+    cloudStartupUpdateMessageLocalNewer: 'Local ledger looks newer than cloud (cloud updated at {time}).\n\nChoose Keep local. Do not overwrite with cloud or you will lose recent entries.',
+    cloudStartupKeepLocal: 'Keep local',
+    cloudStartupOverwriteLocal: 'Overwrite with cloud',
     total: '{count} items',
     totalIncome: 'Income',
     totalExpense: 'Expense',
@@ -2051,24 +2071,32 @@ async function maybePromptCloudUpdates() {
   try {
     const plan = await cloudAPI.evaluateStartup()
     if (plan?.action !== 'prompt_download') return
-    const ok = await askConfirm({
+    const keepLocal = await askConfirm({
       title: t('cloudStartupUpdateTitle'),
-      message: t('cloudStartupUpdateMessage', {
-        count: plan.pendingFiles,
-        time: formatCloudStartupTime(plan.remoteUpdatedAt),
-      }),
-      confirmColor: 'warning',
-      confirmLabel: t('cloudSyncDownload'),
+      message: plan.localPreferKeep
+        ? t('cloudStartupUpdateMessageLocalNewer', {
+          time: formatCloudStartupTime(plan.remoteUpdatedAt),
+        })
+        : t('cloudStartupUpdateMessage', {
+          count: plan.pendingFiles,
+          time: formatCloudStartupTime(plan.remoteUpdatedAt),
+        }),
+      // 主按钮始终是「保留本机」，避免误点「从云端恢复」把新数据盖掉
+      confirmLabel: t('cloudStartupKeepLocal'),
+      cancelLabel: t('cloudStartupOverwriteLocal'),
+      confirmColor: 'primary',
     })
-    if (!ok) {
+    if (keepLocal) {
       if (plan.remoteFingerprint) {
         await cloudAPI.acknowledgeRemoteSnapshot({
           updatedAt: plan.remoteUpdatedAt,
           fingerprint: plan.remoteFingerprint,
         })
       }
+      notify(t('cloudSyncDownloadCanceled'), 'info')
       return
     }
+    // 用户明确选择「用云端覆盖」
     await runCloudAutoDownload(plan)
   } catch {
     // ignore startup cloud check errors
@@ -7010,11 +7038,7 @@ function formatBackupSize(size: number) {
 }
 
 function formatBackupTime(name: string, time?: string) {
-  const match = name.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/)
-  if (match) {
-    const [, y, m, d, h, min] = match
-    return `${y}年${Number(m)}月${Number(d)}日 ${h}:${min}`
-  }
+  // 优先用备份真实时间（本地时区），避免文件夹名里的 UTC 字符串造成「时间乱序」观感
   if (time) {
     const dt = new Date(time)
     if (!Number.isNaN(dt.getTime())) {
@@ -7025,6 +7049,21 @@ function formatBackupTime(name: string, time?: string) {
       const min = String(dt.getMinutes()).padStart(2, '0')
       return `${y}年${m}月${d}日 ${h}:${min}`
     }
+  }
+  const match = name.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/)
+  if (match) {
+    const [, y, m, d, h, min] = match
+    // 历史备份名来自 toISOString（UTC），按 UTC 解析后再显示本地时间
+    const dt = new Date(`${y}-${m}-${d}T${h}:${min}:00.000Z`)
+    if (!Number.isNaN(dt.getTime())) {
+      const ly = dt.getFullYear()
+      const lm = dt.getMonth() + 1
+      const ld = dt.getDate()
+      const lh = String(dt.getHours()).padStart(2, '0')
+      const lmin = String(dt.getMinutes()).padStart(2, '0')
+      return `${ly}年${lm}月${ld}日 ${lh}:${lmin}`
+    }
+    return `${y}年${Number(m)}月${Number(d)}日 ${h}:${min}`
   }
   return name
 }
@@ -7052,10 +7091,13 @@ const ImportPage = defineComponent({
     const cloudTesting = ref(false)
     const cloudUploading = ref(false)
     const cloudDownloading = ref(false)
+    const cloudHistory = ref<any[]>([])
+    const cloudHistoryLoading = ref(false)
+    const cloudHistoryRestoring = ref('')
     const cloudSyncPrefs = reactive({
       exitAutoUpload: true,
       startupCheck: true,
-      startupAutoDownload: true,
+      startupAutoDownload: false,
     })
     const cloudProgressDialog = ref(false)
     const cloudProgress = reactive({
@@ -7115,7 +7157,7 @@ const ImportPage = defineComponent({
         const prefs = await cloudAPI.getSyncPrefs()
         cloudSyncPrefs.exitAutoUpload = prefs?.exitAutoUpload !== false
         cloudSyncPrefs.startupCheck = prefs?.startupCheck !== false
-        cloudSyncPrefs.startupAutoDownload = prefs?.startupAutoDownload !== false
+        cloudSyncPrefs.startupAutoDownload = prefs?.startupAutoDownload === true
       } catch {
         cloudSyncPrefs.exitAutoUpload = true
         cloudSyncPrefs.startupCheck = true
@@ -7158,7 +7200,8 @@ const ImportPage = defineComponent({
     const loadInfo = async () => {
       backups.value = await systemAPI.backupsList()
       await Promise.all([loadCloudConfig(), loadCloudSyncPrefs()])
-      void refreshCloudStatus()
+      await refreshCloudStatus()
+      void loadCloudHistory()
     }
     const saveCloudConfig = async () => {
       cloudSaving.value = true
@@ -7211,6 +7254,45 @@ const ImportPage = defineComponent({
         emit('notify', props.t('cloudSyncDownloadDone', { downloaded: transferred, skipped }))
       }
     }
+    const loadCloudHistory = async () => {
+      if (!cloudStatus.value?.configured) {
+        cloudHistory.value = []
+        return
+      }
+      cloudHistoryLoading.value = true
+      try {
+        const result = await cloudAPI.list()
+        cloudHistory.value = result?.ok ? (result.items || []) : []
+      } catch {
+        cloudHistory.value = []
+      } finally {
+        cloudHistoryLoading.value = false
+      }
+    }
+    const restoreCloudHistoryItem = async (item: any) => {
+      const key = String(item?.key || '').trim()
+      if (!key) return
+      beginCloudProgress('download')
+      cloudHistoryRestoring.value = key
+      cloudDownloading.value = true
+      try {
+        const result = await cloudAPI.restoreSnapshot(key)
+        if (result?.canceled) {
+          emit('notify', props.t('cloudSyncDownloadCanceled'), 'info')
+          return
+        }
+        if (!result?.ok) {
+          emit('notify', result?.error || props.t('restoreFailed'), 'error')
+          return
+        }
+        emit('notify', props.t('cloudHistoryRestored'))
+        await loadCloudHistory()
+      } finally {
+        cloudHistoryRestoring.value = ''
+        cloudDownloading.value = false
+        finishCloudProgress()
+      }
+    }
     const cloudSyncUpload = async () => {
       const password = await askPasswordConfirm({
         title: props.t('confirmCloudUploadTitle'),
@@ -7225,6 +7307,7 @@ const ImportPage = defineComponent({
         const result = await cloudAPI.syncUpload(password)
         notifyCloudSyncResult(result, 'upload')
         cloudStatus.value = await cloudAPI.status()
+        await loadCloudHistory()
       } finally {
         cloudUploading.value = false
         finishCloudProgress()
@@ -7433,14 +7516,14 @@ const ImportPage = defineComponent({
           h('div', { class: 'backup-history' }, [
             h('div', { class: 'backup-history-title' }, props.t('recentBackups')),
             backups.value.length
-              ? backups.value.slice(0, 5).map(b => h('div', { class: 'backup-history-item', key: b.name }, [
+              ? h('div', { class: 'backup-history-list' }, backups.value.map(b => h('div', { class: 'backup-history-item', key: b.name }, [
                 h('span', { class: 'backup-history-time' }, formatBackupTime(b.name, b.time)),
                 h('div', { class: 'backup-history-actions' }, [
                   h('span', { class: 'backup-history-meta' }, formatBackupSize(b.size)),
                   h(VBtn, { size: 'small', variant: 'text', color: 'primary', disabled: restoring.value, onClick: () => restoreByName(b.name) }, () => props.t('restoreThisBackup')),
                   h(VBtn, { size: 'small', variant: 'text', disabled: savingPackage.value, onClick: () => saveBackupPackage(b.name) }, () => props.t('saveBackupPackage')),
                 ]),
-              ]))
+              ])))
               : h('div', { class: 'backup-history-empty' }, props.t('noBackupsYet')),
             h('a', { class: 'backup-folder-link', href: '#', onClick: openBackupFolder }, props.t('openBackupFolder')),
           ]),
@@ -7529,6 +7612,42 @@ const ImportPage = defineComponent({
                 disabled: !cloudSyncPrefs.startupCheck,
               }),
             ]) : null,
+            cloudSectionReady.value && cloudStatus.value?.configured
+              ? h('div', { class: 'backup-history cloud-history' }, [
+                h('div', { class: 'backup-history-title', style: 'display:flex;align-items:center;justify-content:space-between;gap:8px' }, [
+                  h('span', props.t('cloudHistoryTitle')),
+                  h(VBtn, {
+                    size: 'x-small',
+                    variant: 'text',
+                    loading: cloudHistoryLoading.value,
+                    onClick: () => { void loadCloudHistory() },
+                  }, () => props.t('cloudHistoryRefresh')),
+                ]),
+                h('p', { class: 'muted tiny', style: 'margin: 0 0 10px' }, props.t('cloudHistoryHint')),
+                cloudHistory.value.length
+                  ? h('div', { class: 'backup-history-list' }, cloudHistory.value.map((item: any) => h('div', {
+                    class: 'backup-history-item',
+                    key: item.key,
+                  }, [
+                    h('span', { class: 'backup-history-time' }, item.name || formatBackupTime('cloud', item.updatedAt)),
+                    h('div', { class: 'backup-history-actions' }, [
+                      h('span', { class: 'backup-history-meta' }, [
+                        item.kind === 'current' ? '当前 · ' : '',
+                        formatBackupSize(item.size || 0),
+                      ].join('')),
+                      h(VBtn, {
+                        size: 'small',
+                        variant: 'text',
+                        color: 'primary',
+                        loading: cloudHistoryRestoring.value === item.key,
+                        disabled: cloudUploading.value || cloudDownloading.value,
+                        onClick: () => { void restoreCloudHistoryItem(item) },
+                      }, () => props.t('cloudHistoryRestore')),
+                    ]),
+                  ])))
+                  : h('div', { class: 'backup-history-empty' }, cloudHistoryLoading.value ? '…' : props.t('cloudHistoryEmpty')),
+              ])
+              : null,
           ]),
         ]),
       ]),

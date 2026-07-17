@@ -17,7 +17,8 @@ export interface CloudSyncPrefs {
 const DEFAULT_PREFS: CloudSyncPrefs = {
   exitAutoUpload: true,
   startupCheck: true,
-  startupAutoDownload: true,
+  // 默认关闭：本机有数据时绝不能静默用云端整库覆盖
+  startupAutoDownload: false,
 }
 
 function prefsPath(): string {
@@ -79,7 +80,8 @@ export function getCloudSyncPrefs(): CloudSyncPrefs {
     return {
       exitAutoUpload: parsed.exitAutoUpload !== false,
       startupCheck: parsed.startupCheck !== false,
-      startupAutoDownload: parsed.startupAutoDownload !== false,
+      // 缺省或旧配置未写该字段时，按 false（安全侧）
+      startupAutoDownload: parsed.startupAutoDownload === true,
       acknowledgedRemoteUpdatedAt: parsed.acknowledgedRemoteUpdatedAt,
       acknowledgedRemoteFingerprint: parsed.acknowledgedRemoteFingerprint,
       syncedRemoteUpdatedAt: parsed.syncedRemoteUpdatedAt,

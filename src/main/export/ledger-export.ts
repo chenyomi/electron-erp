@@ -198,11 +198,17 @@ function summaryLabelKey(designColumns: ExportColumn[]) {
   return preferred.find(key => designColumns.some(column => column.key === key))
 }
 
+/** 期末余额取日期最晚的一行；日期都无法解析时退回最后一行 */
 function closingBalanceRow(rows: Record<string, string | number>[]) {
-  const first = rows[0]
-  const last = rows[rows.length - 1]
-  if (rows.length < 2) return first
-  return parseLedgerDate(last.date) > parseLedgerDate(first.date) ? last : first
+  let closing = rows[rows.length - 1]
+  let closingDate = ''
+  for (const row of rows) {
+    const date = parseLedgerDate(row.date)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < closingDate) continue
+    closing = row
+    closingDate = date
+  }
+  return closing
 }
 
 function buildSummaryCells(design: ExportDesign, designColumns: ExportColumn[], rows: Record<string, string | number>[], summary: Record<string, string | number>) {
@@ -437,7 +443,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'date, income, description, expense, operator, balance, note'
-      if (ids.length) return idsQuery('cash_ledger', columns, ids, buildDateOrderBy('date'))
+      if (ids.length) return idsQuery('cash_ledger', columns, ids, buildDateOrderBy('date', 'ASC'))
       const like = `%${params.keyword || ''}%`
       const dateWhere = buildDateFilterClause(params)
       return {
@@ -447,7 +453,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           WHERE deleted_at IS NULL
             AND (description LIKE ? OR operator LIKE ? OR note LIKE ? OR date LIKE ?)
             ${dateWhere.sql}
-          ORDER BY ${buildDateOrderBy('date')}
+          ORDER BY ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [like, like, like, like, ...dateWhere.params],
       }
@@ -479,7 +485,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'date, description, amount_in, amount_out, balance, note'
-      if (ids.length) return idsQuery('bank_ledger', columns, ids, buildDateOrderBy('date'))
+      if (ids.length) return idsQuery('bank_ledger', columns, ids, buildDateOrderBy('date', 'ASC'))
       const like = `%${params.keyword || ''}%`
       const dateWhere = buildDateFilterClause(params)
       return {
@@ -488,7 +494,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           FROM bank_ledger
           WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
             ${dateWhere.sql}
-          ORDER BY ${buildDateOrderBy('date')}
+          ORDER BY ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [like, like, like, ...dateWhere.params],
       }
@@ -519,7 +525,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'date, description, amount_in, amount_out, balance, note'
-      if (ids.length) return idsQuery('acceptance_bills', columns, ids, buildDateOrderBy('date'))
+      if (ids.length) return idsQuery('acceptance_bills', columns, ids, buildDateOrderBy('date', 'ASC'))
       const like = `%${params.keyword || ''}%`
       const dateWhere = buildDateFilterClause(params)
       return {
@@ -528,7 +534,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
           FROM acceptance_bills
           WHERE deleted_at IS NULL AND (description LIKE ? OR note LIKE ? OR date LIKE ?)
             ${dateWhere.sql}
-          ORDER BY ${buildDateOrderBy('date')}
+          ORDER BY ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [like, like, like, ...dateWhere.params],
       }
@@ -566,7 +572,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'id, customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, month_label, ref_ledger_id'
-      if (ids.length) return idsQuery('customer_ledger', columns, ids, `customer_name ASC, ${buildDateOrderBy('date')}`)
+      if (ids.length) return idsQuery('customer_ledger', columns, ids, `customer_name ASC, ${buildDateOrderBy('date', 'ASC')}`)
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
       const dateWhere = buildDateFilterClause(params)
@@ -579,7 +585,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
             AND (description LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ?
               OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
             ${dateWhere.sql}
-          ORDER BY customer_name ASC, ${buildDateOrderBy('date')}
+          ORDER BY customer_name ASC, ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [customerName, customerName, like, like, like, like, like, like, like, ...dateWhere.params],
       }
@@ -623,7 +629,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'id, supplier_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, ref_ledger_id'
-      if (ids.length) return idsQuery('supplier_ledger', columns, ids, `supplier_name ASC, ${buildDateOrderBy('date')}`)
+      if (ids.length) return idsQuery('supplier_ledger', columns, ids, `supplier_name ASC, ${buildDateOrderBy('date', 'ASC')}`)
       const like = `%${params.keyword || ''}%`
       const supplierName = params.supplierName || ''
       const dateWhere = buildDateFilterClause(params)
@@ -636,7 +642,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
             AND (description LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ?
               OR contract_no LIKE ? OR product_name LIKE ? OR spec LIKE ?)
             ${dateWhere.sql}
-          ORDER BY supplier_name ASC, ${buildDateOrderBy('date')}
+          ORDER BY supplier_name ASC, ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [supplierName, supplierName, like, like, like, like, like, like, like, ...dateWhere.params],
       }
@@ -679,7 +685,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'doc_no, supplier_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
-      if (ids.length) return idsQuery('stock_in_ledger', columns, ids, buildDateOrderBy('date'))
+      if (ids.length) return idsQuery('stock_in_ledger', columns, ids, buildDateOrderBy('date', 'ASC'))
       const like = `%${params.keyword || ''}%`
       const supplierName = params.supplierName || ''
       const dateWhere = buildDateFilterClause(params)
@@ -691,7 +697,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
             AND (? = '' OR supplier_name = ?)
             AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR supplier_name LIKE ? OR doc_no LIKE ?)
             ${dateWhere.sql}
-          ORDER BY ${buildDateOrderBy('date')}
+          ORDER BY ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [supplierName, supplierName, like, like, like, like, like, like, like, like, ...dateWhere.params],
       }
@@ -734,7 +740,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
     query: (params) => {
       const ids = getSelectedIds(params.ids)
       const columns = 'doc_no, customer_name, category, date, contract_no, product_name, spec, unit, quantity, unit_price, amount, note'
-      if (ids.length) return idsQuery('stock_out_ledger', columns, ids, buildDateOrderBy('date'))
+      if (ids.length) return idsQuery('stock_out_ledger', columns, ids, buildDateOrderBy('date', 'ASC'))
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
       const dateWhere = buildDateFilterClause(params)
@@ -746,7 +752,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
             AND (? = '' OR customer_name = ?)
             AND (product_name LIKE ? OR spec LIKE ? OR contract_no LIKE ? OR category LIKE ? OR note LIKE ? OR date LIKE ? OR customer_name LIKE ? OR doc_no LIKE ?)
             ${dateWhere.sql}
-          ORDER BY ${buildDateOrderBy('date')}
+          ORDER BY ${buildDateOrderBy('date', 'ASC')}
         `,
         params: [customerName, customerName, like, like, like, like, like, like, like, like, ...dateWhere.params],
       }
@@ -780,21 +786,21 @@ function buildOverviewSheet(db: any) {
       count: (db.prepare(`SELECT COUNT(*) as n FROM cash_ledger WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总收入', inValue: num((db.prepare(`SELECT SUM(income) as v FROM cash_ledger WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总支出', outValue: num((db.prepare(`SELECT SUM(expense) as v FROM cash_ledger WHERE deleted_at IS NULL`).get() as any).v),
-      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM cash_ledger WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date')} LIMIT 1`).get() as any)?.v)}`,
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM cash_ledger WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date', 'DESC')} LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '公账',
       count: (db.prepare(`SELECT COUNT(*) as n FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总进账', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总付出', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).v),
-      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM bank_ledger WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date')} LIMIT 1`).get() as any)?.v)}`,
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM bank_ledger WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date', 'DESC')} LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '承兑票',
       count: (db.prepare(`SELECT COUNT(*) as n FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总收票', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总付出', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).v),
-      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM acceptance_bills WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date')} LIMIT 1`).get() as any)?.v)}`,
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM acceptance_bills WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date', 'DESC')} LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '客户往来',

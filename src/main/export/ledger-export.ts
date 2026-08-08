@@ -18,7 +18,7 @@ import {
   sortSupplierLedgerGrouped,
   supplierLedgerBizKindLabel,
 } from '../../common/supplier-ledger'
-import { buildDateOrderBy } from '../../common/ledger-date'
+import { buildDateOrderBy, parseLedgerDate } from '../../common/ledger-date'
 import { buildDateFilterClause } from '../ipc/helpers'
 
 export type ExportTable = 'all' | 'cash' | 'bank' | 'bills' | 'customer' | 'supplier' | 'stockIn' | 'stockOut'
@@ -198,6 +198,13 @@ function summaryLabelKey(designColumns: ExportColumn[]) {
   return preferred.find(key => designColumns.some(column => column.key === key))
 }
 
+function closingBalanceRow(rows: Record<string, string | number>[]) {
+  const first = rows[0]
+  const last = rows[rows.length - 1]
+  if (rows.length < 2) return first
+  return parseLedgerDate(last.date) > parseLedgerDate(first.date) ? last : first
+}
+
 function buildSummaryCells(design: ExportDesign, designColumns: ExportColumn[], rows: Record<string, string | number>[], summary: Record<string, string | number>) {
   const labelKey = summaryLabelKey(designColumns)
   return designColumns.map((column) => {
@@ -205,7 +212,7 @@ function buildSummaryCells(design: ExportDesign, designColumns: ExportColumn[], 
     if (column.key === labelKey) return '合计'
     if (column.sum === 'money' || column.sum === 'qty') return summary[column.key] ?? ''
     if (column.key === 'balance' && ['现金账', '公账', '承兑票'].includes(design.sheetName) && rows.length) {
-      return num(rows[rows.length - 1][column.key])
+      return num(closingBalanceRow(rows)[column.key])
     }
     return ''
   })
@@ -773,21 +780,21 @@ function buildOverviewSheet(db: any) {
       count: (db.prepare(`SELECT COUNT(*) as n FROM cash_ledger WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总收入', inValue: num((db.prepare(`SELECT SUM(income) as v FROM cash_ledger WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总支出', outValue: num((db.prepare(`SELECT SUM(expense) as v FROM cash_ledger WHERE deleted_at IS NULL`).get() as any).v),
-      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM cash_ledger WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 1`).get() as any)?.v)}`,
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM cash_ledger WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date')} LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '公账',
       count: (db.prepare(`SELECT COUNT(*) as n FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总进账', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总付出', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM bank_ledger WHERE deleted_at IS NULL`).get() as any).v),
-      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM bank_ledger WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 1`).get() as any)?.v)}`,
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM bank_ledger WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date')} LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '承兑票',
       count: (db.prepare(`SELECT COUNT(*) as n FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).n,
       inLabel: '总收票', inValue: num((db.prepare(`SELECT SUM(amount_in) as v FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).v),
       outLabel: '总付出', outValue: num((db.prepare(`SELECT SUM(amount_out) as v FROM acceptance_bills WHERE deleted_at IS NULL`).get() as any).v),
-      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM acceptance_bills WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 1`).get() as any)?.v)}`,
+      extra: `期末余额 ${num((db.prepare(`SELECT balance as v FROM acceptance_bills WHERE deleted_at IS NULL ORDER BY ${buildDateOrderBy('date')} LIMIT 1`).get() as any)?.v)}`,
     },
     {
       name: '客户往来',

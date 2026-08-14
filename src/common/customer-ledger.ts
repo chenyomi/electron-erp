@@ -353,9 +353,11 @@ export function validateReceivableSyncFromStockOut(
   linkedRows: Array<Record<string, any>>,
   payload: { amount_in: number; quantity: number; unit_price: number },
 ): string | null {
-  const block = getCustomerLedgerAmountEditBlockReason(oldReceivable, linkedRows, payload)
-  if (block) return block
   if (linkedRows.length > 0) {
+    const changed = Math.abs(Number(payload.amount_in) - Number(oldReceivable.amount_in || 0)) > 0.005
+      || Math.abs(Number(payload.quantity) - Number(oldReceivable.quantity || 0)) > 0.005
+      || Math.abs(Number(payload.unit_price) - Number(oldReceivable.unit_price || 0)) > 0.005
+    if (changed) return '该出库已有退货或收款，请先撤销关联记录'
     return validateCustomerReturnAgainstPayments(payload.amount_in, linkedRows, 0)
   }
   return null

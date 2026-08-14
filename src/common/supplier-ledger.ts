@@ -300,9 +300,12 @@ export function validatePayableSyncFromStockIn(
   linkedRows: Array<Record<string, any>>,
   payload: { amount_in: number; quantity: number; unit_price: number },
 ): string | null {
-  const block = getSupplierLedgerAmountEditBlockReason(oldPayable, linkedRows, payload)
-  if (block) return block
+  // 入库改价会同步应付；不能套用「请到产品入库改」——那是拦供应商台账直接改应付的
   if (linkedRows.length > 0) {
+    const changed = Math.abs(Number(payload.amount_in) - Number(oldPayable.amount_in || 0)) > 0.005
+      || Math.abs(Number(payload.quantity) - Number(oldPayable.quantity || 0)) > 0.005
+      || Math.abs(Number(payload.unit_price) - Number(oldPayable.unit_price || 0)) > 0.005
+    if (changed) return '该入库已有退货或付款，请先撤销关联记录'
     return validateSupplierReturnAgainstPayments(payload.amount_in, linkedRows, 0)
   }
   return null

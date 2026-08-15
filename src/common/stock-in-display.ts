@@ -51,3 +51,33 @@ export function getStockInUnitPriceDisplay(row: Record<string, any>): number {
   if (isStockInMaterialRow(row)) return Number(row?.material_unit_price || 0)
   return Number(row?.unit_price || 0)
 }
+
+export function roundStockInMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
+
+export function calcProcessingAmount(row: Record<string, any>): number {
+  return roundStockInMoney(Number(row?.quantity || 0) * Number(row?.unit_price || 0))
+}
+
+/** 自带材料给外协：使用数量 × 材料单价 */
+export function calcSuppliedMaterialAmount(row: Record<string, any>): number {
+  return roundStockInMoney(Number(row?.material_used_quantity || 0) * Number(row?.material_unit_price || 0))
+}
+
+/** 外协应付 = 加工费 − 来料金额，不低于 0 */
+export function calcOutsourcingPayableAmount(row: Record<string, any>): number {
+  return roundStockInMoney(Math.max(0, calcProcessingAmount(row) - calcSuppliedMaterialAmount(row)))
+}
+
+export function formatOutsourcingMaterialOffsetNote(row: Record<string, any>): string {
+  const deduct = calcSuppliedMaterialAmount(row)
+  const userNote = String(row?.note || '').trim()
+  if (deduct <= 0) return userNote
+  const name = String(row?.material_name || '原材料').trim()
+  const used = Number(row?.material_used_quantity || 0)
+  const unit = String(row?.material_unit || '公斤').trim() || '公斤'
+  const tag = `来料抵扣 ${name} ${used}${unit} ¥${deduct.toFixed(2)}`
+  if (userNote.includes('来料抵扣')) return userNote
+  return userNote ? `${userNote} · ${tag}` : tag
+}

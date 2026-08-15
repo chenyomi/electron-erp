@@ -6,6 +6,7 @@ import {
   validatePayableSyncFromStockIn,
 } from '../../common/supplier-ledger'
 import { isMaterialSupplierType } from '../../common/supplier-profile'
+import { formatOutsourcingMaterialOffsetNote } from '../../common/stock-in-display'
 import { getSupplierType, recalculateSupplierBalances } from './supplier-profile'
 import { logOperation, restore, softDelete } from './helpers'
 import { ensureProductCatalog, recalcInventoryForRows } from './stock-business'
@@ -74,7 +75,7 @@ export function buildPayablePayloadFromStockIn(db: Database.Database, stockInRow
     amount_in: Number(stockInRow.amount || 0),
     amount_out: 0,
     balance: 0,
-    note: String(stockInRow.note || '').trim(),
+    note: formatOutsourcingMaterialOffsetNote(stockInRow),
     stock_in_id: Number(stockInRow.id || 0),
   }
 }

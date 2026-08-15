@@ -441,7 +441,7 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { buildCustomerDescription, calcCustomerReceivableRemaining, calcCustomerReceivableSettlement, customerLedgerFinancialFieldsLocked, getCustomerLedgerRowActions, isCustomerPaymentDescription, isCustomerPaymentRecord, isCustomerReceivableRecord, isCustomerReturnRecord, listCustomerLedgerLinkedToReceivable, parseCustomerDescription, sortCustomerLedgerGrouped } from '../../common/customer-ledger'
-import { getStockInKind, getStockInProductDisplay, getStockInQuantityDisplay, getStockInSpecDisplay, getStockInSupplierDisplay, getStockInUnitDisplay, getStockInUnitPriceDisplay } from '../../common/stock-in-display'
+import { calcOutsourcingPayableAmount, calcProcessingAmount, calcSuppliedMaterialAmount, getStockInKind, getStockInProductDisplay, getStockInQuantityDisplay, getStockInSpecDisplay, getStockInSupplierDisplay, getStockInUnitDisplay, getStockInUnitPriceDisplay } from '../../common/stock-in-display'
 import { buildSupplierDescription, calcSupplierPayableRemaining, getSupplierLedgerRowActions, isSupplierPayableRecord, isSupplierPaymentDescription, isSupplierPaymentRecord, isSupplierReturnRecord, isSupplierScrapRecord, listSupplierLedgerLinkedToPayable, sortSupplierLedgerGrouped } from '../../common/supplier-ledger'
 import { DEFAULT_SCRAP_NAME_OPTIONS, scrapBizKindLabel, type ScrapSettlementMode } from '../../common/supplier-scrap'
 import { isMaterialSupplierType, isOutsourcingSupplierType, normalizeSupplierType, supplierTypeLabelKey, type SupplierType } from '../../common/supplier-profile'
@@ -841,6 +841,7 @@ const messages = {
     customerOverview: '客户欠款一览',
     customerOverviewSub: '点右侧「台账」查看明细；出库自动生成应收，收款和退货在台账顶部登记。',
     amountAutoCalc: '自动计算（数量 × 单价）',
+    amountAutoCalcOutsourcingOffset: '应付 = 加工费 {processing} − 来料 {material}',
     materialAmountAutoCalc: '自动计算（公斤数 × 元/公斤）',
     finishedUnitPriceHint: '成品参考单价，与下方材料费无关',
     addCustomer: '新增客户',
@@ -929,11 +930,12 @@ const messages = {
     materialUnitPrice: '元/公斤',
     materialUsedQuantity: '使用数量',
     stockInNoSupplierHint: '未选供应商：按自己加工处理；成品计入库存并登记单价金额。原材料为选填，填写后会扣减材料库存，不记入供应商台账。',
-    stockInOutsourcingHint: '外协加工：选择供应商后，数量 × 加工单价记入应付，成品计入库存。',
+    stockInOutsourcingHint: '外协加工：数量 × 加工单价记入应付，成品入库存。加工单价可填 0（未定价，暂不记应付）。自带材料可选已入库材料，扣库存并从应付抵扣；定价后再改单价，应付按加工费 − 来料重算。',
     stockInMaterialHint: '原材料供应商：只登记材料入库和材料费用，进入原材料库存并生成应付；不进入成品库存。',
     formSectionMaterialCost: '材料费用',
     formSectionMaterialUse: '使用原材料（选填）',
     stockInMaterialUseHint: '补录历史成品可留空；新加工可从已入库材料中选择，保存后按使用数量扣减原材料库存。',
+    stockInOutsourcingMaterialHint: '自带材料给外协加工时填写；按使用数量扣原材料库存。材料单价会参与抵扣：应付 = 加工费 − 来料金额。加工费为 0 时暂不记应付，材料仍扣库存。外协包料可留空。',
     materialAmount: '材料金额',
     finishedStockAmount: '成品金额',
     finishedStockAmountHint: '仅供参考（数量×单价），不入应付',
@@ -1356,6 +1358,7 @@ const messages = {
     customerOverview: 'Customer Balances',
     customerOverviewSub: 'Open a customer ledger to view details. Stock-out creates receivables; receipts and returns are recorded from the ledger top.',
     amountAutoCalc: 'Auto-calculated (qty × price)',
+    amountAutoCalcOutsourcingOffset: 'Payable = processing {processing} − material {material}',
     materialAmountAutoCalc: 'Auto-calculated (kg × price per kg)',
     finishedUnitPriceHint: 'Finished-goods reference price; unrelated to material cost below',
     addCustomer: 'Add Customer',
@@ -1436,7 +1439,7 @@ const messages = {
     supplierPayableFormHint: 'Payables are auto-created from stock-in; edit existing rows only.',
     supplierPayableAutoOnly: 'Payables are created from stock-in. Use Pay or Return at the top of the ledger.',
     stockInNoSupplierHint: 'No supplier: self-processing; finished goods enter inventory. Material is optional—fill it only when you want to deduct material stock.',
-    stockInOutsourcingHint: 'Outsourcing: with supplier, qty × processing price → payable; goods → inventory.',
+    stockInOutsourcingHint: 'Outsourcing: qty × processing price → payable. Price may be 0 if unset (no payable yet). Own material deducts stock and offsets payable when a price is later filled.',
     stockInMaterialHint: 'Material supplier: record material inbound and material cost only; it enters material stock and creates payable.',
     materialName: 'Material Name',
     materialSpec: 'Material Spec',
@@ -1446,6 +1449,7 @@ const messages = {
     materialUsedQuantity: 'Used Qty',
     formSectionMaterialUse: 'Material Used (Optional)',
     stockInMaterialUseHint: 'Leave blank when backfilling legacy finished goods; select stocked material for new in-house production to deduct material inventory.',
+    stockInOutsourcingMaterialHint: 'Fill when you send your own material: deducts stock. Material price offsets payable (processing − material). If processing is 0, no payable yet. Leave blank if the factory supplies material.',
     finishedStockAmount: 'Finished Amount',
     finishedStockAmountHint: 'Reference only (qty × price); not payable',
     supplierLedgerEmptyHint: 'Payables are created automatically from stock-in with this supplier. Reset filters or check Trash if empty.',
@@ -2815,6 +2819,7 @@ const formSections: Record<string, FormSectionSpec[]> = {
     { titleKey: 'formSectionParty', fields: [{ key: 'supplier_name', span: 'half' }, { key: 'date', span: 'half' }, { key: 'contract_no', span: 'half' }] },
     { titleKey: 'formSectionProduct', fields: [{ key: 'product_name', span: 'half' }, { key: 'spec', span: 'half' }, { key: 'unit', span: 'half' }] },
     { titleKey: 'formSectionAmount', fields: [{ key: 'quantity', span: 'half' }, { key: 'unit_price', span: 'half' }, { key: 'amount', span: 'half' }] },
+    { titleKey: 'formSectionMaterialCost', fields: [{ key: 'material_name', span: 'half' }, { key: 'material_spec', span: 'half' }, { key: 'material_used_quantity', span: 'half' }, { key: 'material_unit_price', span: 'half' }] },
     { titleKey: 'formSectionOther', fields: [{ key: 'note', span: 'full' }] },
   ],
   stockIn: [
@@ -4158,41 +4163,54 @@ const LedgerPage = defineComponent({
               emit('notify', props.t('stockInUnitRequired'), 'warning')
               return
             }
-            payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
-            if (Number(payload.quantity || 0) <= 0 || Number(payload.unit_price || 0) <= 0) {
+            if (Number(payload.quantity || 0) <= 0) {
+              emit('notify', '请填写数量', 'warning')
+              return
+            }
+            if (!hasSupplier && Number(payload.unit_price || 0) <= 0) {
               emit('notify', '请填写数量与单价', 'warning')
               return
             }
-            if (Number(payload.amount || 0) <= 0) {
-              emit('notify', '请填写金额，或填写数量与单价', 'warning')
-              return
-            }
             payload.material_quantity = 0
-            payload.material_unit_price = 0
-            if (!hasSupplier) {
+            const applyOwnedMaterial = (required: boolean) => {
               if (!String(payload.material_name || '').trim()) {
-                emit('notify', '请选择使用的原材料', 'warning')
-                return
+                if (required) {
+                  emit('notify', '请选择使用的原材料', 'warning')
+                  return false
+                }
+                payload.material_name = ''
+                payload.material_spec = ''
+                payload.material_unit = ''
+                payload.material_used_quantity = 0
+                payload.material_unit_price = 0
+                return true
               }
-              const matchedMaterial = materialOptions.value.find((item: any) =>
-                item.material_name === payload.material_name &&
-                (item.material_spec || '') === (payload.material_spec || '') &&
-                (item.material_unit || '公斤') === (payload.material_unit || '公斤')
-              )
-              if (!matchedMaterial) {
+              const matchedMaterial = materialOptions.value.find((item: any) => sameMaterialKey(item, payload))
+              const sameAsEditing = Boolean(editing.value && sameMaterialKey(editing.value, payload))
+              if (!matchedMaterial && !sameAsEditing) {
                 emit('notify', '请从库存材料中选择原材料', 'warning')
-                return
+                return false
               }
               payload.material_unit = payload.material_unit || '公斤'
               if (Number(payload.material_used_quantity || 0) <= 0) {
                 emit('notify', '请填写原材料使用数量', 'warning')
+                return false
+              }
+              if (Number(payload.material_unit_price || 0) <= 0) {
+                payload.material_unit_price = Number(matchedMaterial?.unit_price || editing.value?.material_unit_price || 0)
+              }
+              return true
+            }
+            if (!hasSupplier) {
+              if (!applyOwnedMaterial(true)) return
+              payload.amount = roundMoneyValue(Number(payload.quantity || 0) * Number(payload.unit_price || 0))
+              if (Number(payload.amount || 0) <= 0) {
+                emit('notify', '请填写金额，或填写数量与单价', 'warning')
                 return
               }
             } else {
-              payload.material_name = ''
-              payload.material_spec = ''
-              payload.material_unit = ''
-              payload.material_used_quantity = 0
+              if (!applyOwnedMaterial(false)) return
+              payload.amount = calcOutsourcingPayableAmount(payload)
             }
           }
         }
@@ -5856,12 +5874,17 @@ const LedgerPage = defineComponent({
             Boolean(String(form.supplier_name || '').trim()),
           ).map(section => {
             const isOptionalMaterialUse = props.page === 'stockIn'
-              && !String(form.supplier_name || '').trim()
               && section.titleKey === 'formSectionMaterialCost'
+              && (
+                !String(form.supplier_name || '').trim()
+                || isOutsourcingSupplierType(stockInSupplierType.value)
+              )
             return h('div', { class: 'record-dialog__section', key: section.titleKey }, [
             h('div', { class: 'record-dialog__section-title' }, props.t(isOptionalMaterialUse ? 'formSectionMaterialUse' : section.titleKey)),
             isOptionalMaterialUse
-              ? h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t('stockInMaterialUseHint'))
+              ? h('div', { class: 'muted tiny', style: 'margin-bottom: 8px' }, props.t(
+                String(form.supplier_name || '').trim() ? 'stockInOutsourcingMaterialHint' : 'stockInMaterialUseHint',
+              ))
               : null,
             h('div', { class: 'record-dialog__grid' }, section.fields.map(field => renderRecordFormField(field, {
               form,
@@ -6458,26 +6481,31 @@ function roundMoneyValue(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100
 }
 function autoFillAmountFields(form: any, changedKey: string) {
-  const isMaterialStockIn = 'material_quantity' in form
-  if (['quantity', 'unit_price'].includes(changedKey) && !isMaterialStockIn) {
-    if ('amount' in form) form.amount = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+  const processing = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+  const deduct = roundMoneyValue(Number(form.material_used_quantity || 0) * Number(form.material_unit_price || 0))
+  const isMaterialPurchase = Number(form.material_quantity || 0) > 0 && Number(form.quantity || 0) <= 0
+  if (['quantity', 'unit_price', 'material_used_quantity', 'material_unit_price'].includes(changedKey) && !isMaterialPurchase) {
+    if ('amount' in form) {
+      const hasSupplier = Boolean(String(form.supplier_name || '').trim())
+      form.amount = hasSupplier ? roundMoneyValue(Math.max(0, processing - deduct)) : processing
+    }
     if ('amount_in' in form && !('amount' in form)) {
-      form.amount_in = roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+      form.amount_in = processing
     }
   }
-  if (['material_quantity', 'material_unit_price'].includes(changedKey) && isMaterialStockIn) {
+  if (['material_quantity', 'material_unit_price'].includes(changedKey) && isMaterialPurchase) {
     form.amount = roundMoneyValue(Number(form.material_quantity || 0) * Number(form.material_unit_price || 0))
   }
-  if (!isMaterialStockIn && changedKey === 'amount' && Number(form.quantity || 0) > 0 && Number(form.unit_price || 0) === 0) {
+  if (!isMaterialPurchase && changedKey === 'amount' && Number(form.quantity || 0) > 0 && Number(form.unit_price || 0) === 0) {
     form.unit_price = roundMoneyValue(Number(form.amount || 0) / Number(form.quantity || 1))
   }
-  if (!isMaterialStockIn && changedKey === 'amount' && Number(form.unit_price || 0) > 0 && Number(form.quantity || 0) === 0) {
+  if (!isMaterialPurchase && changedKey === 'amount' && Number(form.unit_price || 0) > 0 && Number(form.quantity || 0) === 0) {
     form.quantity = roundMoneyValue(Number(form.amount || 0) / Number(form.unit_price || 1))
   }
-  if (isMaterialStockIn && changedKey === 'amount' && Number(form.material_quantity || 0) > 0 && Number(form.material_unit_price || 0) === 0) {
+  if (isMaterialPurchase && changedKey === 'amount' && Number(form.material_quantity || 0) > 0 && Number(form.material_unit_price || 0) === 0) {
     form.material_unit_price = roundMoneyValue(Number(form.amount || 0) / Number(form.material_quantity || 1))
   }
-  if (isMaterialStockIn && changedKey === 'amount' && Number(form.material_unit_price || 0) > 0 && Number(form.material_quantity || 0) === 0) {
+  if (isMaterialPurchase && changedKey === 'amount' && Number(form.material_unit_price || 0) > 0 && Number(form.material_quantity || 0) === 0) {
     form.material_quantity = roundMoneyValue(Number(form.amount || 0) / Number(form.material_unit_price || 1))
   }
 }
@@ -6600,6 +6628,12 @@ function getFormSections(
   return [{ titleKey: 'formSectionBasic', fields: fields.map(key => ({ key, span: (key === 'note' || key === 'description') ? 'full' : 'half' })) }]
 }
 
+function sameMaterialKey(a: any, b: any) {
+  return String(a?.material_name || '').trim() === String(b?.material_name || '').trim()
+    && String(a?.material_spec || '').trim() === String(b?.material_spec || '').trim()
+    && (String(a?.material_unit || '').trim() || '公斤') === (String(b?.material_unit || '').trim() || '公斤')
+}
+
 function sameProductKey(a: any, b: any) {
   return String(a?.product_name || '').trim() === String(b?.product_name || '').trim()
     && String(a?.spec || '').trim() === String(b?.spec || '').trim()
@@ -6718,11 +6752,19 @@ function renderRecordFormField(
   }
 
   if (config.table === 'stockIn' && key === 'material_name') {
-    const selected = materialOptions.find(item =>
-      item.material_name === form.material_name &&
-      (item.material_spec || '') === (form.material_spec || '') &&
-      (item.material_unit || '') === (form.material_unit || '')
-    ) || form.material_name || null
+    const currentMaterial = form.material_name
+      ? [{
+          material_name: form.material_name,
+          material_spec: form.material_spec || '',
+          material_unit: form.material_unit || '公斤',
+          unit_price: Number(form.material_unit_price || 0),
+        }]
+      : []
+    const materialItems = [
+      ...materialOptions,
+      ...currentMaterial.filter(item => !materialOptions.some((opt: any) => sameMaterialKey(opt, item))),
+    ]
+    const selected = materialItems.find(item => sameMaterialKey(item, form)) || form.material_name || null
     const clearMaterialFields = () => {
       form.material_name = ''
       form.material_spec = ''
@@ -6749,7 +6791,7 @@ function renderRecordFormField(
             if (!String(v || '').trim()) clearMaterialFields()
           }
         },
-        items: materialOptions,
+        items: materialItems,
         itemTitle: 'material_name',
         customFilter: productComboboxFilter(materialOptionTitle),
         label: fieldLabel(key),
@@ -6773,11 +6815,14 @@ function renderRecordFormField(
         modelValue: selected,
         'onUpdate:modelValue': (v: any) => {
           if (v && typeof v === 'object') {
+            const sameProduct = form.product_name === v.product_name
+              && (form.spec || '') === (v.spec || '')
+              && (form.unit || '') === (v.unit || '')
             form.product_name = v.product_name
             form.spec = v.spec || ''
             form.unit = v.unit || ''
             if (config.table === 'stockIn' && v.category) form.category = v.category
-            if (Number(v.default_price || 0) > 0) {
+            if (!sameProduct && Number(v.default_price || 0) > 0) {
               form.unit_price = Number(v.default_price || 0)
               autoFillAmountFields(form, 'unit_price')
             }
@@ -6942,17 +6987,29 @@ function renderRecordFormField(
     let calcValue = isStockInMaterial
       ? roundMoneyValue(Number(form.material_quantity || 0) * Number(form.material_unit_price || 0))
       : roundMoneyValue(Number(form.quantity || 0) * Number(form.unit_price || 0))
+    let amountHint = t(isStockInMaterial ? 'materialAmountAutoCalc' : 'amountAutoCalc')
+    if (config.table === 'stockIn' && !isStockInMaterial && String(form.supplier_name || '').trim()) {
+      calcValue = calcOutsourcingPayableAmount(form)
+      const deduct = calcSuppliedMaterialAmount(form)
+      if (deduct > 0) {
+        amountHint = t('amountAutoCalcOutsourcingOffset', {
+          processing: money(calcProcessingAmount(form)),
+          material: money(deduct),
+        })
+      }
+    }
     if (config.table === 'customer' && customerEntryMode === 'return' && calcValue > 0) {
       calcValue = -calcValue
     }
     const displayValue = calcValue < 0 ? `-${money(Math.abs(calcValue))}` : money(calcValue)
+    const showAmount = Boolean(calcValue) || (config.table === 'stockIn' && !isStockInMaterial && calcSuppliedMaterialAmount(form) > 0)
     return h('div', { class: wrapClass, key }, [
       h(VTextField, {
         ...base,
-        modelValue: calcValue ? displayValue : '',
+        modelValue: showAmount ? displayValue : '',
           label: fieldLabel(key),
         readonly: true,
-        hint: t(isStockInMaterial ? 'materialAmountAutoCalc' : 'amountAutoCalc'),
+        hint: amountHint,
         persistentHint: true,
       }),
     ])

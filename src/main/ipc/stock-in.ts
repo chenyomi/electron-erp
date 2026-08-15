@@ -10,6 +10,7 @@ import {
   syncPayableFromStockIn,
 } from './stock-supplier-link'
 import { resolveStockInCountsInventory } from './supplier-migrate'
+import { calcOutsourcingPayableAmount, calcProcessingAmount } from '../../common/stock-in-display'
 
 function normalizeStockInRow(row: any, fallbackDocNo = '') {
   return {
@@ -180,8 +181,7 @@ function validateStockInRow(db: ReturnType<typeof getDb>, row: any) {
     if (!String(row?.spec || '').trim()) throw new Error('请填写规格（出库须与入库完全一致，用于库存匹配）')
     if (!String(row?.unit || '').trim()) throw new Error('请填写单位（出库须与入库完全一致，用于库存匹配）')
     if (Number(row?.quantity || 0) <= 0) throw new Error('请填写成品数量')
-    if (Number(row?.unit_price || 0) <= 0) throw new Error('请填写加工单价')
-    if (Number(row?.amount || 0) <= 0) throw new Error('请填写加工费用')
+    // 加工单价允许 0：未定价先入库；应付 = max(0, 加工费 − 来料)
   }
 }
 
@@ -207,14 +207,41 @@ function normalizeStockInBySupplierType(db: ReturnType<typeof getDb>, row: Retur
       counts_inventory: 0,
     }
   }
-  return {
+  const usedQty = Number(row.material_used_quantity || 0)
+  const materialName = String(row.material_name || '').trim()
+  if (!materialName && usedQty <= 0) {
+    return {
+      ...row,
+      material_name: '',
+      material_spec: '',
+      material_unit: '',
+      material_quantity: 0,
+      material_unit_price: 0,
+      material_used_quantity: 0,
+      amount: calcProcessingAmount(row),
+    }
+  }
+  let materialUnitPrice = Number(row.material_unit_price || 0)
+  if (usedQty > 0 && materialUnitPrice <= 0) {
+    const matched = listMaterialOptions(db).find(item =>
+      String(item.material_name || '') === materialName
+      && String(item.material_spec || '') === String(row.material_spec || '')
+      && String(item.material_unit || '公斤') === (String(row.material_unit || '公斤').trim() || '公斤'),
+    )
+    materialUnitPrice = Number(matched?.unit_price || 0)
+  }
+  const next = {
     ...row,
-    material_name: '',
-    material_spec: '',
-    material_unit: '',
+    material_name: materialName,
+    material_spec: String(row.material_spec || '').trim(),
+    material_unit: String(row.material_unit || '公斤').trim() || '公斤',
     material_quantity: 0,
-    material_unit_price: 0,
-    material_used_quantity: 0,
+    material_unit_price: materialUnitPrice,
+    material_used_quantity: usedQty,
+  }
+  return {
+    ...next,
+    amount: calcOutsourcingPayableAmount(next),
   }
 }
 
@@ -317,7 +344,9 @@ export function registerStockInHandlers(): void {
       counts_inventory: countsInventory,
     })
     validateStockInRow(db, payload)
-    if (!supplierName) validateMaterialUsage(db, payload, 0, false)
+    if (!supplierName || !isMaterialSupplierType(getSupplierType(db, supplierName))) {
+      validateMaterialUsage(db, payload, 0, false)
+    }
 
     const newRow = db.transaction(() => {
       const result = db.prepare(`
@@ -355,7 +384,9 @@ export function registerStockInHandlers(): void {
       counts_inventory: countsInventory,
     })
     validateStockInRow(db, payload)
-    if (!supplierName) validateMaterialUsage(db, payload, Number(id || 0), false)
+    if (!supplierName || !isMaterialSupplierType(getSupplierType(db, supplierName))) {
+      validateMaterialUsage(db, payload, Number(id || 0), false)
+    }
 
     const newRow = db.transaction(() => {
       db.prepare(`

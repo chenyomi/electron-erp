@@ -220,7 +220,7 @@ export function registerSystemHandlers(): void {
   ipcMain.handle('system:export-excel', async (event, params: ExportParams = {}) => {
     try {
       const table: ExportTable = params.table || 'all'
-      if (table !== 'all' && !['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut'].includes(table)) {
+      if (table !== 'all' && !['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut', 'inventory'].includes(table)) {
         return { ok: false, error: `不支持的导出类型: ${table}` }
       }
 

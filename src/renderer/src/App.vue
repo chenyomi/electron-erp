@@ -159,7 +159,7 @@
           </div>
         </v-alert>
         <DashboardPage v-if="page === 'dashboard'" :t="t" />
-        <InventoryPage v-else-if="page === 'inventory'" :t="t" />
+        <InventoryPage v-else-if="page === 'inventory'" :t="t" @notify="notify" />
         <LedgerPage v-else-if="isLedgerPage" :page="page" :t="t" @notify="notify" />
         <template v-else-if="page === 'import'">
           <KeepAlive>
@@ -2630,7 +2630,8 @@ const ChartCard = defineComponent({
 
 const InventoryPage = defineComponent({
   props: { t: { type: Function, required: true } },
-  setup(props) {
+  emits: ['notify'],
+  setup(props, { emit }) {
     const rows = ref<any[]>([])
     const total = ref(0)
     const currentPage = ref(1)
@@ -2642,6 +2643,7 @@ const InventoryPage = defineComponent({
     const stockType = ref('')
     const stockStatus = ref('')
     const loading = ref(false)
+    const exporting = ref(false)
     const summary = ref<any>({})
     const columns = ['stock_type', 'product_name', 'spec', 'unit', 'total_in', 'total_out', 'stock_qty']
     const stockTypeOptions = computed(() => [
@@ -2682,6 +2684,17 @@ const InventoryPage = defineComponent({
       currentPage.value = 1
       load()
     }
+    const exportRows = async () => {
+      exporting.value = true
+      try {
+        const result = await systemAPI.exportExcel({ table: 'inventory', ...buildFilters() })
+        notifyExportResult(emit, props.t, result)
+      } catch (error: any) {
+        emit('notify', error?.message || props.t('exportFailed'), 'error')
+      } finally {
+        exporting.value = false
+      }
+    }
 
     watch([keyword, productName, specFilter, unitFilter, stockType, stockStatus], () => {
       if (currentPage.value !== 1) currentPage.value = 1
@@ -2707,6 +2720,7 @@ const InventoryPage = defineComponent({
           h(VSelect, { modelValue: stockType.value, 'onUpdate:modelValue': (v: string) => { stockType.value = v || '' }, items: stockTypeOptions.value, label: props.t('filterStockType'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VSelect, { modelValue: stockStatus.value, 'onUpdate:modelValue': (v: string) => { stockStatus.value = v || '' }, items: stockStatusOptions.value, label: props.t('filterStockStatus'), density: 'compact', hideDetails: true, class: 'toolbar-input header-toolbar-input' }),
           h(VBtn, { variant: 'text', size: 'small', onClick: resetFilters }, () => props.t('resetFilters')),
+          h(VBtn, { variant: 'tonal', size: 'small', loading: exporting.value, onClick: exportRows }, () => props.t('export')),
         ]),
       }),
       h('div', { class: 'stat-grid' }, [

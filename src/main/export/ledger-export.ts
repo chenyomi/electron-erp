@@ -20,14 +20,20 @@ import {
 } from '../../common/supplier-ledger'
 import { buildDateOrderBy, parseLedgerDate } from '../../common/ledger-date'
 import { buildDateFilterClause } from '../ipc/helpers'
+import { buildInventorySummaryQuery } from '../ipc/stock-business'
 
-export type ExportTable = 'all' | 'cash' | 'bank' | 'bills' | 'customer' | 'supplier' | 'stockIn' | 'stockOut'
+export type ExportTable = 'all' | 'cash' | 'bank' | 'bills' | 'customer' | 'supplier' | 'stockIn' | 'stockOut' | 'inventory'
 
 export interface ExportParams {
   table?: ExportTable
   keyword?: string
   customerName?: string
   supplierName?: string
+  productName?: string
+  spec?: string
+  unit?: string
+  stockType?: string
+  stockStatus?: string
   year?: string | number
   month?: string | number
   startDate?: string
@@ -96,7 +102,9 @@ function moneyCell(value: number) {
 }
 
 function qtyCell(value: number) {
-  return { v: value, t: 'n' as const, z: '#,##0.###' }
+  const rounded = Math.round(num(value) * 1000) / 1000
+  const isInt = Math.abs(rounded - Math.round(rounded)) < 1e-9
+  return { v: rounded, t: 'n' as const, z: isInt ? '#,##0' : '#,##0.###' }
 }
 
 function textCell(value: string | number) {
@@ -126,7 +134,7 @@ function styleTableCell(sheet: XLSX.WorkSheet, row: number, col: number, column:
     alignment: {
       horizontal: column.type === 'money' || column.type === 'qty'
         ? 'right'
-        : ['index', 'date', 'month_label', 'unit', 'category'].includes(column.key)
+        : ['index', 'date', 'month_label', 'unit', 'category', 'stock_type'].includes(column.key)
           ? 'center'
           : 'left',
       vertical: 'center',
@@ -144,6 +152,13 @@ function buildFilterLine(params: ExportParams) {
   if (params.keyword?.trim()) parts.push(`关键词：${params.keyword.trim()}`)
   if (params.customerName?.trim()) parts.push(`客户：${params.customerName.trim()}`)
   if (params.supplierName?.trim()) parts.push(`供应商：${params.supplierName.trim()}`)
+  if (params.productName?.trim()) parts.push(`名称：${params.productName.trim()}`)
+  if (params.spec?.trim()) parts.push(`规格：${params.spec.trim()}`)
+  if (params.unit?.trim()) parts.push(`单位：${params.unit.trim()}`)
+  if (params.stockType === 'product') parts.push('库存类型：成品')
+  if (params.stockType === 'material') parts.push('库存类型：原材料')
+  if (params.stockStatus === 'inStock') parts.push('库存状态：有库存')
+  if (params.stockStatus === 'outOfStock') parts.push('库存状态：无库存/负库存')
   if (params.year) parts.push(`年份：${params.year}`)
   if (params.month) parts.push(`月份：${String(params.month).padStart(2, '0')}`)
   if (params.startDate) parts.push(`开始日期：${params.startDate}`)
@@ -773,6 +788,48 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       note: text(row.note),
     }),
   },
+  inventory: {
+    sheetName: '库存汇总',
+    defaultFileName: '库存汇总导出',
+    title: '库存汇总',
+    columns: [
+      { key: 'index', header: '序号', width: 6, sum: 'count' },
+      { key: 'stock_type', header: '库存类型', width: 10 },
+      { key: 'product_name', header: '名称', width: 22 },
+      { key: 'spec', header: '规格', width: 16 },
+      { key: 'unit', header: '单位', width: 8 },
+      { key: 'total_in', header: '入库总量', width: 14, type: 'qty', sum: 'qty' },
+      { key: 'total_out', header: '出库总量', width: 14, type: 'qty', sum: 'qty' },
+      { key: 'stock_qty', header: '库存数量', width: 14, type: 'qty', sum: 'qty' },
+    ],
+    query: (params) => {
+      const query = buildInventorySummaryQuery({
+        keyword: params.keyword,
+        productName: params.productName,
+        spec: params.spec,
+        unit: params.unit,
+        stockType: params.stockType,
+        stockStatus: params.stockStatus,
+      })
+      return {
+        sql: `
+          ${query.sql}
+          ORDER BY stock_type ASC, product_name COLLATE NOCASE ASC, spec COLLATE NOCASE ASC, unit COLLATE NOCASE ASC
+        `,
+        params: query.params,
+      }
+    },
+    mapRow: (row, index) => ({
+      index: index + 1,
+      stock_type: row.stock_type === 'material' ? '原材料' : '成品',
+      product_name: text(row.product_name),
+      spec: text(row.spec),
+      unit: text(row.unit),
+      total_in: num(row.total_in),
+      total_out: num(row.total_out),
+      stock_qty: num(row.stock_qty),
+    }),
+  },
 }
 
 function buildOverviewSheet(db: any) {
@@ -830,12 +887,34 @@ function buildOverviewSheet(db: any) {
       outLabel: '总金额', outValue: num((db.prepare(`SELECT SUM(amount) as v FROM stock_out_ledger WHERE deleted_at IS NULL`).get() as any).v),
       extra: `客户数 ${(db.prepare(`SELECT COUNT(DISTINCT customer_name) as n FROM stock_out_ledger WHERE deleted_at IS NULL`).get() as any).n}`,
     },
+    (() => {
+      const inventoryQuery = buildInventorySummaryQuery()
+      const inventorySummary = db.prepare(`
+        SELECT
+          COUNT(*) AS n,
+          COALESCE(SUM(total_in), 0) AS total_in,
+          COALESCE(SUM(total_out), 0) AS total_out,
+          COALESCE(SUM(stock_qty), 0) AS stock_qty
+        FROM (
+          ${inventoryQuery.sql}
+        )
+      `).get(...inventoryQuery.params) as { n: number; total_in: number; total_out: number; stock_qty: number }
+      return {
+        name: '库存汇总',
+        count: num(inventorySummary?.n),
+        inLabel: '入库总量',
+        inValue: num(inventorySummary?.total_in),
+        outLabel: '出库总量',
+        outValue: num(inventorySummary?.total_out),
+        extra: `结存 ${num(inventorySummary?.stock_qty)}`,
+      }
+    })(),
   ]
 
   const aoa = [
     ['账务总览', '', '', '', '', '', ''],
     [COMPANY_NAME, '', '', `导出时间：${exportedAt}`, '', '', ''],
-    ['包含现金账、公账、承兑票、客户往来、供应商往来、产品入库、产品出库全部未删除记录', '', '', `账册数：${stats.length}`, '', '', ''],
+    ['包含现金账、公账、承兑票、客户往来、供应商往来、产品入库、产品出库、库存汇总', '', '', `账册数：${stats.length}`, '', '', ''],
     [],
     ['账册', '记录数', '进/收入项', '金额', '出/支出项', '金额', '备注'],
     ...stats.map((item) => [item.name, item.count, item.inLabel, item.inValue, item.outLabel, item.outValue, item.extra]),
@@ -910,7 +989,7 @@ function prepareExportRows(db: any, key: Exclude<ExportTable, 'all'>, rawRows: a
 
 export function buildExportWorkbook(db: any, table: ExportTable, params: ExportParams = {}) {
   const tableKeys: Array<Exclude<ExportTable, 'all'>> = table === 'all'
-    ? ['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut']
+    ? ['cash', 'bank', 'bills', 'customer', 'supplier', 'stockIn', 'stockOut', 'inventory']
     : [table]
   const exportParams: ExportParams = table === 'all'
     ? {}
@@ -918,6 +997,11 @@ export function buildExportWorkbook(db: any, table: ExportTable, params: ExportP
       keyword: params.keyword,
       customerName: params.customerName,
       supplierName: params.supplierName,
+      productName: params.productName,
+      spec: params.spec,
+      unit: params.unit,
+      stockType: params.stockType,
+      stockStatus: params.stockStatus,
       year: params.year,
       month: params.month,
       startDate: params.startDate,

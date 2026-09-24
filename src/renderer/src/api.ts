@@ -164,19 +164,8 @@ export const printAPI = {
     customerPhone?: string
     customerAddress?: string
     paymentReceived?: number
-    overlay?: boolean
   }) => api.invoke('print:preview', params),
-  lodopScript: (params?: {
-    ids?: number[]
-    kind?: 'stockOut' | 'customerReturn' | 'supplierReturn'
-    template?: 'sales' | 'metal'
-    customerPhone?: string
-    customerAddress?: string
-    paymentReceived?: number
-    overlay?: boolean
-  }) => api.invoke('print:lodop-script', params),
-  execute: (html: string) => api.invoke('print:execute', html),
-  savePdf: (params: string | { html: string; landscape?: boolean }) => api.invoke('print:save-pdf', params),
+  openBrowser: (html: string) => api.invoke('print:open-browser', html),
 }
 
 export const systemAPI = {

@@ -1,6 +1,5 @@
 import type { MetalSlipSettings } from './print-settings'
 import type { SalesSlipData } from './sales-slip'
-import { METAL_SLIP_PAPER, pageSizeCss } from './paper-sizes'
 
 function escapeHtml(text: string | number): string {
   return String(text ?? '')
@@ -27,7 +26,6 @@ function formatDisplayDate(date: string): string {
 
 export interface MetalSlipRenderOptions {
   customerAddress?: string
-  overlay?: boolean
 }
 
 export function renderMetalSlipHtml(
@@ -35,9 +33,8 @@ export function renderMetalSlipHtml(
   settings: MetalSlipSettings,
   options: MetalSlipRenderOptions = {}
 ): string {
-  const overlay = Boolean(options.overlay)
-  const border = overlay ? 'transparent' : '#111'
-  const headerBg = overlay ? 'transparent' : '#fafafa'
+  const border = '#111'
+  const headerBg = '#fafafa'
   const customerAddress = options.customerAddress || ''
   const received = Number(data.paymentReceived) || 0
   const unpaid = Math.max(0, data.totalAmount - received)
@@ -68,7 +65,7 @@ export function renderMetalSlipHtml(
   <meta charset="UTF-8" />
   <title>${escapeHtml(data.docNo)}</title>
   <style>
-    @page { size: ${pageSizeCss('metal')}; margin: 3mm; }
+    @page { size: A4; margin: 10mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -78,8 +75,8 @@ export function renderMetalSlipHtml(
       line-height: 1.25;
     }
     .sheet {
-      width: ${METAL_SLIP_PAPER.widthMm - 6}mm;
-      max-width: ${METAL_SLIP_PAPER.widthMm - 6}mm;
+      width: 100%;
+      max-width: 190mm;
       margin: 0 auto;
     }
     table {

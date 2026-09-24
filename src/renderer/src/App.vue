@@ -471,7 +471,6 @@ import {
   VTextField,
 } from 'vuetify/components'
 import { authAPI, bankAPI, billsAPI, cashAPI, customerAPI, supplierAPI, stockInAPI, stockOutAPI, inventoryAPI, productAPI, importAPI, systemAPI, aiAPI, attachmentAPI, printAPI, updateAPI, cloudAPI } from './api'
-import { runLodopScript, checkLodopAvailable } from './lodop-print'
 
 type PageKey = 'dashboard' | 'cash' | 'bank' | 'bills' | 'customer' | 'supplier' | 'stockIn' | 'stockOut' | 'inventory' | 'trash' | 'logs' | 'import'
 type ThemeMode = 'dark' | 'light'
@@ -682,28 +681,18 @@ const messages = {
     printReturnPreview: '退货单预览',
     selectReturnRowsToPrint: '请先勾选退货记录',
     printReturnHint: '已选择 {count} 条退货记录，将合并生成一张退货单。',
-    printNow: '打印',
-    savePdf: '保存 PDF',
+    printNow: '浏览器打印',
+    printDone: '已打开浏览器打印',
+    printFailed: '打印失败',
     slipSettings: '模板设置',
     customerPhone: '客户电话',
     paymentReceived: '本单收款',
-    printDone: '已发送到打印机',
-    printFailed: '打印失败',
-    pdfSaved: 'PDF 已保存',
     selectRowsToPrint: '请先勾选要打印的出库记录',
     settingsSaved: '模板已保存',
     printTemplate: '单据模板',
-    templateSales: '普通销售单（半A4）',
-    templateMetal: '金属材料单（横版）',
+    templateSales: '普通销售单',
+    templateMetal: '金属材料单',
     customerAddress: '客户地址',
-    lodopPrint: 'Lodop套打',
-    lodopDone: '已打开 Lodop 打印预览',
-    lodopUnavailable: '未检测到 C-Lodop，请先安装并启动服务',
-    lodopSettings: 'Lodop 套打',
-    offsetX: '左右偏移(mm)',
-    offsetY: '上下偏移(mm)',
-    overlayMode: '套打模式(不打印边框)',
-    lodopPreview: 'Lodop 先预览',
     auditor: '审核人',
     pickNote: '提货提示',
     dataMgmtTitle: '数据管理',
@@ -1202,28 +1191,18 @@ const messages = {
     printReturnPreview: 'Return Slip Preview',
     selectReturnRowsToPrint: 'Select return rows first',
     printReturnHint: '{count} return row(s) selected; will merge into one return slip.',
-    printNow: 'Print',
-    savePdf: 'Save PDF',
+    printNow: 'Print in Browser',
+    printDone: 'Opened browser print',
+    printFailed: 'Print failed',
     slipSettings: 'Template',
     customerPhone: 'Customer Phone',
     paymentReceived: 'Payment',
-    printDone: 'Sent to printer',
-    printFailed: 'Print failed',
-    pdfSaved: 'PDF saved',
     selectRowsToPrint: 'Select outbound rows first',
     settingsSaved: 'Template saved',
     printTemplate: 'Template',
     templateSales: 'Standard Sales Slip',
     templateMetal: 'Metal Material Slip',
     customerAddress: 'Customer Address',
-    lodopPrint: 'Lodop Print',
-    lodopDone: 'Lodop preview opened',
-    lodopUnavailable: 'C-Lodop service not detected',
-    lodopSettings: 'Lodop Overlay',
-    offsetX: 'Offset X (mm)',
-    offsetY: 'Offset Y (mm)',
-    overlayMode: 'Overlay mode (no borders)',
-    lodopPreview: 'Lodop preview first',
     auditor: 'Auditor',
     pickNote: 'Pickup note',
     dataMgmtTitle: 'Data Management',
@@ -2901,7 +2880,6 @@ const LedgerPage = defineComponent({
     const printLoading = ref(false)
     const printHtml = ref('')
     const printTemplate = ref<'sales' | 'metal'>('sales')
-    const lodopAvailable = ref<boolean | null>(null)
     const printSettings = reactive<any>({
       template: 'sales',
       sales: {
@@ -2920,16 +2898,6 @@ const LedgerPage = defineComponent({
         footerNote: '',
         auditor: '',
         pickNote: '提货前请核对重量',
-      },
-      lodop: {
-        servicePort: 8000,
-        pageWidthMm: 241,
-        pageHeightMm: 140,
-        landscape: true,
-        offsetXMm: 1,
-        offsetYMm: 0.5,
-        usePreview: true,
-        overlayMode: false,
       },
     })
     const printForm = reactive({ customerPhone: '', customerAddress: '', paymentReceived: '' })
@@ -4457,15 +4425,9 @@ const LedgerPage = defineComponent({
       const settings = await printAPI.getSettings()
       Object.assign(printSettings, settings)
       printTemplate.value = settings.template === 'metal' ? 'metal' : 'sales'
-      if (printTemplate.value === 'metal') printSettings.lodop.overlayMode = false
       if (!Array.isArray(printSettings.sales?.copyLabels) || !printSettings.sales.copyLabels.length) {
         printSettings.sales.copyLabels = ['第一联：存根', '第二联：客户', '第三联：记账']
       }
-    }
-    const checkLodopInBackground = () => {
-      checkLodopAvailable(Number(printSettings.lodop?.servicePort) || 8000)
-        .then((available) => { lodopAvailable.value = available })
-        .catch(() => { lodopAvailable.value = false })
     }
     const buildPreviewParams = () => ({
       ids: [...printIds.value],
@@ -4474,7 +4436,6 @@ const LedgerPage = defineComponent({
       customerPhone: printForm.customerPhone,
       customerAddress: printForm.customerAddress,
       paymentReceived: printKind.value === 'stockOut' ? (Number(printForm.paymentReceived) || 0) : 0,
-      overlay: Boolean(printSettings.lodop?.overlayMode),
     })
     const openPrintPreviewFor = async (
       kind: 'stockOut' | 'customerReturn' | 'supplierReturn',
@@ -4512,7 +4473,6 @@ const LedgerPage = defineComponent({
         }
         printHtml.value = result.html
         printDialog.value = true
-        checkLodopInBackground()
       } catch (error: any) {
         emit('notify', error?.message || props.t('printFailed'), 'error')
       } finally {
@@ -4572,33 +4532,14 @@ const LedgerPage = defineComponent({
     const doPrint = async () => {
       if (!printHtml.value) return
       printLoading.value = true
-      const result = await printAPI.execute(printHtml.value)
-      printLoading.value = false
-      emit('notify', result.ok ? props.t('printDone') : (result.error || props.t('printFailed')), result.ok ? undefined : 'error')
-    }
-    const savePdf = async () => {
-      if (!printHtml.value) return
-      printLoading.value = true
-      const result = await printAPI.savePdf({
-        html: printHtml.value,
-        landscape: printTemplate.value === 'metal',
-      })
-      printLoading.value = false
-      if (result.canceled) return
-      emit('notify', result.ok ? props.t('pdfSaved') : (result.error || props.t('printFailed')), result.ok ? undefined : 'error')
-    }
-    const doLodopPrint = async () => {
-      printLoading.value = true
-      const result = await printAPI.lodopScript(buildPreviewParams())
-      printLoading.value = false
-      if (!result.ok) {
-        emit('notify', result.error || props.t('printFailed'), 'error')
-        return
+      try {
+        const result = await printAPI.openBrowser(printHtml.value)
+        emit('notify', result.ok ? props.t('printDone') : (result.error || props.t('printFailed')), result.ok ? undefined : 'error')
+      } catch (error: any) {
+        emit('notify', error?.message || props.t('printFailed'), 'error')
+      } finally {
+        printLoading.value = false
       }
-      const port = Number(printSettings.lodop?.servicePort) || 8000
-      const run = await runLodopScript(result.lodopScript, port)
-      emit('notify', run.ok ? props.t('lodopDone') : (run.error || props.t('lodopUnavailable')), run.ok ? undefined : 'error')
-      if (run.ok) lodopAvailable.value = true
     }
     const openSlipSettings = async () => {
       await loadSlipSettings()
@@ -6172,10 +6113,7 @@ const LedgerPage = defineComponent({
                 onBlur: refreshPrintPreview,
               }),
           ]),
-          lodopAvailable.value === false
-            ? h(VAlert, { type: 'warning', variant: 'tonal', density: 'compact', class: 'mb-3' }, () => props.t('lodopUnavailable'))
-            : null,
-          h('div', { class: ['print-preview-shell', printTemplate.value === 'metal' ? 'landscape' : ''].filter(Boolean).join(' ') }, [
+          h('div', { class: 'print-preview-shell' }, [
             printHtml.value
               ? h('iframe', {
                 class: 'print-preview-frame',
@@ -6189,8 +6127,6 @@ const LedgerPage = defineComponent({
           h(VBtn, { variant: 'text', onClick: openSlipSettings }, () => props.t('slipSettings')),
           h(VSpacer),
           h(VBtn, { variant: 'text', onClick: () => printDialog.value = false }, () => props.t('cancel')),
-          h(VBtn, { variant: 'tonal', loading: printLoading.value, onClick: savePdf }, () => props.t('savePdf')),
-          h(VBtn, { variant: 'tonal', loading: printLoading.value, onClick: doLodopPrint }, () => props.t('lodopPrint')),
           h(VBtn, { color: 'primary', loading: printLoading.value, onClick: doPrint }, () => props.t('printNow')),
         ]),
       ])) : null,
@@ -6233,17 +6169,6 @@ const LedgerPage = defineComponent({
             h('div', { class: 'record-dialog__grid' }, [
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.sales.address, 'onUpdate:modelValue': (v: string) => { printSettings.sales.address = v; printSettings.metal.address = v }, label: '联系地址' })]),
               h('div', { class: 'record-dialog__field record-dialog__field--full' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.sales.phones, 'onUpdate:modelValue': (v: string) => { printSettings.sales.phones = v; printSettings.metal.phones = v }, label: '联系电话' })]),
-            ]),
-          ]),
-          h('div', { class: 'record-dialog__section' }, [
-            h('div', { class: 'record-dialog__section-title' }, props.t('lodopSettings')),
-            h('p', { class: 'muted tiny mb-3' }, '金属材料单默认 241×140mm 横版，适合材质/规格/重量类出库；普通销售单 210×140mm。偏移可在试打后微调。'),
-            h('div', { class: 'record-dialog__grid' }, [
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.lodop.offsetXMm, 'onUpdate:modelValue': (v: string) => { printSettings.lodop.offsetXMm = Number(v) || 0 }, label: props.t('offsetX'), type: 'number' })]),
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.lodop.offsetYMm, 'onUpdate:modelValue': (v: string) => { printSettings.lodop.offsetYMm = Number(v) || 0 }, label: props.t('offsetY'), type: 'number' })]),
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VTextField, { ...commonFormFieldProps(), modelValue: printSettings.lodop.servicePort, 'onUpdate:modelValue': (v: string) => { printSettings.lodop.servicePort = Number(v) || 8000 }, label: 'C-Lodop 端口', type: 'number' })]),
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VSelect, { ...commonFormFieldProps(), modelValue: printSettings.lodop.overlayMode, 'onUpdate:modelValue': (v: boolean) => { printSettings.lodop.overlayMode = v }, items: [{ title: '是', value: true }, { title: '否', value: false }], label: props.t('overlayMode') })]),
-              h('div', { class: 'record-dialog__field record-dialog__field--half' }, [h(VSelect, { ...commonFormFieldProps(), modelValue: printSettings.lodop.usePreview, 'onUpdate:modelValue': (v: boolean) => { printSettings.lodop.usePreview = v }, items: [{ title: '是', value: true }, { title: '否', value: false }], label: props.t('lodopPreview') })]),
             ]),
           ]),
         ],

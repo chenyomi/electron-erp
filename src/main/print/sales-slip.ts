@@ -2,7 +2,6 @@ import { isCustomerReturnRecord } from '../../common/customer-ledger'
 import { isSupplierReturnRecord } from '../../common/supplier-ledger'
 import { renderMetalSlipHtml } from './metal-slip'
 import type { PrintSettingsBundle, SlipTemplate } from './print-settings'
-import { pageSizeCss } from './paper-sizes'
 
 export interface SalesSlipSettings {
   companyName: string
@@ -269,12 +268,10 @@ export function renderSlipHtml(
   data: SalesSlipData,
   bundle: PrintSettingsBundle,
   template: SlipTemplate,
-  options: { overlay?: boolean } = {}
 ): string {
   if (template === 'metal') {
     return renderMetalSlipHtml(data, bundle.metal, {
       customerAddress: data.customerAddress,
-      overlay: options.overlay,
     })
   }
   return renderSalesSlipHtml(data, bundle.sales)
@@ -308,7 +305,7 @@ export function renderSalesSlipHtml(data: SalesSlipData, settings: SalesSlipSett
   <meta charset="UTF-8" />
   <title>${escapeHtml(data.docNo)}</title>
   <style>
-    @page { size: ${pageSizeCss('sales')}; margin: 8mm; }
+    @page { size: A4; margin: 10mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;

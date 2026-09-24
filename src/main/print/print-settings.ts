@@ -1,5 +1,4 @@
 import type { SalesSlipSettings } from './sales-slip'
-import { DEFAULT_LODOP_OFFSET, METAL_SLIP_PAPER } from './paper-sizes'
 
 export type SlipTemplate = 'sales' | 'metal'
 
@@ -13,22 +12,10 @@ export interface MetalSlipSettings {
   pickNote: string
 }
 
-export interface LodopSettings {
-  servicePort: number
-  pageWidthMm: number
-  pageHeightMm: number
-  landscape: boolean
-  offsetXMm: number
-  offsetYMm: number
-  usePreview: boolean
-  overlayMode: boolean
-}
-
 export interface PrintSettingsBundle {
   template: SlipTemplate
   sales: SalesSlipSettings
   metal: MetalSlipSettings
-  lodop: LodopSettings
 }
 
 export const DEFAULT_SALES_SLIP_SETTINGS: SalesSlipSettings = {
@@ -50,22 +37,10 @@ export const DEFAULT_METAL_SLIP_SETTINGS: MetalSlipSettings = {
   pickNote: '提货前请核对重量',
 }
 
-export const DEFAULT_LODOP_SETTINGS: LodopSettings = {
-  servicePort: 8000,
-  pageWidthMm: METAL_SLIP_PAPER.widthMm,
-  pageHeightMm: METAL_SLIP_PAPER.heightMm,
-  landscape: METAL_SLIP_PAPER.landscape,
-  offsetXMm: DEFAULT_LODOP_OFFSET.offsetXMm,
-  offsetYMm: DEFAULT_LODOP_OFFSET.offsetYMm,
-  usePreview: true,
-  overlayMode: false,
-}
-
 export const DEFAULT_PRINT_SETTINGS: PrintSettingsBundle = {
   template: 'metal',
   sales: { ...DEFAULT_SALES_SLIP_SETTINGS },
   metal: { ...DEFAULT_METAL_SLIP_SETTINGS },
-  lodop: { ...DEFAULT_LODOP_SETTINGS },
 }
 
 export function getPrintSettings(db: { prepare: (sql: string) => any }): PrintSettingsBundle {
@@ -107,7 +82,6 @@ function mergePrintSettings(raw: Partial<PrintSettingsBundle>): PrintSettingsBun
     template: raw.template === 'metal' ? 'metal' : 'sales',
     sales: { ...DEFAULT_SALES_SLIP_SETTINGS, ...(raw.sales || {}) },
     metal: { ...DEFAULT_METAL_SLIP_SETTINGS, ...(raw.metal || {}) },
-    lodop: { ...DEFAULT_LODOP_SETTINGS, ...(raw.lodop || {}) },
   }
 }
 

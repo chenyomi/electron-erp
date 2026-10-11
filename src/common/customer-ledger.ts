@@ -330,8 +330,8 @@ export function buildCustomerDescription(row: CustomerLedgerFields): string {
 }
 
 export function customerLedgerBizKindLabel(row: Record<string, any>): string {
-  if (isCustomerPaymentRecord(row)) return '付款'
-  if (isCustomerReturnRecord(row)) return '退货'
+  if (isCustomerPaymentRecord(row)) return '收款'
+  if (isCustomerReturnRecord(row)) return '客户退货'
   return '应收'
 }
 

@@ -573,20 +573,21 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       { key: 'customer_name', header: '客户名称', width: 18 },
       { key: 'biz_kind', header: '类型', width: 8 },
       { key: 'date', header: '日期', width: 12 },
+      { key: 'doc_no', header: '单据号', width: 18 },
       { key: 'contract_no', header: '合同编号', width: 14 },
       { key: 'product_name', header: '产品名称', width: 18 },
       { key: 'spec', header: '规格型号', width: 16 },
       { key: 'unit', header: '单位', width: 8 },
-      { key: 'quantity', header: '数量', width: 10, type: 'qty' },
+      { key: 'quantity', header: '数量', width: 10, type: 'qty', sum: 'qty' },
       { key: 'unit_price', header: '单价', width: 10, type: 'money' },
-      { key: 'amount_in', header: '应收金额', width: 14, type: 'money' },
+      { key: 'amount_in', header: '应收金额', width: 14, type: 'money', sum: 'money' },
       { key: 'remaining_receivable', header: '待收金额', width: 14, type: 'money' },
       { key: 'amount_out', header: '收款', width: 14, type: 'money', sum: 'money' },
       { key: 'note', header: '备注', width: 24 },
     ],
     query: (params) => {
       const ids = getSelectedIds(params.ids)
-      const columns = 'id, customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, month_label, ref_ledger_id'
+      const columns = 'id, customer_name, date, doc_no, description, contract_no, product_name, spec, unit, quantity, unit_price, amount_in, amount_out, balance, note, month_label, ref_ledger_id'
       if (ids.length) return idsQuery('customer_ledger', columns, ids, `customer_name ASC, ${buildDateOrderBy('date', 'ASC')}`)
       const like = `%${params.keyword || ''}%`
       const customerName = params.customerName || ''
@@ -610,6 +611,7 @@ const exportDesigns: Record<Exclude<ExportTable, 'all'>, ExportDesign> = {
       customer_name: text(row.customer_name),
       biz_kind: text(row.biz_kind),
       date: text(row.date),
+      doc_no: text(row.doc_no),
       contract_no: text(row.contract_no),
       product_name: text(row.product_name),
       spec: text(row.spec),

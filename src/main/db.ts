@@ -77,6 +77,7 @@ function migrateSchema(): void {
   addColumnIfMissing('customer_ledger', 'stock_out_id INTEGER')
   addColumnIfMissing('customer_ledger', 'ref_ledger_id INTEGER')
   addColumnIfMissing('customer_ledger', 'return_stock_in_id INTEGER')
+  addColumnIfMissing('customer_ledger', "return_source TEXT DEFAULT ''")
   addColumnIfMissing('customer_ledger', "contract_no TEXT DEFAULT ''")
   addColumnIfMissing('customer_ledger', "product_name TEXT DEFAULT ''")
   addColumnIfMissing('customer_ledger', "spec TEXT DEFAULT ''")
@@ -401,6 +402,7 @@ function createTables(): void {
       stock_out_id        INTEGER, -- 关联 stock_out_ledger
       ref_ledger_id       INTEGER, -- 退货关联原应收
       return_stock_in_id  INTEGER, -- 退货自动入库 id
+      return_source       TEXT    DEFAULT '', -- system_sale / historical_sale
       deleted_at          TEXT    DEFAULT NULL,
       created_at          TEXT    DEFAULT (datetime('now','localtime')),
       updated_at          TEXT    DEFAULT (datetime('now','localtime'))

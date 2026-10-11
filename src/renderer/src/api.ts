@@ -67,6 +67,7 @@ export const customerAPI = {
   backfillFromStockOut: (customerName?: string) => api.invoke('customer:backfill-from-stock-out', customerName || ''),
   returnProductOptions: (customerName: string) => api.invoke('customer:return-product-options', customerName),
   returnProducts: (payload: any) => api.invoke('customer:return-products', payload),
+  returnHistoricalProduct: (payload: any) => api.invoke('customer:return-historical-product', payload),
   add: (row: any) => api.invoke('customer:add', row),
   update: (row: any) => api.invoke('customer:update', row),
   delete: (id: number) => api.invoke('customer:delete', id),

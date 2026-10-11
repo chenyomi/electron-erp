@@ -430,6 +430,7 @@ export function registerCustomerHandlers(): void {
       stock_out_id: stockOutId || null,
       ref_ledger_id: Number(row.ref_ledger_id || 0) || null,
       return_stock_in_id: null,
+      return_source: '',
     }
 
     if (isReturn) {
@@ -452,6 +453,7 @@ export function registerCustomerHandlers(): void {
         payload.note = payload.note ? `${payload.note} 退货` : '退货'
       }
       if (!payload.doc_no) payload.doc_no = generateDocNo('TH', 'customer_ledger', payload.date)
+      payload.return_source = 'system_sale'
       const linked = listLinkedCustomerLedgerRows(db, refId)
       const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linked, payload.amount_in)
       if (returnErr) throw new Error(returnErr)
@@ -483,11 +485,13 @@ export function registerCustomerHandlers(): void {
     const r = db.prepare(`
       INSERT INTO customer_ledger (
         customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
-        amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id, return_stock_in_id
+        amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id, return_stock_in_id,
+        return_source
       )
       VALUES (
         @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
-        @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id, @return_stock_in_id
+        @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id, @return_stock_in_id,
+        @return_source
       )
     `).run(payload)
     const ledgerId = Number(r.lastInsertRowid)
@@ -549,15 +553,18 @@ export function registerCustomerHandlers(): void {
           stock_out_id: null,
           ref_ledger_id: null,
           return_stock_in_id: null,
+          return_source: 'system_sale',
         }
         row.description = buildCustomerDescription(row)
         const result = db.prepare(`
           INSERT INTO customer_ledger (
             customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
-            amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id, return_stock_in_id
+            amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id, return_stock_in_id,
+            return_source
           ) VALUES (
             @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
-            @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id, @return_stock_in_id
+            @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id, @return_stock_in_id,
+            @return_source
           )
         `).run(row)
         const id = Number(result.lastInsertRowid)
@@ -571,6 +578,84 @@ export function registerCustomerHandlers(): void {
     })
     tx()
     return { ok: true, count: inserted.length, rows: inserted }
+  })
+
+  ipcMain.handle('customer:return-historical-product', (_e, payload: {
+    customer_name?: string
+    date?: string
+    contract_no?: string
+    product_name?: string
+    spec?: string
+    unit?: string
+    quantity?: number
+    unit_price?: number
+    note?: string
+  }) => {
+    const db = getDb()
+    const customerName = String(payload?.customer_name || '').trim()
+    if (!customerName || !customerNameExists(db, customerName)) {
+      throw new Error('请选择已有客户')
+    }
+    const date = String(payload?.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请填写退货日期')
+    const productName = String(payload?.product_name || '').trim()
+    const spec = String(payload?.spec || '').trim()
+    const unit = String(payload?.unit || '').trim()
+    const qty = Math.abs(Number(payload?.quantity || 0))
+    const price = Math.abs(Number(payload?.unit_price || 0))
+    const reason = String(payload?.note || '').trim()
+    if (!productName) throw new Error('请选择或填写退货产品')
+    if (!unit) throw new Error('请填写单位')
+    if (!Number.isFinite(qty) || qty <= 0) throw new Error('请填写大于 0 的退货数量')
+    if (!Number.isFinite(price) || price <= 0) throw new Error('请填写大于 0 的原销售单价')
+    if (!reason) throw new Error('请填写历史退货说明')
+
+    const note = reason.startsWith('历史销售退货') ? reason : `历史销售退货：${reason}`
+    const row = {
+      customer_name: customerName,
+      date,
+      description: '',
+      contract_no: String(payload?.contract_no || '').trim(),
+      product_name: productName,
+      spec,
+      unit,
+      quantity: -qty,
+      unit_price: price,
+      amount_in: -Math.round(qty * price * 100) / 100,
+      amount_out: 0,
+      balance: 0,
+      note,
+      month_label: '',
+      doc_no: generateDocNo('TH', 'customer_ledger', date),
+      stock_out_id: null,
+      ref_ledger_id: null,
+      return_stock_in_id: null,
+      return_source: 'historical_sale',
+    }
+    row.description = buildCustomerDescription(row)
+
+    const insertHistoricalReturn = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO customer_ledger (
+          customer_name, date, description, contract_no, product_name, spec, unit, quantity, unit_price,
+          amount_in, amount_out, balance, note, month_label, doc_no, stock_out_id, ref_ledger_id,
+          return_stock_in_id, return_source
+        ) VALUES (
+          @customer_name, @date, @description, @contract_no, @product_name, @spec, @unit, @quantity, @unit_price,
+          @amount_in, @amount_out, @balance, @note, @month_label, @doc_no, @stock_out_id, @ref_ledger_id,
+          @return_stock_in_id, @return_source
+        )
+      `).run(row)
+      const id = Number(result.lastInsertRowid)
+      recalculateCustomerBalances(db, customerName)
+      let newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+      applyCustomerReturnSideEffects(db, newRow)
+      newRow = db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(id) as Record<string, any>
+      logOperation('customer_ledger', id, 'INSERT', null, newRow as object)
+      return newRow
+    })
+    const inserted = insertHistoricalReturn()
+    return { ok: true, count: 1, rows: [inserted] }
   })
 
   ipcMain.handle('customer:update', (_e, { id, ...row }) => {
@@ -610,6 +695,7 @@ export function registerCustomerHandlers(): void {
       ref_ledger_id: Number(row.ref_ledger_id ?? old.ref_ledger_id ?? 0) || null,
       stock_out_id: Number(old.stock_out_id || 0) || null,
       return_stock_in_id: Number(old.return_stock_in_id || 0) || null,
+      return_source: String(old.return_source || row.return_source || '').trim(),
     }
 
     const receivableIdForGuard = isCustomerReceivableRecord(old) ? id : Number(payload.ref_ledger_id || 0)
@@ -628,7 +714,7 @@ export function registerCustomerHandlers(): void {
         const ref = resolveReturnReference(db, payload.customer_name, refId)
         const returnErr = validateCustomerReturnAgainstPayments(Number(ref.amount_in || 0), linkedToReceivable, -Math.round(qty * price * 100) / 100, id)
         if (returnErr) throw new Error(returnErr)
-      } else {
+      } else if (payload.return_source !== 'historical_sale') {
         const productName = String(payload.product_name || '').trim()
         const spec = String(payload.spec || '').trim()
         const unit = String(payload.unit || '').trim()
@@ -669,7 +755,7 @@ export function registerCustomerHandlers(): void {
         quantity=@quantity, unit_price=@unit_price,
         amount_in=@amount_in, amount_out=@amount_out,
         balance=@balance, note=@note, month_label=@month_label, doc_no=@doc_no,
-        ref_ledger_id=@ref_ledger_id,
+        ref_ledger_id=@ref_ledger_id, return_source=@return_source,
         updated_at=datetime('now','localtime') WHERE id=@id
     `).run(payload)
     recalculateCustomerBalances(db, payload.customer_name)

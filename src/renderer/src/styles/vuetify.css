@@ -2185,6 +2185,15 @@ body {
   border-radius: 12px;
 }
 
+.customer-return-mode-tabs {
+  margin: -6px 0 18px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.customer-historical-return__alert {
+  margin-bottom: 16px;
+}
+
 .record-dialog__footer {
   display: flex;
   align-items: center;

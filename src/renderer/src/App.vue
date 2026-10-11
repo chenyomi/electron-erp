@@ -2948,6 +2948,16 @@ const LedgerPage = defineComponent({
     const productReturnDate = ref(todayIsoDate())
     const productReturnNote = ref('退货')
     const productReturnRows = ref<any[]>([])
+    const customerProductReturnMode = ref<'system' | 'historical'>('system')
+    const historicalCustomerReturn = reactive({
+      contract_no: '',
+      product_name: '',
+      spec: '',
+      unit: '',
+      quantity: '' as any,
+      unit_price: '' as any,
+      note: '',
+    })
     const materialReturnDialog = ref(false)
     const materialReturnLoading = ref(false)
     const materialReturnDate = ref(todayIsoDate())
@@ -3850,12 +3860,25 @@ const LedgerPage = defineComponent({
       const customerName = customerDetailName.value || filterValue.value
       if (!customerName) return
       productReturnKind.value = 'customer'
+      customerProductReturnMode.value = 'system'
       productReturnDate.value = todayIsoDate()
       productReturnNote.value = '退货'
+      Object.assign(historicalCustomerReturn, {
+        contract_no: '',
+        product_name: '',
+        spec: '',
+        unit: '',
+        quantity: '',
+        unit_price: '',
+        note: '',
+      })
       productReturnLoading.value = true
       productReturnDialog.value = true
       try {
-        const options = await customerAPI.returnProductOptions(customerName)
+        const [options] = await Promise.all([
+          customerAPI.returnProductOptions(customerName),
+          loadProductOptions(),
+        ])
         productReturnRows.value = (options || []).map((item: any) => ({
           ...item,
           selected: false,
@@ -3871,6 +3894,47 @@ const LedgerPage = defineComponent({
       const partyName = productReturnKind.value === 'customer'
         ? (customerDetailName.value || filterValue.value)
         : (supplierDetailName.value || filterValue.value)
+      if (productReturnKind.value === 'customer' && customerProductReturnMode.value === 'historical') {
+        const quantity = Number(historicalCustomerReturn.quantity || 0)
+        const unitPrice = Number(historicalCustomerReturn.unit_price || 0)
+        if (!String(historicalCustomerReturn.product_name || '').trim()) {
+          emit('notify', '请选择或填写退货产品', 'warning')
+          return
+        }
+        if (!String(historicalCustomerReturn.unit || '').trim()) {
+          emit('notify', '请填写单位', 'warning')
+          return
+        }
+        if (quantity <= 0 || unitPrice <= 0) {
+          emit('notify', '请填写大于 0 的退货数量与原销售单价', 'warning')
+          return
+        }
+        if (!String(historicalCustomerReturn.note || '').trim()) {
+          emit('notify', '请填写历史退货说明', 'warning')
+          return
+        }
+        productReturnLoading.value = true
+        try {
+          const result = await customerAPI.returnHistoricalProduct({
+            customer_name: partyName,
+            date: productReturnDate.value,
+            ...historicalCustomerReturn,
+            quantity,
+            unit_price: unitPrice,
+          })
+          if (!result?.ok) throw new Error(result?.error || '退货失败')
+          emit('notify', '历史退货已登记')
+          productReturnDialog.value = false
+          await load()
+          const newId = Number(result.rows?.[0]?.id || 0)
+          if (newId > 0) selected.value = [newId]
+        } catch (error: any) {
+          emit('notify', error?.message || '退货失败', 'error')
+        } finally {
+          productReturnLoading.value = false
+        }
+        return
+      }
       const items = productReturnRows.value
         .filter((item: any) => item.selected && Number(item.quantity || 0) > 0)
         .map((item: any) => ({
@@ -5652,7 +5716,9 @@ const LedgerPage = defineComponent({
             ? '登记原材料退货'
             : props.t('addSupplierReturn'),
         subtitle: productReturnKind.value === 'customer'
-          ? '按产品登记退货，不绑定某一笔应收单。'
+          ? (customerProductReturnMode.value === 'historical'
+            ? '登记软件启用前或系统中没有原销售单的客户退货。'
+            : '按系统销售记录登记退货，数量不能超过剩余可退数量。')
           : productReturnKind.value === 'supplierMaterial'
             ? '按材料登记退货，可多选；数量受该供应商供料剩余和材料库存限制。'
             : '按产品登记退货，不绑定某一笔应付单；数量受该供应商供货剩余和当前库存限制。',
@@ -5661,6 +5727,153 @@ const LedgerPage = defineComponent({
         onClose: () => { productReturnDialog.value = false },
         onSave: saveProductReturn,
         default: () => [
+          productReturnKind.value === 'customer'
+            ? h(VTabs, {
+              modelValue: customerProductReturnMode.value,
+              'onUpdate:modelValue': (v: 'system' | 'historical') => { customerProductReturnMode.value = v },
+              color: 'primary',
+              density: 'compact',
+              class: 'customer-return-mode-tabs',
+            }, () => [
+              h(VTab, { value: 'system' }, () => '关联系统销售'),
+              h(VTab, { value: 'historical' }, () => '历史退货（无原单）'),
+            ])
+            : null,
+          productReturnKind.value === 'customer' && customerProductReturnMode.value === 'historical'
+            ? (() => {
+              const selectedProduct = productOptions.value.find((item: any) =>
+                item.product_name === historicalCustomerReturn.product_name
+                && (item.spec || '') === (historicalCustomerReturn.spec || '')
+                && (item.unit || '') === (historicalCustomerReturn.unit || '')
+              ) || historicalCustomerReturn.product_name || null
+              const amount = Math.round(
+                Number(historicalCustomerReturn.quantity || 0)
+                * Number(historicalCustomerReturn.unit_price || 0)
+                * 100,
+              ) / 100
+              return h('div', { class: 'record-dialog__section customer-historical-return' }, [
+                h(VAlert, {
+                  type: 'warning',
+                  variant: 'tonal',
+                  density: 'compact',
+                  class: 'customer-historical-return__alert',
+                }, () => '历史退货不关联原出库单，保存后会增加库存并冲减客户应收。'),
+                h('div', { class: 'record-dialog__grid' }, [
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: customerDetailName.value || filterValue.value,
+                      label: '客户',
+                      readonly: true,
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: productReturnDate.value,
+                      'onUpdate:modelValue': (v: string) => { productReturnDate.value = normalizeDateValue(v) },
+                      label: '退货日期',
+                      type: 'date',
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                    h(VCombobox, {
+                      ...commonFormFieldProps(),
+                      modelValue: selectedProduct,
+                      'onUpdate:modelValue': (v: any) => {
+                        if (v && typeof v === 'object') {
+                          historicalCustomerReturn.product_name = v.product_name
+                          historicalCustomerReturn.spec = v.spec || ''
+                          historicalCustomerReturn.unit = v.unit || ''
+                          if (Number(v.default_price || 0) > 0) {
+                            historicalCustomerReturn.unit_price = Number(v.default_price)
+                          }
+                        } else {
+                          historicalCustomerReturn.product_name = String(v || '')
+                        }
+                      },
+                      items: productOptions.value,
+                      itemTitle: 'product_name',
+                      customFilter: productComboboxFilter(productOptionTitle),
+                      label: '产品名称',
+                      placeholder: '选择或填写产品',
+                      returnObject: true,
+                      clearable: true,
+                      hideNoData: false,
+                    }, productComboboxSlots(historicalCustomerReturn, productOptionTitle)),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: historicalCustomerReturn.spec,
+                      'onUpdate:modelValue': (v: string) => { historicalCustomerReturn.spec = v },
+                      label: '规格',
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: historicalCustomerReturn.unit,
+                      'onUpdate:modelValue': (v: string) => { historicalCustomerReturn.unit = v },
+                      label: '单位',
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: historicalCustomerReturn.quantity,
+                      'onUpdate:modelValue': (v: any) => {
+                        historicalCustomerReturn.quantity = Math.max(0, Number(v || 0)) || ''
+                      },
+                      label: '退货数量',
+                      type: 'number',
+                      min: 0,
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: historicalCustomerReturn.unit_price,
+                      'onUpdate:modelValue': (v: any) => {
+                        historicalCustomerReturn.unit_price = Math.max(0, Number(v || 0)) || ''
+                      },
+                      label: '原销售单价',
+                      type: 'number',
+                      min: 0,
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: amount > 0 ? -amount : '',
+                      label: '退货金额',
+                      prefix: '¥',
+                      readonly: true,
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
+                    h(VTextField, {
+                      ...commonFormFieldProps(),
+                      modelValue: historicalCustomerReturn.contract_no,
+                      'onUpdate:modelValue': (v: string) => { historicalCustomerReturn.contract_no = v },
+                      label: '原单据号（选填）',
+                    }),
+                  ]),
+                  h('div', { class: 'record-dialog__field record-dialog__field--full' }, [
+                    h(VTextarea, {
+                      ...commonFormFieldProps(),
+                      modelValue: historicalCustomerReturn.note,
+                      'onUpdate:modelValue': (v: string) => { historicalCustomerReturn.note = v },
+                      label: '历史退货说明',
+                      placeholder: '例如：去年发货，原销售未录入系统',
+                      rows: 2,
+                      autoGrow: true,
+                    }),
+                  ]),
+                ]),
+              ])
+            })()
+            : [
           h('div', { class: 'record-dialog__section' }, [
             h('div', { class: 'record-dialog__grid' }, [
               h('div', { class: 'record-dialog__field record-dialog__field--half' }, [
@@ -5754,6 +5967,7 @@ const LedgerPage = defineComponent({
                   : [h('tr', [h('td', { colspan: 8, class: 'empty-cell' }, '暂无可退产品')])]),
             ]),
           ]),
+        ],
         ],
       }),
       RecordDialogShell({
